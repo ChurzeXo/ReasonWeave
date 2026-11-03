@@ -1,0 +1,26 @@
+# 运行态历史数据（严禁打包发布）
+units/handoffs/handoffs/
+units/handoffs/receipts/
+units/handoffs/inbox/
+units/handoffs/archive/
+units/handoffs/legacy/
+units/handoffs/reviews/
+
+# 开发过程临时文档与测试日志
+units/preflight/evidence/2026-10-*/run*.txt
+units/preflight/evidence/2026-10-*/verify*.txt
+
+# 根目录软链接（npm发布时不需要根软链接，直接通过 units/ 和 bin/ 分发）
+adr
+backlog
+handoffs
+playbook
+preflight
+review-gate
+
+# 缓存与 Git
+.git/
+.gitignore
+.DS_Store
+.workbuddy/
+Thumbs.db

@@ -1,22 +1,44 @@
 # NPM 打包与分发契约 (NPM Packaging Contract)
 
-## 1. 打包策略与原则
-- **优先 Monorepo 独立包分发**：
-  鉴于各 Unit 的版本号和演进频率差异较大（如 `handoffs` 已达 v2.13.0，而 `adr` 仍为 v1.0.0），后续打包采用独立包（如 `@lab/handoffs`、`@lab/preflight`、`@lab/review-gate` 等），避免版本强耦合。
-- **运行态数据绝对隔离**：
-  任何包在发布时必须严格通过 `.npmignore` 排除运行时数据与个人日志，杜绝敏感工作流痕迹进入公开或私有源。
+## 1. 打包策略定位
+本能力库采用 **统一整包分发模式**（Package Name: `lab-agent-toolkit` 或带有组织 scope 的 `@org/lab`）：
+- **全家桶开箱即用**：消费方只需安装一个包，即可获得 `handoff`、`adr-init`、`lab` 三大 CLI，以及各 Unit 的全部探针、模板与 AEF 方法论资产。
+- **运行态数据绝对隔离**：严格通过 `package.json` 的 `files` 白名单机制，绝对物理隔离 `units/handoffs/receipts/`、`archive/` 等运行时业务票据和本地历史痕迹。
 
-## 2. 预备包结构映射
+## 2. 核心 CLI 与 Bin 导出
 
-| Unit | 建议 Package 标识 | Bin / CLI 导出 | 核心资产 |
-|---|---|---|---|
-| `units/handoffs/` | `@lab/handoffs` | `bin: { "handoff": "./handoff.mjs" }` | `handoff.mjs`, `handoff-status.mjs`, 核心文档 |
-| `units/preflight/` | `@lab/preflight` | `bin: { "preflight-init": "./scripts/install.sh" }` | `templates/`, `docs/` |
-| `units/review-gate/` | `@lab/review-gate`| `bin: { "review-gate-init": "./scripts/install.sh" }` | `templates/`, `docs/` |
-| `units/adr/` | `@lab/adr` | `bin: { "adr-init": "./scripts/adr-init.sh" }` | `templates/`, `scripts/` |
-| `units/backlog/` | `@lab/backlog` | — | `templates/`, `docs/` |
+| 命令 | 对应执行入口 | 功能角色 |
+|---|---|---|
+| `lab` | `bin/lab.mjs` | 能力库总管命令（`lab list`, `lab path <unit>`, `lab doctor`） |
+| `handoff` | `units/handoffs/handoff.mjs` | 工作流交接与回执闭环引擎 |
+| `adr-init` | `units/adr/scripts/adr-init.sh` | 架构决策记录引导初始化 |
 
-## 3. 发布前置验收清单
-1. 运行态目录排除断言（`npm pack --dry-run` 检查包内容）。
-2. 可执行脚本执行位校验（`chmod +x`）。
-3. 根目录与软链接兼容性验证。
+## 3. 消费方集成模式
+
+### 3.1 全局安装模式 (推荐)
+```bash
+npm install -g lab-agent-toolkit
+```
+- 新项目可以直接在终端调用 `handoff` 与 `adr-init`。
+- 项目的 `AGENTS.md` 引用规范时，可直接使用动态路径：
+  ```markdown
+  按 $(lab path preflight)/README.md 接入不变量门禁。
+  ```
+
+### 3.2 项目局部安装模式
+```bash
+npm install -D lab-agent-toolkit
+npx lab doctor
+```
+
+## 4. 发布与校验流水线
+```bash
+# 1. 运行自检
+npm test
+
+# 2. 预览包内容与体积 (断言无敏感运行态数据，包体积应在 300KB 以内)
+npm pack --dry-run
+
+# 3. 发布
+npm publish
+```

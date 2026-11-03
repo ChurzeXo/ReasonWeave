@@ -1,0 +1,66 @@
+{
+  "name": "lab-agent-toolkit",
+  "version": "1.0.0",
+  "description": "Agent Engineering Framework (AEF) & Disciplines Toolkit for multi-agent software engineering",
+  "type": "module",
+  "main": "bin/lab.mjs",
+  "bin": {
+    "lab": "./bin/lab.mjs",
+    "handoff": "./units/handoffs/handoff.mjs",
+    "adr-init": "./units/adr/scripts/adr-init.sh"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test": "node bin/lab.mjs doctor && node units/handoffs/handoff.mjs status",
+    "postinstall": "chmod +x bin/lab.mjs units/handoffs/handoff.mjs units/adr/scripts/adr-init.sh units/preflight/templates/preflight.sh units/preflight/templates/check.sh units/review-gate/templates/scan.sh 2>/dev/null || true"
+  },
+  "files": [
+    "bin/",
+    "group/",
+    "docs/",
+    "constitution.md",
+    "README.md",
+    "使用说明.md",
+    "AGENTS.md",
+    "units/adr/",
+    "units/backlog/",
+    "units/playbook/",
+    "units/preflight/templates/",
+    "units/preflight/docs/",
+    "units/preflight/README.md",
+    "units/preflight/INSTALL.md",
+    "units/preflight/VERSION.md",
+    "units/preflight/CHANGELOG.md",
+    "units/preflight/AGENTS.md",
+    "units/review-gate/templates/",
+    "units/review-gate/docs/",
+    "units/review-gate/README.md",
+    "units/review-gate/VERSION.md",
+    "units/review-gate/CHANGELOG.md",
+    "units/review-gate/AGENTS.md",
+    "units/handoffs/AGENT-GUIDE.md",
+    "units/handoffs/AGENTS.md",
+    "units/handoffs/CHANGELOG.md",
+    "units/handoffs/COMMANDS.md",
+    "units/handoffs/DESIGN.md",
+    "units/handoffs/README.md",
+    "units/handoffs/RESPONSE-TEMPLATE.md",
+    "units/handoffs/handoff-status.mjs",
+    "units/handoffs/handoff.mjs"
+  ],
+  "keywords": [
+    "agent",
+    "engineering",
+    "framework",
+    "disciplines",
+    "zspec",
+    "aef",
+    "handoffs",
+    "preflight",
+    "review-gate",
+    "adr"
+  ],
+  "license": "MIT"
+}
