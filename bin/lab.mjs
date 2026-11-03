@@ -115,6 +115,15 @@ function migrate(targetDir, isDryRun) {
   const labPathRegexStr = `(?:~/|\\$HOME/|${userHome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/)Documents/lab`;
 
   const rules = [
+    // 规则 0: 接入桩命令形态自相矛盾语义专门平滑修复
+    {
+      reg: /先用全路径\s+`node\s+[^`]+`\s*兜底，再跑一次\s+`node\s+[^`]+\s*link`\s*自愈。?/g,
+      repl: '运行 `handoff link` 自愈（或通过 lab-agent-toolkit 重新 `npm link`）。',
+    },
+    {
+      reg: /先用全路径\s+`handoff\s+<op>`\s*兜底，再跑一次\s+`handoff\s+link`\s*自愈。?/g,
+      repl: '运行 `handoff link` 自愈（或通过 lab-agent-toolkit 重新 `npm link`）。',
+    },
     {
       reg: new RegExp(`node\\s+${labPathRegexStr}/handoffs/handoff\\.mjs`, 'g'),
       repl: 'handoff',

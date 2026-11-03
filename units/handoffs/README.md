@@ -18,7 +18,7 @@
 
 ## 布局
 ```
-~/Documents/lab/handoffs/          ← 契约 + 引擎层（版本化，稳定）
+units/handoffs/                    ← 契约 + 引擎层（版本化，稳定）
 ├── README.md            本契约（唯一真相源）
 ├── CHANGELOG.md         契约变更历史（README 的版本演进与踩坑留痕）
 ├── DESIGN.md            设计机制说明书（面向复用；行为规范仍以本契约为准）
@@ -243,7 +243,7 @@ Agent 发现待处理任务的规范行为：
 
 ## 操作（散文触发 · Path 定向）
 
-**没有 / 命令。** 一切交接/回执操作通过 `handoff` CLI（引擎）完成：你在对话里用**自然语言**说要做什么，并把**单份文档路径**交给对应 Agent；Agent 加载 `handoff` 技能，按 Path + 意图路由到 `handoff <op>`（PATH shim → 中央引擎 `~/Documents/lab/handoffs/handoff.mjs`；兜底 `node handoff.mjs <op>`，shim 缺失时 `handoff link` 自愈）。
+**没有 / 命令。** 一切交接/回执操作通过 `handoff` CLI（引擎）完成：你在对话里用**自然语言**说要做什么，并把**单份文档路径**交给对应 Agent；Agent 加载 `handoff` 技能，按 Path + 意图路由到 `handoff <op>`（PATH shim → 中央引擎；兜底 `node handoff.mjs <op>`，shim 缺失时 `handoff link` 自愈）。
 
 | 你说 | Agent 跑 | 谁 |
 |------|----------|----|
@@ -279,7 +279,7 @@ Agent 发现待处理任务的规范行为：
 | `handoff sync` | 扫 `receipts/` 自动登记回执（draft/forwarded → received，含 needs_iggle_change） |
 | `handoff drift --common \| --platform <p>` | **ZSpec ④ 版本失效回流**：共享版本变更（`--common`）→ 全员未闭环交接标 `needs_iggle_change`；某平台专属版本变更 → 仅该平台下游标 |
 
-本地直接跑：`handoff <子命令>`（PATH shim → 中央引擎；兜底 `node ~/Documents/lab/handoffs/handoff.mjs <子命令>`）。
+本地直接跑：`handoff <子命令>`（PATH shim → 中央引擎；若缺失跑 `handoff link` 自愈）。
 
 > **「先查状态」门禁（契约 v2.10）**：`handoff status` 跑过即落时间戳（存系统临时目录，按 hub 根哈希分文件）；`receipt` / `accept` / `reject` 动手前校验窗口内（默认 60 分钟）跑过 status，否则拒绝——「先查状态再动手」从提示词纪律变成机器门禁。豁免 `HANDOFF_STATUS_GATE=off`；调窗口 `HANDOFF_STATUS_WINDOW_MIN=<分钟>`。
 > **回执正文（契约 v2.10）**：回执规范唯一源 = `RESPONSE-TEMPLATE.md`（CLI/桩不再内嵌竞争骨架）；`receipt -n "<回执正文>"` 即以其为正文落盘；缺文件时 CLI 只落**指针桩**（锚节 `修复状态`/`结论`）；`check` 对契约生效日（2026-10-13）起的回执**硬校验**「非空正文 + 含 `##` 节 + 状态/结论锚节 + **「## 转递提示词」节**（v2.11）」，缺失即 exit≠0（存量豁免；仅同工作区 `COREML-*` 免转递豁免，仓内 `workspace=same` 回执仍须含该节——回执交付不豁免）。
@@ -331,38 +331,38 @@ Agent 发现待处理任务的规范行为：
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
 <!-- stub:sha256:3b668714 -->
-### Handoff 接入桩（强制守卫 · 细则以 ~/Documents/lab/handoffs/README.md 契约 v2.13.0 为准）
+### Handoff 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.13.0 为准）
 
 **早拦 Preflight（强制）**
-- **命令形态**：一律 `handoff <op>`（PATH shim → 中央引擎；幂等自愈 `handoff link`）。若报 `command not found: handoff`：先用全路径 `node ~/Documents/lab/handoffs/handoff.mjs <op>` 兜底，再跑一次 `node ~/Documents/lab/handoffs/handoff.mjs link` 自愈。
-- 调用 `show/receipt/accept/reject/check` 前，**必须先跑** `handoff status`（执行方冷启动用 `handoff status --for <本方 lane|target>` 直取本方待办）且其输出在上下文中。
-- **状态语义（v2.12.5 ·「进行中」唯一定义，与 README/AGENT-GUIDE 同义）**：「进行中」= 未闭环（`status ≠ closed`）且归属当前方。**待办 = `draft` + `forwarded`**——落我归属即该我动工（含驳回退回的返工单），`forward` 只是发起方可选的事后标记，**严禁**用「`draft`/`forwarded` 不处理」判退（旧桩此条与 README v2.7 直接相悖、且把同仓新单全量拉黑，v2.12.5 废）；`received` = 已回执、执行方跳过（发起方收回执=审计）；`closed` 不处理；`accepted`/`rejected` 为废止状态、不存在。
-- 指定 ID 必须在「进行中」且归属当前方（仓内：`to_lane == 当前 lane`；跨仓：落在目标收件箱且未闭环）。找不到→停下并说明。
+- **命令形态**：一律 \`handoff <op>\`（PATH shim → 中央引擎；幂等自愈 \`handoff link\`）。若报 \`command not found: handoff\`：运行 \`handoff link\` 自愈（或通过 lab-agent-toolkit 重新 \`npm link\`）。
+- 调用 \`show/receipt/accept/reject/check\` 前，**必须先跑** \`handoff status\`（执行方冷启动用 \`handoff status --for <本方 lane|target>\` 直取本方待办）且其输出在上下文中。
+- **状态语义（v2.12.5 ·「进行中」唯一定义，与 README/AGENT-GUIDE 同义）**：「进行中」= 未闭环（\`status ≠ closed\`）且归属当前方。**待办 = \`draft\` + \`forwarded\`**——落我归属即该我动工（含驳回退回的返工单），\`forward\` 只是发起方可选的事后标记，**严禁**用「\`draft\`/\`forwarded\` 不处理」判退（旧桩此条与 README v2.7 直接相悖、且把同仓新单全量拉黑，v2.12.5 废）；\`received\` = 已回执、执行方跳过（发起方收回执=审计）；\`closed\` 不处理；\`accepted\`/\`rejected\` 为废止状态、不存在。
+- 指定 ID 必须在「进行中」且归属当前方（仓内：\`to_lane == 当前 lane\`；跨仓：落在目标收件箱且未闭环）。找不到→停下并说明。
 - 未指定 ID 却有多条归属当前方的待办（draft/forwarded）→ 列出清单请用户点名，不擅自选。
 - receipt 前确保 status 快照 **< 60 分钟**（超时重跑）。
-- 仓内优先读 frontmatter `workspace`（same/separate），禁用 mtime 推断。
+- 仓内优先读 frontmatter \`workspace\`（same/separate），禁用 mtime 推断。
 - 执行方**只写 receipt**，**不做 accept/reject**。
-- 回执正文唯一源 = `~/Documents/lab/handoffs/RESPONSE-TEMPLATE.md`：**照抄其「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。
-- **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 `--evidence-paths "真实文件,..."` / `--evidence-commits "<sha>"`（无文件改动用 `--evidence-note "<原因>"`）；声称的路径须真实存在、提交须 `git cat-file -e` 可查，否则 receipt / accept / check 三处拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。
-- 收尾必须 `handoff check` exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节 + 含『## 转递提示词』节」；仅 `COREML-*` 同工作区侧免转递豁免，仓内 `workspace=same` 回执仍须含该节（回执交付行不豁免）；存量豁免）。
-- **回复收尾（v2.11.1）**：凡产出转递提示词，**回复最末块固定为** `## 转递提示词`——其下**仅一行**（= `handoff prompt <ID>` 输出，或回执那一行），**其后不再有任何正文/结束语**；跨仓 / 仓内（same / separate 均）产出，仅 `COREML-*` 同工作区侧免转递豁免。
+- 回执正文唯一源 = \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\`：**照抄其「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。
+- **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 \`--evidence-paths "真实文件,..."\` / \`--evidence-commits "<sha>"\`（无文件改动用 \`--evidence-note "<原因>"\`）；声称的路径须真实存在、提交须 \`git cat-file -e\` 可查，否则 receipt / accept / check 三处拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。
+- 收尾必须 \`handoff check\` exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节 + 含『## 转递提示词』节」；仅 \`COREML-*\` 同工作区侧免转递豁免，仓内 \`workspace=same\` 回执仍须含该节（回执交付行不豁免）；存量豁免）。
+- **回复收尾（v2.11.1）**：凡产出转递提示词，**回复最末块固定为** \`## 转递提示词\`——其下**仅一行**（= \`handoff prompt <ID>\` 输出，或回执那一行），**其后不再有任何正文/结束语**；跨仓 / 仓内（same / separate 均）产出，仅 \`COREML-*\` 同工作区侧免转递豁免。
 - **审计动作契约（v2.13 · to_lane=audit 强制）**：审计方（接收方 to_lane=audit）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明，不采信）。其余 lane 亦建议独立实测，但审计 lane 为硬纪律。
-- **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = `请【<目标角色>】接单：<交接路径>（<主题>）`；入站回执交付 = `请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · 是否需改动：<是/否>）`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；`.handoff-hub.json` 的 `lane_labels` 可覆盖）。
-- **防提前闭环（v2.13）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执、禁止未收到真实回执前预填；窗口声明 `HANDOFF_LANE=<本方 lane>` 后，引擎据身份硬拒越界 / 自填，并在 receipt 落 `author_lane`、accept/check 双侧核验。
+- **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = \`请【<目标角色>】接单：<交接路径>（<主题>）\`；入站回执交付 = \`请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · 是否需改动：<是/否>）\`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；\`.handoff-hub.json\` 的 \`lane_labels\` 可覆盖）。
+- **防提前闭环（v2.13）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执、禁止未收到真实回执前预填；窗口声明 \`HANDOFF_LANE=<本方 lane>\` 后，引擎据身份硬拒越界 / 自填，并在 receipt 落 \`author_lane\`、accept/check 双侧核验。
 
 **最小操作序列（出站 = 建/发交接）**
-1. `handoff new <target|lane> <type> "<标题>"`
-2. `handoff forward <ID>`（可选事后标记：跨仓用于审计留痕；仓内 `workspace=same` 无转递事件可跳过——执行方照旧按待办动工）
-3. `handoff prompt <ID>` → 取输出一行，按「回复收尾」贴在**回复最末块** `## 转递提示词` 下，转给接收方（仓内 `workspace=same` 免转递，此步跳过）
+1. \`handoff new <target|lane> <type> "<标题>"\`
+2. \`handoff forward <ID>\`（可选事后标记：跨仓用于审计留痕；仓内 \`workspace=same\` 无转递事件可跳过——执行方照旧按待办动工）
+3. \`handoff prompt <ID>\` → 取输出一行，按「回复收尾」贴在**回复最末块** \`## 转递提示词\` 下，转给接收方（仓内 \`workspace=same\` 免转递，此步跳过）
 
 **最小操作序列（入站 = 接单/回执）**
-1. `handoff status --for <本方 lane|target>`（冷启动直取本方待办；全量 `handoff status` 供发起方巡检）
-2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 `to_lane == 当前 lane`；跨仓 = 落在目标收件箱）→ 确认目标 ID
-3. `handoff show <ID>`
+1. \`handoff status --for <本方 lane|target>\`（冷启动直取本方待办；全量 \`handoff status\` 供发起方巡检）
+2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 \`to_lane == 当前 lane\`；跨仓 = 落在目标收件箱）→ 确认目标 ID
+3. \`handoff show <ID>\`
 4. 按边界最小改动（仅该 lane 应改文件）
-5. 写回执：**照抄 `~/Documents/lab/handoffs/RESPONSE-TEMPLATE.md`「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段）→ `handoff receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"`（仓内必附 evidence；无文件改动用 `--evidence-note`）
-6. `handoff check`（exit 0）
-7. **回复收尾（v2.11.1）**：其下一行回执交付行，其后无正文（仅 COREML-* 免转递不写）。仓内 = `请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · 是否需改动：<是/否>）`；跨仓 = `请收 <本仓> 回执：<回执路径>（…）`。该行为 `handoff receipt` 成功后 CLI **自动打印**，照抄即可。
+5. 写回执：**照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\`「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段）→ \`handoff receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"\`（仓内必附 evidence；无文件改动用 \`--evidence-note\`）
+6. \`handoff check\`（exit 0）
+7. **回复收尾（v2.11.1）**：其下一行回执交付行，其后无正文（仅 COREML-* 免转递不写）。仓内 = \`请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · 是否需改动：<是/否>）\`；跨仓 = \`请收 <本仓> 回执：<回执路径>（…）\`。该行为 \`handoff receipt\` 成功后 CLI **自动打印**，照抄即可。
 
-详见 `~/Documents/lab/handoffs/AGENT-GUIDE.md` 获取完整版 Preflight。
+详见 \`$(lab path handoffs)/AGENT-GUIDE.md\` 获取完整版 Preflight。
 <!-- handoff-stub:v2.1 end -->

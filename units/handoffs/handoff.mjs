@@ -452,7 +452,7 @@ const H_BODY = `
 - 闭环点：<做到什么程度才写回执>
 - 不写回执的中途态：<…>
 - 回执落点：receipts/<交接ID>-resp.md，frontmatter 四字段 handoff_id / from_repo / to_repo / date
-- 回执格式与结尾话术：按 ~/Documents/lab/handoffs/RESPONSE-TEMPLATE.md（单一来源）
+- 回执格式与结尾话术：按 $(lab path handoffs)/RESPONSE-TEMPLATE.md（单一来源）
 - **执行方不 accept/reject**（只交回执 receipt）；发起方收回执=审计，通过才闭环，不过则 reject 退回
 
 ## 外链
@@ -483,7 +483,7 @@ const H_BODY_INTRA = `
 - 闭环点：<做到什么程度才写回执>
 - 不写回执的中途态：<…>
 - 回执落点：receipts/<交接ID>-resp.md，frontmatter：handoff_id / mode / from_lane / to_lane / needs_change / date
-- 回执格式与结尾话术：按 ~/Documents/lab/handoffs/RESPONSE-TEMPLATE.md（单一来源）
+- 回执格式与结尾话术：按 $(lab path handoffs)/RESPONSE-TEMPLATE.md（单一来源）
 - **执行方不 accept/reject**（只交回执 receipt）；发起 lane 收回执=审计，通过才闭环，不过则 reject 退回
 - 同工作区（workspace=same）免转递：直接改共享工作树，归属只读 frontmatter，**严禁用 mtime 推断**
 <AUDIT_NOTE>
@@ -1049,7 +1049,7 @@ const R_RE = new RegExp(`^(${TARGET_ALT})-(\\d{8})-(\\d{2})-(bug|feature|breakin
  * 对 reverse 交接（提示词变「请 iggle 收交接」）同样成立。
  * 旧式「处理交接 <路径>」保留为合法触发（路由表双认），Swoop/prospero 记忆旧例句不致错。
  * <ID> / <TARGET> 占位符由 cmdPrompt 替换。 */
-const PROMPT_TEMPLATE = `请 <TARGET> 收交接：~/Documents/lab/handoffs/handoffs/<ID>.md`;
+const PROMPT_TEMPLATE = `请 <TARGET> 收交接：${path.join(SCRIPT_ROOT, 'handoffs', '<ID>.md')}`;
 
 function listMdFiles(dir, re) {
   try { return fs.readdirSync(dir).filter(f => re.test(f)).sort(); }
@@ -1407,10 +1407,10 @@ const STUB_CANON = (s) => s
   .replace(/<!-- generated — do not edit -->\n?/g, '')
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
-const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 ~/Documents/lab/handoffs/README.md 契约 v2.13.0 为准）
+const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.13.0 为准）
 
 **早拦 Preflight（强制）**
-- **命令形态**：一律 \`handoff <op>\`（PATH shim → 中央引擎；幂等自愈 \`handoff link\`）。若报 \`command not found: handoff\`：先用全路径 \`node ~/Documents/lab/handoffs/handoff.mjs <op>\` 兜底，再跑一次 \`node ~/Documents/lab/handoffs/handoff.mjs link\` 自愈。
+- **命令形态**：一律 \`handoff <op>\`（PATH shim → 中央引擎；幂等自愈 \`handoff link\`）。若报 \`command not found: handoff\`：运行 \`handoff link\` 自愈（或通过 lab-agent-toolkit 重新 \`npm link\`）。
 - 调用 \`show/receipt/accept/reject/check\` 前，**必须先跑** \`handoff status\`（执行方冷启动用 \`handoff status --for <本方 lane|target>\` 直取本方待办）且其输出在上下文中。
 - **状态语义（v2.12.5 ·「进行中」唯一定义，与 README/AGENT-GUIDE 同义）**：「进行中」= 未闭环（\`status ≠ closed\`）且归属当前方。**待办 = \`draft\` + \`forwarded\`**——落我归属即该我动工（含驳回退回的返工单），\`forward\` 只是发起方可选的事后标记，**严禁**用「\`draft\`/\`forwarded\` 不处理」判退（旧桩此条与 README v2.7 直接相悖、且把同仓新单全量拉黑，v2.12.5 废）；\`received\` = 已回执、执行方跳过（发起方收回执=审计）；\`closed\` 不处理；\`accepted\`/\`rejected\` 为废止状态、不存在。
 - 指定 ID 必须在「进行中」且归属当前方（仓内：\`to_lane == 当前 lane\`；跨仓：落在目标收件箱且未闭环）。找不到→停下并说明。
@@ -1418,7 +1418,7 @@ const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 ~/Documents
 - receipt 前确保 status 快照 **< 60 分钟**（超时重跑）。
 - 仓内优先读 frontmatter \`workspace\`（same/separate），禁用 mtime 推断。
 - 执行方**只写 receipt**，**不做 accept/reject**。
-- 回执正文唯一源 = \`~/Documents/lab/handoffs/RESPONSE-TEMPLATE.md\`：**照抄其「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。
+- 回执正文唯一源 = \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\`：**照抄其「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。
 - **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 \`--evidence-paths "真实文件,..."\` / \`--evidence-commits "<sha>"\`（无文件改动用 \`--evidence-note "<原因>"\`）；声称的路径须真实存在、提交须 \`git cat-file -e\` 可查，否则 receipt / accept / check 三处拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。
 - 收尾必须 \`handoff check\` exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节 + 含『## 转递提示词』节」；仅 \`COREML-*\` 同工作区侧免转递豁免，仓内 \`workspace=same\` 回执仍须含该节（回执交付行不豁免）；存量豁免）。
 - **回复收尾（v2.11.1）**：凡产出转递提示词，**回复最末块固定为** \`## 转递提示词\`——其下**仅一行**（= \`handoff prompt <ID>\` 输出，或回执那一行），**其后不再有任何正文/结束语**；跨仓 / 仓内（same / separate 均）产出，仅 \`COREML-*\` 同工作区侧免转递豁免。
@@ -1436,11 +1436,11 @@ const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 ~/Documents
 2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 \`to_lane == 当前 lane\`；跨仓 = 落在目标收件箱）→ 确认目标 ID
 3. \`handoff show <ID>\`
 4. 按边界最小改动（仅该 lane 应改文件）
-5. 写回执：**照抄 \`~/Documents/lab/handoffs/RESPONSE-TEMPLATE.md\`「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段）→ \`handoff receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"\`（仓内必附 evidence；无文件改动用 \`--evidence-note\`）
+5. 写回执：**照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\`「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段）→ \`handoff receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"\`（仓内必附 evidence；无文件改动用 \`--evidence-note\`）
 6. \`handoff check\`（exit 0）
 7. **回复收尾（v2.11.1）**：其下一行回执交付行，其后无正文（仅 COREML-* 免转递不写）。仓内 = \`请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · 是否需改动：<是/否>）\`；跨仓 = \`请收 <本仓> 回执：<回执路径>（…）\`。该行为 \`handoff receipt\` 成功后 CLI **自动打印**，照抄即可。
 
-详见 \`~/Documents/lab/handoffs/AGENT-GUIDE.md\` 获取完整版 Preflight。`;
+详见 \`$(lab path handoffs)/AGENT-GUIDE.md\` 获取完整版 Preflight。`;
 // marker 包裹 + 生成注 + 实算 sha；sha 供 check 校验（v2.12）。
 const STUB_SHA = crypto.createHash('sha256').update(STUB_BODY).digest('hex').slice(0, 8);
 const STUB_BLOCK = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA} -->\n${STUB_BODY}\n${STUB_END}`;
@@ -1495,7 +1495,7 @@ function cmdInstall(args) {
       // 会随契约升版静默漂移（只能人工手改版本号）。告警而非静默跳过。
       console.log(`⚠️ 跳过（手写指针，无标准桩标记）: ${t}`);
       console.log(`   含 handoffs/README.md 但缺 ${STUB_BEGIN} → install 不会刷新它。`);
-      console.log(`   对齐方法：用 ~/Documents/lab/handoffs/README.md 「接入桩」段的标准桩替换手写段，再跑 install（幂等）。`);
+      console.log(`   对齐方法：用 $(lab path handoffs)/README.md 「接入桩」段的标准桩替换手写段，再跑 install（幂等）。`);
       warned++;
       continue;
     }
@@ -1658,15 +1658,15 @@ function cmdBrief(args) {
     const req = reverse
       ? [
           '## 处理要求',
-          '- 交接文档（必读）：~/Documents/lab/handoffs/handoffs/<ID>.md',
-          '- 适配本仓后回执写到：~/Documents/lab/handoffs/receipts/<ID>-resp.md（frontmatter 四字段 handoff_id / from_repo / to_repo / date）',
+          `- 交接文档（必读）：${path.join(SCRIPT_ROOT, 'handoffs', '<ID>.md')}`,
+          `- 适配本仓后回执写到：${path.join(SCRIPT_ROOT, 'receipts', '<ID>-resp.md')}（frontmatter 四字段 handoff_id / from_repo / to_repo / date）`,
           '- **执行方不 accept/reject**（只交回执 `handoff receipt <ID>`）；发起方收回执=审计，通过才闭环，不过则 reject 退回。',
           '',
         ]
       : [
           '## 处理要求',
-          '- 回执规范（必读）：~/Documents/lab/handoffs/RESPONSE-TEMPLATE.md',
-          `- 完成后回执写到：~/Documents/lab/handoffs/receipts/<ID>-resp.md`,
+          '- 回执规范（必读）：$(lab path handoffs)/RESPONSE-TEMPLATE.md',
+          `- 完成后回执写到：${path.join(SCRIPT_ROOT, 'receipts', '<ID>-resp.md')}`,
           '- 禁止修改对方仓任何文件（只读排查定位行号）；用户是唯一转递通道。',
           '',
         ];
@@ -1675,7 +1675,7 @@ function cmdBrief(args) {
       '',
       intro,
       '',
-      ...items.flatMap(i => [`## ${i.id}`, '', `- 主题：${i.title}`, `- 文档：~/Documents/lab/handoffs/handoffs/${i.id}.md`, '']),
+      ...items.flatMap(i => [`## ${i.id}`, '', `- 主题：${i.title}`, `- 文档：${path.join(SCRIPT_ROOT, 'handoffs', `${i.id}.md`)}`, '']),
       ...req,
     ];
     fs.writeFileSync(path.join(I_DIR, `${t}.md`), lines.join('\n'));
@@ -1743,16 +1743,16 @@ function cmdDrift(args) {
  * 与 lab Hub 的「不属于任何仓库」相反：仓内子 Hub 随代码走（提交进 git），
  * 因仓内双方同属一仓，「依赖方越界写入」的约束不存在（提案 §4.2）。 */
 // 仓内接入桩（init 时生成 .handoffs/README.md）：教新项目 Agent 写转递/回执提示词的统一标准。
-// 只放指针，不复制细则——真相源在 ~/Documents/lab/handoffs/（README 契约 + RESPONSE-TEMPLATE.md + handoff.mjs 的 prompt 模板）。
+// 只放指针，不复制细则——真相源在 $(lab path handoffs)/（README 契约 + RESPONSE-TEMPLATE.md + handoff.mjs 的 prompt 模板）。
 // 教训（RESPONSE-TEMPLATE.md 历史教训一）：凡要求 agent 产出固定文本，必须放进「可直接复制」的骨架/桩里，只写散文 = 没有。
 const INTRA_README_TEMPLATE = `# 仓内交接子 Hub（intra-repo · <PROJECT>）
 
-> 指针桩：命令语义与格式细则以 \`~/Documents/lab/handoffs/\` 契约为单一来源，此处不复制细则。
+> 指针桩：命令语义与格式细则以 \`$(lab path handoffs)/\` 契约为单一来源，此处不复制细则。
 
 ## 一句话规则
 - **lane**：<LANES>（接收通道 = 回执撰写方 = 交接文件名前缀）。
 - **workspace 默认**：<WS_DEFAULT>。同工作区 = 免转递、共享工作树；异工作区才需先同步工作树。
-- **一切操作只走 CLI**：\`node ~/Documents/lab/handoffs/handoff.mjs <new|show|forward|receipt|status|prompt|check|accept|reject>\`（仓内无 install/sync/brief/open）。
+- **一切操作只走 CLI**：\`handoff <new|show|forward|receipt|status|prompt|check|accept|reject>\`（若报 command not found 跑 handoff link 自愈；仓内无 install/sync/brief/open）。
 
 ## 生命周期
 \`draft → forwarded → received → closed\`，frontmatter.status 是唯一真相源。
@@ -1765,7 +1765,7 @@ const INTRA_README_TEMPLATE = `# 仓内交接子 Hub（intra-repo · <PROJECT>�
 ## 转递 / 回执提示词（统一标准 · 不要手写）
 - **同工作区（workspace=same，默认）**：**出站任务转递免**（共享工作树，不搬）⇒ \`handoff prompt\` 此步跳过、收尾写「无需转递」；**但回执仍须含「## 转递提示词」节**（回执交付行不豁免，仅 \`COREML-*\` 免）。归属只看 frontmatter，**严禁用 mtime 推断**。
 - **异工作区**：转递提示词用 \`handoff prompt <ID>\` 生成（真相源在 Hub 侧 handoff.mjs，一行式），不手写、不复制到仓侧。
-- **回执**：写法与结尾话术单一来源在 \`~/Documents/lab/handoffs/RESPONSE-TEMPLATE.md\`；仓内回执仅需 frontmatter 五字段 + 结论，跨仓专属节（是否需 iggle 改动 / 部署钉值）不适用。
+- **回执**：写法与结尾话术单一来源在 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\`；仓内回执仅需 frontmatter 五字段 + 结论，跨仓专属节（是否需 iggle 改动 / 部署钉值）不适用。
 
 ## 硬门禁
 - 收尾：\`handoff check\` 必须 exit 0，否则任务不算完成。
