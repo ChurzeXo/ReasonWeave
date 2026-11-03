@@ -7,7 +7,8 @@
 
 ## 快速导航
 
-- 📖 **详细使用指南**：请阅读 [使用说明.md](使用说明.md)
+- 📋 **消费方接入与改造提示词大全**：👉 [docs/CONSUMER-PROMPTS.md](docs/CONSUMER-PROMPTS.md)（新项目接入 / 老项目平滑升级，直接复制即可使用）
+- 📖 **详细使用指南**：[使用说明.md](使用说明.md)
 - 📜 **工程宪法**：[constitution.md](constitution.md)
 - 🤖 **Agent 维护守则**：[AGENTS.md](AGENTS.md)
 - 📐 **架构与依赖图**：[group/architecture/dependency-graph.md](group/architecture/dependency-graph.md)
