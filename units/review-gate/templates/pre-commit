@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# 通用 OpenGrep pre-commit 回归门禁（source: ~/Documents/lab/review-gate/）
+#
+# 仅当基线外出现「新发现」时阻断提交；已写入基线的已知信号放行。
+# 这是"回归篱笆"不是"零误报墙"——正常行号变动不会触发，
+# 新规则命中新文件/路径才阻断。
+#
+# 挂载（每仓一次，per-repo local，不污染全局）:
+#   git config core.hooksPath .githooks
+#   （新克隆需重跑；或把本文件复制到 .git/hooks/pre-commit）
+#
+# 重新基线（有意为之接受新发现后）:
+#   RULESETS="p/default p/rust p/typescript" bash scan.sh review-gate/baseline/baseline.json
+#
+# opengrep / python 缺失 → 告警并跳过（绝不阻断开发）。
+set -uo pipefail
+
+# 非交互 hook 可能没把 ~/.local/bin 放进 PATH
+export PATH="$HOME/.local/bin:$PATH"
+OG=$(command -v opengrep || true)
+if [ -z "$OG" ]; then
+  echo "⚠️  OpenGrep not found — skipping static-analysis gate."
+  echo "    Install: https://github.com/opengrep/opengrep/releases (macOS arm64 standalone binary)"
+  exit 0
+fi
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+BASELINE_REL="${BASELINE_REL:-review-gate/baseline/baseline.json}"
+BASELINE="$REPO_ROOT/$BASELINE_REL"
+if [ ! -f "$BASELINE" ]; then
+  echo "⚠️  OpenGrep baseline missing at $BASELINE — skipping gate."
+  exit 0
+fi
+
+# 按项目语言栈调整扫描的扩展名（空格分隔，用 SCAN_EXTS 覆盖）
+SCAN_EXTS="${SCAN_EXTS:-py kt kts java rs ts tsx go xml gradle toml}"
+EXT_RE="\.(${SCAN_EXTS// /|})$"
+
+# 只扫本次提交真正要落库的暂存代码文件
+FILES=()
+while IFS= read -r f; do
+  [ -n "$f" ] && FILES+=("$f")
+done < <(git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=ACM | grep -E "$EXT_RE" || true)
+
+EXISTING=()
+for f in "${FILES[@]:-}"; do
+  [ -f "$REPO_ROOT/$f" ] && EXISTING+=("$REPO_ROOT/$f")
+done
+if [ ${#EXISTING[@]} -eq 0 ]; then
+  exit 0
+fi
+
+TMP=$(mktemp /tmp/og-precommit-XXXXXX.json)
+trap 'rm -f "$TMP"' EXIT
+
+cd "$REPO_ROOT"
+
+# 规则集 / 排除项与 scan.sh 同语义（按需用环境变量覆盖）
+RULESETS="${RULESETS:-p/default p/java}"
+CONFIG_ARGS=()
+for r in $RULESETS; do
+  [ -n "$r" ] && CONFIG_ARGS+=(--config "$r")
+done
+EXCLUDE_RULES=(
+  "python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected"
+  "python.lang.security.audit.insecure-transport.urllib.insecure-urlopen.insecure-urlopen"
+  "python.lang.security.audit.insecure-file-permissions.insecure-file-permissions"
+)
+EXCLUDES=$(printf -- '--exclude-rule %s ' "${EXCLUDE_RULES[@]}")
+
+echo "🔍 OpenGrep gate: scanning ${#EXISTING[@]} staged file(s)..."
+"$OG" scan "${CONFIG_ARGS[@]}" --disable-version-check --timeout 60 ${EXCLUDES} \
+  --json --output "$TMP" "${EXISTING[@]}" >/dev/null 2>&1 || true
+
+PY=$(command -v python3 || command -v python || true)
+if [ -z "$PY" ]; then
+  echo "⚠️  python3 not found — cannot evaluate gate, skipping."
+  exit 0
+fi
+
+"$PY" - "$TMP" "$BASELINE" "$REPO_ROOT" <<'PYEOF'
+import json, sys
+
+def load(p):
+    try:
+        return json.load(open(p)).get("results", [])
+    except Exception:
+        return []
+
+# opengrep 对绝对路径入参会回写绝对 path，而基线多为相对根路径 → 归一化为相对仓库根再比对
+REPO = sys.argv[3].rstrip("/") + "/"
+def norm(p):
+    p = str(p)
+    if p.startswith(REPO):
+        p = p[len(REPO):]
+    return p
+
+cur = load(sys.argv[1])
+base = load(sys.argv[2])
+base_keys = {(r["check_id"], norm(r["path"])) for r in base if "check_id" in r and "path" in r}
+new = [r for r in cur if ("check_id" in r and "path" in r)
+       and (r["check_id"], norm(r["path"])) not in base_keys]
+
+if new:
+    print("❌ OpenGrep gate: %d new finding(s) beyond accepted baseline:" % len(new))
+    for r in new:
+        e = r.get("extra", {})
+        line = r.get("start", {}).get("line", "?")
+        print("   - [%s] %s:%s  (%s)" % (r["check_id"], norm(r["path"]), line, e.get("severity", "?")))
+    print("\n   Fix the issue, or re-baseline: RULESETS=... bash scan.sh %s" % sys.argv[2])
+    sys.exit(1)
+
+print("✅ OpenGrep gate passed (no new findings vs %d accepted baseline)." % len(base))
+PYEOF

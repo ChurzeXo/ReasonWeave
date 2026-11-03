@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# preflight 子检查（source: ~/Documents/lab/preflight/）
+# 放进 .githooks/pre-commit.d/20-preflight，与 review-gate 的 10-review-gate 并列。
+set -uo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$REPO_ROOT" || exit 0
+
+SCRIPT="${PREFLIGHT_SCRIPT:-scripts/preflight.sh}"
+if [ ! -f "$SCRIPT" ]; then
+  echo "⚠️  preflight script not found at $SCRIPT — skipping invariant gate."
+  exit 0
+fi
+
+bash "$SCRIPT"

@@ -1,0 +1,37 @@
+# OpenGrep 基线扫描忽略清单（通用模板 · source: ~/Documents/lab/review-gate/）
+#
+# 三层噪音治理的第 1 层：目录/文件级忽略。
+# 规则：只忽略"确定不是源码噪音"的目录；语义级误报交给模板 scan.sh 的
+#       --exclude-rule（第 2 层）与源码行内 nosem（第 3 层）处理。
+#
+# 按你的项目增删下方条目；不要删掉整段注释，方便后续维护者理解意图。
+
+# ── 依赖 / 构建产物 ──────────────────────────────
+node_modules/
+**/.gradle/
+**/build/
+**/target/
+**/dist/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/.mypy_cache/
+**/.pytest_cache/
+**/.ruff_cache/
+
+# ── 锁文件 / 生成物（按需放开：若想扫依赖漏洞，注释掉对应行）──
+# **/package-lock.json
+# **/yarn.lock
+# **/pnpm-lock.yaml
+# **/Cargo.lock
+# **/poetry.lock
+
+# ── 文档 / 生成物 ────────────────────────────────
+# OpenGrep 会把 Markdown 正文也当代码扫，命中散文造成噪音。
+# 基线不依赖 md 扫描；secrets 类请另跑专用扫描（如 gitleaks）。
+**/*.md
+
+# ── 压缩/打包产物 ────────────────────────────────
+**/*.min.js
+**/*.min.css
+**/*.bundle.js

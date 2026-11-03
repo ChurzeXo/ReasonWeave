@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# pre-commit 门禁分发器（source: ~/Documents/lab/preflight/）——唯一形态
+#
+# git 只允许一个 pre-commit 脚本。本脚本不做事，只按序调用 `.githooks/pre-commit.d/`
+# 下的各检查脚本并聚合退出码（preflight 的 20-preflight、review-gate 的 10-review-gate、…）。
+# 单门禁与多门禁都用它：只装 preflight 时，`.d/` 里放 20-preflight 一个子检查即可。
+#
+# 设计要点：
+#   - run-all，不 fail-fast：一次报出所有失败，避免"修一个撞下一个"的循环。
+#   - 子检查各自独立、有名、可单独执行调试；改一个不会误伤另一个（不把逻辑焊成一份）。
+#   - fail-closed：任一子检查非 0 → 整链阻断。
+#
+# 挂载（每仓一次）:
+#   mkdir -p .githooks/pre-commit.d
+#   复制本文件 → .githooks/pre-commit
+#   各工具的子检查 → .githooks/pre-commit.d/<NN>-<name>（数字前缀定序，如 20-preflight）
+#   git config core.hooksPath .githooks
+set -uo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$REPO_ROOT" || exit 0
+
+DIR="${PRECOMMIT_D:-.githooks/pre-commit.d}"
+if [ ! -d "$DIR" ]; then
+  echo "⚠️  no dispatcher dir at $DIR — allowing commit (nothing to run)."
+  exit 0
+fi
+
+fail=0
+ran=0
+for chk in "$DIR"/*; do
+  [ -f "$chk" ] || continue
+  ran=1
+  name=$(basename "$chk")
+  echo "▶ $name"
+  if bash "$chk"; then
+    echo "  ✅ $name"
+  else
+    echo "  ❌ $name"
+    fail=1
+  fi
+done
+
+if [ "$ran" -eq 0 ]; then
+  echo "⚠️  $DIR 为空 — allowing commit."
+  exit 0
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo ""
+  echo "❌ pre-commit 门禁未过（见上）。修好后重试；有意为之则改对应工具的配置/豁免。"
+  exit 1
+fi
+echo "✅ pre-commit 门禁全过。"
+exit 0

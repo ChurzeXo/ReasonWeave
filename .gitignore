@@ -1,0 +1,34 @@
+# OS & Editor artifacts
+.DS_Store
+.workbuddy/
+Thumbs.db
+*.swp
+*~
+
+# handoffs 运行态与个人历史数据（严格排除，保持能力库纯净）
+units/handoffs/handoffs/
+units/handoffs/receipts/
+units/handoffs/inbox/
+units/handoffs/archive/
+units/handoffs/legacy/
+units/handoffs/reviews/
+handoffs/handoffs/
+handoffs/receipts/
+handoffs/inbox/
+handoffs/archive/
+handoffs/legacy/
+handoffs/reviews/
+
+# Node & package artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+*.tgz
+
+# 临时证据与测试运行日志
+units/preflight/evidence/2026-10-*/run*.txt
+units/preflight/evidence/2026-10-*/verify*.txt
+preflight/evidence/2026-10-*/run*.txt
+preflight/evidence/2026-10-*/verify*.txt
