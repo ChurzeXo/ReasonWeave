@@ -585,7 +585,7 @@ function cmdNew(args) {
   writeFM(file, fm, body);
   console.log(`✅ 已创建交接 ${id}`);
   console.log(`   文件: ${file}`);
-  console.log(`   下一步: 填写正文 → handoff forward ${id} → 收到回执后 handoff receipt ${id}`);
+  console.log(`   下一步: 填写正文 → handoff forward ${id}；发起方可挂起后台监听: handoff wait ${id} --timeout 30m`);
 }
 
 // 仓内模式：new <lane> <type> "<标题>" —— lane = 接收通道（= 回执撰写方 = 文件名前缀）
@@ -638,7 +638,7 @@ function cmdNewIntra(args) {
   writeFM(file, fm, body);
   console.log(`✅ 已创建仓内交接 ${id}（lane=${l} · workspace=${ws}）`);
   console.log(`   文件: ${file}`);
-  console.log(`   下一步: 接收方写 receipts/${id}-resp.md → 发起 lane 收回执审计后 handoff accept ${id} -n "<验收结论>"（不过则 handoff reject ${id} -n "<驳回理由>"）`);
+  console.log(`   下一步: 接收方开工写 receipts/${id}-resp.md；发起方可挂起后台监听: handoff wait ${id} --timeout 30m`);
 }
 
 function cmdStatus(args) {
