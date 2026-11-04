@@ -32,6 +32,7 @@ for (const root of searchRoots) {
 
       const hasCarrier = fs.existsSync(path.join(projDir, 'AGENTS.md')) ||
                          fs.existsSync(path.join(projDir, 'CLAUDE.md')) ||
+                         fs.existsSync(path.join(projDir, 'GEMINI.md')) ||
                          fs.existsSync(path.join(projDir, '.handoffs'));
 
       if (!hasCarrier) continue;

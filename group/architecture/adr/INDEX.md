@@ -8,6 +8,7 @@
 | ADR | 标题 | 状态 | 日期 | 范围/Unit | 文件 |
 |:---:|------|:---:|:---:|:---:|------|
 | 0001 | Handoff 异步后台监听与响应式唤醒架构决策 | 🔒 Frozen | 2026-11-04 | handoffs | `0001-handoff-async-wait-and-reactive-wakeup.md` |
+| 0002 | 仓内交接回执去仪式化与自动唤醒闭环规范 | 🔒 Frozen | 2026-11-04 | handoffs | `0002-de-ritualize-handoff-prompt-for-intra-repo.md` |
 
 ## 状态说明
 - **Proposed** — 已起草，等待评审。不入 Agent 上下文。

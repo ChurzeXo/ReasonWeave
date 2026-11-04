@@ -187,15 +187,17 @@ function receiptStubIntra(id, lane) {
 
 > 正文按交接文档「给执行方」节 + 本仓 .handoffs/README.md 撰写；跨仓规范见 RESPONSE-TEMPLATE.md。
 > 落点：receipts/${id}-resp.md
-> 回执**一律须含**「## 转递提示词」节（AR-F2：v2.12.4 起仓内 workspace=same **不再豁免**——
-> 免转递免的是「搬工作树」，回执交付行是通知发起方审计，不豁免；仅跨仓 COREML-* 免）。
-> 出站侧相反：\`handoff prompt <ID>\` 的任务转递提示词在 workspace=same 时**跳过**（共享工作树）。
+> （v2.15.0 减负：仓内同工作区已有状态机监听与自动唤醒，免写「## 转递提示词」节，登记回执自动唤醒发起方）
+
+## 修复状态
+- 状态：✅ 已完成
+- 是否需发起方改动：否
 
 ## 结论
-（待填：做到什么程度 / 是否需发起 lane 改动）
+（待填：一句话结论）
 
-## 转递提示词
-请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · <是否需改动：是/否>）
+## 验证
+（待填：实测命令与结果）
 `;
 }
 
@@ -289,8 +291,9 @@ function checkReceiptPrompt(f, fm, raw, problems) {
   const made = gateDate(fm); // AR-F1：不再用回执自声明 date 判豁免
   if (exemptBy(made, RECEIPT_PROMPT_SINCE)) return; // 存量豁免（键 = 交接 created）
   if (f.startsWith('COREML-')) return; // 跨仓同工作区侧免转递（历史豁免，COREML-* 专属）
-  // 仓内 workspace=same 不再豁免：任务转递免「搬工作树」，但回执交付行（通知发起方审计）
-  // 仍须含「## 转递提示词」（DESIGN §1：agent 间无直连、复制粘贴是唯一通道；RESPONSE-TEMPLATE:112：不靠消费方回查回执）
+  // 仓内模式（v2.15.0 减负）：已有 handoff wait 状态机后台监听与响应式自动唤醒，
+  // 彻底废除仓内回执必须含「## 转递提示词」节的盲肠要求，免除复制粘贴传话仪式。
+  if (MODE === 'intra-repo' || fm?.mode === 'intra-repo' || fm?.workspace === 'same') return;
   // 标题允许带后缀（如「## 转递提示词（必含 · 供用户原样复制）」），故不锚行尾。
   // 逐行切分取节体——不用正则前瞻：JS 无 \Z（那是 Python），照搬会在 JS 里退化成字面「Z」而匹配失败。
   const secs = receiptSections(raw, '转递提示词');
@@ -857,20 +860,14 @@ function printReceiptDeliveryLine(rFile, needsChange) {
   } catch { /* 读不到不阻断主流程 */ }
   const flag = needsChange ? '是' : '否';
   const display = rFile.startsWith(os.homedir()) ? '~' + rFile.slice(os.homedir().length) : rFile;
-  console.log(`\n📋 回执交付行（复制给发起方 Agent，一行即完整）:\n`);
   if (MODE === 'intra-repo') {
-    // 仓内：用回执 frontmatter 的 from_lane/to_lane 拼角色，绝不拼仓库名（避免「请收 Tappy 回执」式事故）
-    // from_lane 可能为空（new 时未声明 HANDOFF_LANE）→ 回退通用角色，避免空括号。
-    const fromRole = resolveLaneRole(fromLane) || '本方'; // 本方（撰写回执的接收方）
-    const toRole = resolveLaneRole(toLane) || '发起方';   // 发起方（查收回执者）
-    const conclusion = extractConclusion(rawText);
-    const tail = conclusion ? `（${conclusion} · 是否需改动：${flag}）` : `（是否需改动：${flag}）`;
-    console.log(`请【${toRole}】查收【${fromRole}】回执：${display}${tail}`);
-  } else {
-    const repo = detectRepo(process.cwd());
-    const label = repo ? (TARGET_LABELS[repo] || repo) : (path.basename(process.cwd()) || '本仓');
-    console.log(`请收 ${label} 回执：${display}（${lines} 行 / ${bytes} 字节 · 需发起方改动：${flag}）`);
+    console.log(`\n✅ 仓内回执已生效（状态已翻为 received，后台监听已自动感知并唤醒发起方/审计方进行验收闭环，无需人工复制转递提示词）。\n`);
+    return;
   }
+  console.log(`\n📋 回执交付行（复制给发起方 Agent，一行即完整）:\n`);
+  const repo = detectRepo(process.cwd());
+  const label = repo ? (TARGET_LABELS[repo] || repo) : (path.basename(process.cwd()) || '本仓');
+  console.log(`请收 ${label} 回执：${display}（${lines} 行 / ${bytes} 字节 · 需发起方改动：${flag}）`);
   console.log(`\n（接收方注 · 勿复制给发起方：该行触发「收回执」路由——发起方读回执并审计；内容已闭环无需转递时回复制明确写「无需转递」。）`);
 }
 
@@ -1093,6 +1090,9 @@ function checkStubCarrier() {
       path.join(home, '.claude/CLAUDE.md'),
       path.join(home, '.config/opencode/AGENTS.md'),
     ];
+    if (fs.existsSync(path.join(cdir, 'GEMINI.md'))) {
+      targets.push(path.join(cdir, 'GEMINI.md'));
+    }
     const std = STUB_CANON(STUB_BLOCK);
     const problems = [];
     for (const p of targets) {
@@ -1432,7 +1432,7 @@ const STUB_CANON = (s) => s
   .replace(/<!-- generated — do not edit -->\n?/g, '')
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
-const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.14.0 为准）
+const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.15.0 为准）
 
 **早拦 Preflight（强制）**
 - **命令形态**：一律 \`handoff <op>\`（PATH shim → 中央引擎；幂等自愈 \`handoff link\`）。若报 \`command not found: handoff\`：运行 \`handoff link\` 自愈（或通过 lab-agent-toolkit 重新 \`npm link\`）。
@@ -1443,10 +1443,10 @@ const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 $(lab path 
 - receipt 前确保 status 快照 **< 60 分钟**（超时重跑）。
 - 仓内优先读 frontmatter \`workspace\`（same/separate），禁用 mtime 推断。
 - 执行方**只写 receipt**，**不做 accept/reject**。
-- 回执正文唯一源 = \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\`：**照抄其「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。
+- 回执正文唯一源 = \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\`：**照抄其「回执模板（可直接复制）」骨架**（含 evidence 字段；仓内同工作区免写转递提示词节），勿另起格式、勿凭记忆重建（骨架外 = 没有）。
 - **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 \`--evidence-paths "真实文件,..."\` / \`--evidence-commits "<sha>"\`（无文件改动用 \`--evidence-note "<原因>"\`）；声称的路径须真实存在、提交须 \`git cat-file -e\` 可查，否则 receipt / accept / check 三处拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。
-- 收尾必须 \`handoff check\` exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节 + 含『## 转递提示词』节」；仅 \`COREML-*\` 同工作区侧免转递豁免，仓内 \`workspace=same\` 回执仍须含该节（回执交付行不豁免）；存量豁免）。
-- **回复收尾（v2.11.1）**：凡产出转递提示词，**回复最末块固定为** \`## 转递提示词\`——其下**仅一行**（= \`handoff prompt <ID>\` 输出，或回执那一行），**其后不再有任何正文/结束语**；跨仓 / 仓内（same / separate 均）产出，仅 \`COREML-*\` 同工作区侧免转递豁免。
+- 收尾必须 \`handoff check\` exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节」；v2.15.0 减负：仓内同工作区已有状态机监听自动唤醒，免写「## 转递提示词」节；仅跨仓回执须含该节；存量豁免）。
+- **回复收尾（v2.15.0 减负）**：仓内同工作区回执免转递、免产出回复末块 \`## 转递提示词\`（执行方登记回执即完成，发起方由后台监听自动唤醒）；仅跨仓 / separate 产生转递词时，回复最末块固定为 \`## 转递提示词\`（其下一行转递提示词，其后无任何正文）。
 - **审计动作契约（v2.13 · to_lane=audit 强制）**：审计方（接收方 to_lane=audit）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明，不采信）。其余 lane 亦建议独立实测，但审计 lane 为硬纪律。
 - **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = \`请【<目标角色>】接单：<交接路径>（<主题>）\`；入站回执交付 = \`请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · 是否需改动：<是/否>）\`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；\`.handoff-hub.json\` 的 \`lane_labels\` 可覆盖）。
 - **防提前闭环（v2.13）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执、禁止未收到真实回执前预填；窗口声明 \`HANDOFF_LANE=<本方 lane>\` 后，引擎据身份硬拒越界 / 自填，并在 receipt 落 \`author_lane\`、accept/check 双侧核验。
@@ -1458,14 +1458,14 @@ const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 $(lab path 
    ——一条命令完成标记转递、打印提示词与挂起待机；回执到达后 Exit 0 自动唤醒本会话进行独立验收闭环（跨仓与同仓多窗口均适用）。
 3. （若需给对方发消息）将控制台打印的转递提示词贴在**回复最末块** \`## 转递提示词\` 下（仓内 \`workspace=same\` 免转递，此步跳过）。
 
-**最小操作序列（入站 = 接单/回执）**
+**最小操作序列（入站 = 接单/回执 · v2.15.0 减负）**
 1. \`handoff status --for <本方 lane|target>\`（冷启动直取本方待办；全量 \`handoff status\` 供发起方巡检）
 2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 \`to_lane == 当前 lane\`；跨仓 = 落在目标收件箱）→ 确认目标 ID
 3. \`handoff show <ID>\`
 4. 按边界最小改动（仅该 lane 应改文件）
-5. 写回执：**照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\`「回执模板（可直接复制）」骨架**（含「## 转递提示词」节 + evidence 字段）→ \`handoff receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"\`（仓内必附 evidence；无文件改动用 \`--evidence-note\`）
+5. 写回执：**照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` 骨架**（仓内同工作区免写转递提示词节）→ \`handoff receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"\`（仓内必附 evidence；无文件改动用 \`--evidence-note\`）
 6. \`handoff check\`（exit 0）
-7. **回复收尾（v2.11.1）**：其下一行回执交付行，其后无正文（仅 COREML-* 免转递不写）。仓内 = \`请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · 是否需改动：<是/否>）\`；跨仓 = \`请收 <本仓> 回执：<回执路径>（…）\`。该行为 \`handoff receipt\` 成功后 CLI **自动打印**，照抄即可。
+7. **自动唤醒闭环（v2.15.0 减负）**：仓内同工作区免转递、免产出回执交付行（发起方由后台监听自动唤醒，执行方正常结束回合）；仅跨仓 / separate 保留末块转递行收尾。
 
 详见 \`$(lab path handoffs)/AGENT-GUIDE.md\` 获取完整版 Preflight。`;
 // marker 包裹 + 生成注 + 实算 sha；sha 供 check 校验（v2.12）。
@@ -1487,6 +1487,9 @@ function cmdInstall(args) {
   const targets = [];
   if (!args.includes('--global')) {
     for (const f of ['AGENTS.md', 'CLAUDE.md']) targets.push(path.join(process.cwd(), f));
+    if (fs.existsSync(path.join(process.cwd(), 'GEMINI.md'))) {
+      targets.push(path.join(process.cwd(), 'GEMINI.md'));
+    }
   }
   if (!args.includes('--project')) {
     targets.push(path.join(home, '.claude/CLAUDE.md'), path.join(home, '.config/opencode/AGENTS.md'));

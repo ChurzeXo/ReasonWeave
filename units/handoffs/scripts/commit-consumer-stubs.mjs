@@ -18,10 +18,10 @@ const TARGET_REPOS = [
   { name: 'WarmTag', path: '/Users/churze/Documents/WarmTag' },
 ];
 
-const STUB_FILES = ['AGENTS.md', 'CLAUDE.md', 'README.md'];
-const COMMIT_MSG = 'chore(handoff): upgrade handoff stub to v2.14.0 with wait support';
+const STUB_FILES = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'README.md'];
+const COMMIT_MSG = 'chore(handoff): upgrade handoff stub to v2.15.0 with intra-repo prompt exemption';
 
-console.log('🚀 开始为 6 大下游消费方精准提交 Handoff v2.14.0 接入桩...\n');
+console.log('🚀 开始为 6 大下游消费方精准提交 Handoff v2.15.0 接入桩（含 AGENTS/CLAUDE/GEMINI）...\n');
 
 const results = [];
 
