@@ -39,4 +39,5 @@ graph TD
 1. **独立发布**：任一 Unit 的逻辑调整，仅在该 Unit 目录下 bump `VERSION.md` 并记录 `CHANGELOG.md`。
 2. **跨 Unit 变更流程**：
    - 当 `handoffs` 调度契约变动影响到回执模板或 backlog 联动时，需在 `group/contracts/` 记录契约变更。
+   - 跨 Unit 的重大架构与协作决策，须在 `group/architecture/adr/` 沉淀并冻结架构决策记录（ADR）。
    - 禁止在修改一个 Unit 时隐式篡改其他 Unit 的既有行为。
