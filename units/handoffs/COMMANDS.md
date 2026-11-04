@@ -32,7 +32,7 @@
 | 子命令 | 用法示例 | 作用 | 时机 |
 |--------|----------|------|------|
 | `new` | `new swoop bug 创作者中心 profile 缺失` | 创建交接：自动生成 `<ID>` + frontmatter + 骨架正文，状态 `draft` | 发现需依赖方改动时 |
-| `forward` | `forward SWOOP-20260822-02-bug` | 标记已转递（draft → forwarded）。**可选的事后标记**——执行方对 draft/forwarded 一律照办（v2.12.5），不跑 forward 也挡不住回执 | 话术已发给对方后 |
+| `forward` | `forward SWOOP-20260822-02-bug [--wait]` | 标记已转递（带 `--wait` 直接切入后台监听，一条命令完成转递+输出提示词+挂起待机） | 填写正文后转出并待机 |
 | `brief` | `brief` 或 `brief swoop` | 生成各依赖方收件箱 `inbox/<target>.md`（轻量快照 + 转递话术，供人工 / 不支持 CLI 的工具用） | 转递前 |
 | `prompt` | `prompt <ID>` | 输出单份详版转递提示词（复制给依赖方 Agent） | 需要单份详版时 |
 | `wait` | `wait <ID> [--timeout 30m]` | **后台监听回执**：挂起等待回执生成，收到回执自动 Exit 0 唤醒发起方/审计方进入实测闭环（支持跨仓与同仓多窗口协同） | 产出提示词后挂起等待 |

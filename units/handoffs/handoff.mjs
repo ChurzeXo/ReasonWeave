@@ -976,18 +976,42 @@ function cmdReceipt(args) {
   printReceiptDeliveryLine(rFile, needsChange);
 }
 
-function cmdForward(args) {
-  const [id] = args;
-  if (!id) { console.error('用法: handoff forward <id>'); process.exit(2); }
+async function cmdForward(args) {
+  const shouldWait = args.includes('--wait') || args.includes('-w');
+  const valFlags = ['--timeout', '-t', '--interval', '-i'];
+  const valueIdx = new Set();
+  for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
+  const id = args.find((a, i) => !a.startsWith('-') && !valueIdx.has(i));
+
+  if (!id) {
+    console.error('用法: handoff forward <id> [--wait]');
+    process.exit(2);
+  }
   const file = path.join(H_DIR, `${id}.md`);
-  if (!fs.existsSync(file)) { console.error('找不到交接: ' + file); process.exit(1); }
+  if (!fs.existsSync(file)) {
+    console.error('找不到交接: ' + file);
+    process.exit(1);
+  }
   const fm = readFM(fs.readFileSync(file, 'utf8'));
   if (fm.status === 'received' || fm.status === 'closed') {
     console.log(`⚠️ 交接 ${id} 当前状态为 ${fm.status}，已是更靠后状态，跳过翻 forwarded。`);
-    return;
+  } else {
+    setFM(file, { status: 'forwarded' });
+    console.log(`✅ 已标记转递: ${id}`);
   }
-  setFM(file, { status: 'forwarded' });
-  console.log(`✅ 已标记转递: ${id}`);
+
+  // 跨仓或仓内 separate 输出提示词行
+  const ws = MODE === 'intra-repo' ? (fm.workspace || 'same') : undefined;
+  if (MODE !== 'intra-repo' || ws !== 'same') {
+    cmdPrompt([id]);
+  }
+
+  if (shouldWait) {
+    const waitArgs = args.filter(a => a !== '--wait' && a !== '-w');
+    await cmdWait(waitArgs);
+  } else {
+    console.log(`\n👉 提示: 请立即启动后台监听: handoff wait ${id} --timeout 30m（置于后台运行），以便在回执到达时自动唤醒。`);
+  }
 }
 
 function cmdOpen(args) {
@@ -1427,11 +1451,12 @@ const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 $(lab path 
 - **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = \`请【<目标角色>】接单：<交接路径>（<主题>）\`；入站回执交付 = \`请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · 是否需改动：<是/否>）\`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；\`.handoff-hub.json\` 的 \`lane_labels\` 可覆盖）。
 - **防提前闭环（v2.13）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执、禁止未收到真实回执前预填；窗口声明 \`HANDOFF_LANE=<本方 lane>\` 后，引擎据身份硬拒越界 / 自填，并在 receipt 落 \`author_lane\`、accept/check 双侧核验。
 
-**最小操作序列（出站 = 建/发交接）**
-1. \`handoff new <target|lane> <type> "<标题>"\`
-2. \`handoff forward <ID>\`（可选事后标记：跨仓用于审计留痕；仓内 \`workspace=same\` 无转递事件可跳过——执行方照旧按待办动工）
-3. \`handoff prompt <ID>\` → 取输出一行，按「回复收尾」贴在**回复最末块** \`## 转递提示词\` 下，转给接收方（仓内 \`workspace=same\` 免转递，此步跳过）
-4. [异步协同推荐] \`handoff wait <ID>\`（置入后台监听，待回执到达 Exit 0 唤醒主会话后独立验收闭环；跨仓与同仓多窗口均适用）
+**最小操作序列（出站 = 建/发交接 · 强制闭环）**
+1. \`handoff new <target|lane> <type> "<标题>"\` 并填写正文
+2. **转递并挂起后台监听（必须执行）**：
+   执行 \`handoff forward <ID> --wait\`（置于后台运行 \`run_in_background: true\`）
+   ——一条命令完成标记转递、打印提示词与挂起待机；回执到达后 Exit 0 自动唤醒本会话进行独立验收闭环（跨仓与同仓多窗口均适用）。
+3. （若需给对方发消息）将控制台打印的转递提示词贴在**回复最末块** \`## 转递提示词\` 下（仓内 \`workspace=same\` 免转递，此步跳过）。
 
 **最小操作序列（入站 = 接单/回执）**
 1. \`handoff status --for <本方 lane|target>\`（冷启动直取本方待办；全量 \`handoff status\` 供发起方巡检）
@@ -2058,7 +2083,7 @@ switch (cmd) {
   case 'close': cmdAccept(rest); break; // 兼容历史文档「handoff close」表述的别名
   case 'reject': cmdReject(rest); break;
   case 'receipt': cmdReceipt(rest); break;
-  case 'forward': cmdForward(rest); break;
+  case 'forward': await cmdForward(rest); break;
   case 'open': cmdOpen(rest); break;
   case 'show': cmdShow(rest); break;
   case 'check': cmdCheck(); break;
@@ -2081,7 +2106,7 @@ switch (cmd) {
   handoff accept <id> -n "<验收结论>" [--by <lane>]  审计闭环：收回执=审计，通过即 closed（close 为同义别名；close_policy=self 的 continuation 须 --by <to_lane>）
   handoff reject <id> -n "<驳回理由>"       审计驳回：received → forwarded 退回执行方继续改
   handoff receipt <id> [-n "<回执正文>"] [--needs-change] [--evidence-paths "<a,b>"] [--evidence-commits "<sha,sha>"] [--evidence-repo "<key|path>"] [--evidence-note "<说明>"]   登记回执并翻 received（-n 落盘为回执正文；仓内回执须带 evidence）
-  handoff forward <id>                     标记已转递
+  handoff forward <id> [--wait]            标记已转递（带 --wait 直接进入后台监听，一条命令完成转递+等待）
   handoff wait <id> [--timeout <dur>] [--interval <dur>]  后台监听回执到达（到达自动退出唤醒；支持跨仓与同仓多窗口）
   handoff open <id>                        打开交接文件
   handoff show <id>                        triage 视图：frontmatter + 节标题 + 首行（不 dump 全文）

@@ -31,7 +31,7 @@
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:6beaae81 -->
+<!-- stub:sha256:79585c08 -->
 ### Handoff 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.14.0 为准）
 
 **早拦 Preflight（强制）**
@@ -51,11 +51,12 @@
 - **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = `请【<目标角色>】接单：<交接路径>（<主题>）`；入站回执交付 = `请【<发起角色>】查收【<本方角色>】回执：<回执路径>（<结论> · 是否需改动：<是/否>）`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；`.handoff-hub.json` 的 `lane_labels` 可覆盖）。
 - **防提前闭环（v2.13）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执、禁止未收到真实回执前预填；窗口声明 `HANDOFF_LANE=<本方 lane>` 后，引擎据身份硬拒越界 / 自填，并在 receipt 落 `author_lane`、accept/check 双侧核验。
 
-**最小操作序列（出站 = 建/发交接）**
-1. `handoff new <target|lane> <type> "<标题>"`
-2. `handoff forward <ID>`（可选事后标记：跨仓用于审计留痕；仓内 `workspace=same` 无转递事件可跳过——执行方照旧按待办动工）
-3. `handoff prompt <ID>` → 取输出一行，按「回复收尾」贴在**回复最末块** `## 转递提示词` 下，转给接收方（仓内 `workspace=same` 免转递，此步跳过）
-4. [异步协同推荐] `handoff wait <ID>`（置入后台监听，待回执到达 Exit 0 唤醒主会话后独立验收闭环；跨仓与同仓多窗口均适用）
+**最小操作序列（出站 = 建/发交接 · 强制闭环）**
+1. `handoff new <target|lane> <type> "<标题>"` 并填写正文
+2. **转递并挂起后台监听（必须执行）**：
+   执行 `handoff forward <ID> --wait`（置于后台运行 `run_in_background: true`）
+   ——一条命令完成标记转递、打印提示词与挂起待机；回执到达后 Exit 0 自动唤醒本会话进行独立验收闭环（跨仓与同仓多窗口均适用）。
+3. （若需给对方发消息）将控制台打印的转递提示词贴在**回复最末块** `## 转递提示词` 下（仓内 `workspace=same` 免转递，此步跳过）。
 
 **最小操作序列（入站 = 接单/回执）**
 1. `handoff status --for <本方 lane|target>`（冷启动直取本方待办；全量 `handoff status` 供发起方巡检）
