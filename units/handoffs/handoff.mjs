@@ -9,6 +9,7 @@
 //   handoff forward <id>                         标记已转递（你已发给依赖方）
 //   handoff open <id>                            在 macOS 默认编辑器打开交接文件
 //   handoff show <id>                            triage 视图：frontmatter + 节标题 + 首行（不 dump 全文）
+//   handoff wait <id> [--timeout <dur>]          后台监听回执到达（支持跨仓与同仓多窗口，收到回执 Exit 0 唤醒）
 //
 // 契约 v2.10「先查状态」门禁：receipt/accept/reject 前须在同一 hub 内跑过 handoff status
 // （默认 60 分钟窗口；豁免 HANDOFF_STATUS_GATE=off，调整 HANDOFF_STATUS_WINDOW_MIN=<分钟>）。
@@ -1407,7 +1408,7 @@ const STUB_CANON = (s) => s
   .replace(/<!-- generated — do not edit -->\n?/g, '')
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
-const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.13.0 为准）
+const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.14.0 为准）
 
 **早拦 Preflight（强制）**
 - **命令形态**：一律 \`handoff <op>\`（PATH shim → 中央引擎；幂等自愈 \`handoff link\`）。若报 \`command not found: handoff\`：运行 \`handoff link\` 自愈（或通过 lab-agent-toolkit 重新 \`npm link\`）。
@@ -1430,6 +1431,7 @@ const STUB_BODY = `### Handoff 接入桩（强制守卫 · 细则以 $(lab path 
 1. \`handoff new <target|lane> <type> "<标题>"\`
 2. \`handoff forward <ID>\`（可选事后标记：跨仓用于审计留痕；仓内 \`workspace=same\` 无转递事件可跳过——执行方照旧按待办动工）
 3. \`handoff prompt <ID>\` → 取输出一行，按「回复收尾」贴在**回复最末块** \`## 转递提示词\` 下，转给接收方（仓内 \`workspace=same\` 免转递，此步跳过）
+4. [异步协同推荐] \`handoff wait <ID>\`（置入后台监听，待回执到达 Exit 0 唤醒主会话后独立验收闭环；跨仓与同仓多窗口均适用）
 
 **最小操作序列（入站 = 接单/回执）**
 1. \`handoff status --for <本方 lane|target>\`（冷启动直取本方待办；全量 \`handoff status\` 供发起方巡检）
@@ -1882,6 +1884,161 @@ function cmdImport(args) {
   console.log(`   存量文件未改动；旧目录保留归档。`);
 }
 
+/** 解析时长字符串（支持 500ms, 30s, 30m, 1h 等；缺省单位为秒）。 */
+function parseDuration(str, defaultSec = 1800) {
+  if (!str) return defaultSec * 1000;
+  const match = String(str).trim().match(/^(\d+)(ms|s|m|h|d)?$/i);
+  if (!match) return defaultSec * 1000;
+  const num = parseInt(match[1], 10);
+  const unit = (match[2] || 's').toLowerCase();
+  switch (unit) {
+    case 'ms': return num;
+    case 's': return num * 1000;
+    case 'm': return num * 60 * 1000;
+    case 'h': return num * 3600 * 1000;
+    case 'd': return num * 86400 * 1000;
+    default: return num * 1000;
+  }
+}
+
+/** 格式化毫秒为人类友好形式。 */
+function formatDuration(ms) {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3600000) return `${(ms / 60000).toFixed(1).replace(/\.0$/, '')}m`;
+  return `${(ms / 3600000).toFixed(1).replace(/\.0$/, '')}h`;
+}
+
+/** 打印 wait 唤醒摘要，引导发起方/审计方进行独立实测与闭环。 */
+function printWaitWakeupSummary(id, hFile, rFile, hFm) {
+  let rFm = {}, rText = '', conclusion = '';
+  if (fs.existsSync(rFile)) {
+    try {
+      rText = fs.readFileSync(rFile, 'utf8');
+      rFm = readFM(rText) || {};
+      conclusion = extractConclusion(rText);
+    } catch {}
+  }
+  const displayR = rFile.startsWith(os.homedir()) ? '~' + rFile.slice(os.homedir().length) : rFile;
+  const displayH = hFile.startsWith(os.homedir()) ? '~' + hFile.slice(os.homedir().length) : hFile;
+  const needsChange = Boolean(hFm?.needs_change || hFm?.needs_iggle_change || rFm?.needs_change || rFm?.needs_iggle_change);
+
+  console.log(`\n==================================================`);
+  console.log(`🎯 [回执已就绪] 交接回执已到达: ${id}`);
+  console.log(`- 交接文档: ${displayH}`);
+  console.log(`- 回执文件: ${displayR}`);
+  if (MODE === 'intra-repo') {
+    const fromRole = resolveLaneRole(rFm.from_lane || hFm?.to_lane) || '执行方';
+    console.log(`- 回执来源: 【${fromRole}】(lane: ${rFm.from_lane || hFm?.to_lane || 'unknown'})`);
+  } else {
+    console.log(`- 回执来源: ${rFm.authorLabel || hFm?.target || '依赖方'}`);
+  }
+  if (conclusion) console.log(`- 结论摘要: ${conclusion}`);
+  if (rFm.evidence_paths) console.log(`- 变更文件: ${rFm.evidence_paths}`);
+  if (rFm.evidence_commits) console.log(`- 提交版本: ${rFm.evidence_commits}`);
+  if (rFm.evidence_note) console.log(`- 证据说明: ${rFm.evidence_note}`);
+  console.log(`- 需后续改动: ${needsChange ? '⚠️ 是 (needs_change=true)' : '✅ 否'}`);
+  console.log(`==================================================`);
+  console.log(`👉 下一步（发起方/审计方核心职责）：`);
+  console.log(`1. 严禁仅静态读码或自报采信！`);
+  console.log(`2. 请在终端独立执行验收命令与证据核验：`);
+  console.log(`   handoff show ${id}`);
+  console.log(`3. 验收通过后闭环：`);
+  console.log(`   handoff close ${id} -n "已独立实测验证..."`);
+  console.log(`4. 如验收不通过则驳回重做：`);
+  console.log(`   handoff reject ${id} -n "驳回原因与缺失点..."\n`);
+}
+
+/** 后台监听回执状态变迁（支持跨仓与同仓多窗口协同）。
+ * 设计为配合 Agent run_in_background 执行：挂起 0 Token 消耗，回执到达时 Exit 0 唤醒。 */
+async function cmdWait(args) {
+  const timeoutVal = flagValue(args, '--timeout') || flagValue(args, '-t');
+  const intervalVal = flagValue(args, '--interval') || flagValue(args, '-i');
+  const timeoutMs = parseDuration(timeoutVal, 1800);
+  const intervalMs = Math.max(500, parseDuration(intervalVal, 3));
+
+  const valFlags = ['--timeout', '-t', '--interval', '-i'];
+  const valueIdx = new Set();
+  for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
+  const id = args.find((a, i) => !a.startsWith('-') && !valueIdx.has(i));
+
+  if (!id) {
+    console.error('用法: handoff wait <id> [--timeout <duration>] [--interval <duration>]');
+    console.error('示例: handoff wait SWOOP-20261104-01-feat --timeout 30m');
+    process.exit(2);
+  }
+
+  const hFile = path.join(H_DIR, `${id}.md`);
+  if (!fs.existsSync(hFile)) {
+    console.error(`❌ 找不到交接文档: ${hFile}`);
+    process.exit(1);
+  }
+
+  const rFile = path.join(R_DIR, `${id}-resp.md`);
+  let hFm = readFM(fs.readFileSync(hFile, 'utf8')) || {};
+  let curStatus = hFm.status;
+
+  if (curStatus === 'closed') {
+    console.log(`ℹ️ 交接 ${id} 已经是 closed（已闭环），无需等待。`);
+    process.exit(0);
+  }
+
+  if (curStatus === 'received') {
+    console.log(`✅ 交接 ${id} 已经处于 received（已收到回执）状态。`);
+    printWaitWakeupSummary(id, hFile, rFile, hFm);
+    process.exit(0);
+  }
+
+  const startTime = Date.now();
+  console.log(`⏳ [Handoff Wait] 正在监听交接 ${id} 的回执到达...`);
+  console.log(`   - 当前状态: ${curStatus || 'draft'}`);
+  console.log(`   - 目标文件: ${path.relative(ROOT, rFile)}`);
+  console.log(`   - 超时设定: ${formatDuration(timeoutMs)} (检查间隔: ${formatDuration(intervalMs)})`);
+  console.log(`   - 运行模式: ${MODE === 'intra-repo' ? '仓内模式 (intra-repo)' : '跨仓模式'}`);
+  if (process.env.HANDOFF_LANE) {
+    console.log(`   - 当前窗口 Lane: ${process.env.HANDOFF_LANE}`);
+  }
+  console.log(`   (提示: 此命令设计为在后台运行 run_in_background，回执到达时将 Exit 0 唤醒主会话)\n`);
+
+  while (true) {
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= timeoutMs) {
+      console.error(`\n⏰ [超时] 等待交接 ${id} 回执超过 ${formatDuration(timeoutMs)}，执行方未在时限内提交回执。`);
+      console.error(`⚠️ 监听已退出 (Exit 124)。建议联系执行方或检查执行窗口进度。`);
+      process.exit(124);
+    }
+
+    try {
+      if (fs.existsSync(hFile)) {
+        hFm = readFM(fs.readFileSync(hFile, 'utf8')) || {};
+        curStatus = hFm.status;
+      }
+
+      if (curStatus !== 'received' && curStatus !== 'closed' && fs.existsSync(rFile)) {
+        const rRaw = fs.readFileSync(rFile, 'utf8');
+        const rFm = readFM(rRaw);
+        if (rFm && (rFm.handoff_id === id || !rFm.handoff_id)) {
+          if (MODE !== 'intra-repo') {
+            const needsChange = Boolean(rFm.needs_change || rFm.needs_iggle_change);
+            setFM(hFile, { status: 'received', needs_iggle_change: needsChange });
+            curStatus = 'received';
+          }
+        }
+      }
+
+      if (curStatus === 'received' || curStatus === 'closed') {
+        console.log(`\n🎉 [回执已就绪] 检测到交接 ${id} 状态已转为 ${curStatus}！`);
+        printWaitWakeupSummary(id, hFile, rFile, hFm);
+        process.exit(0);
+      }
+    } catch {
+      // 容忍读文件过程中的瞬时读写冲突
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+}
+
 const rawArgv = process.argv.slice(2);
 // 剥离全局旗标 --root（及其值）/ --root=...，命令 = 第一个非旗标 token；resolveRoot 已在模块加载时消费了 --root。
 const nonRoot = [];
@@ -1911,6 +2068,7 @@ switch (cmd) {
   case 'link': cmdLink(rest); break;
   case 'brief': cmdBrief(rest); break;
   case 'sync': cmdSync(); break;
+  case 'wait': await cmdWait(rest); break;
   case 'drift': cmdDrift(rest); break;
   default:
     console.log(`Handoff Hub CLI
@@ -1924,6 +2082,7 @@ switch (cmd) {
   handoff reject <id> -n "<驳回理由>"       审计驳回：received → forwarded 退回执行方继续改
   handoff receipt <id> [-n "<回执正文>"] [--needs-change] [--evidence-paths "<a,b>"] [--evidence-commits "<sha,sha>"] [--evidence-repo "<key|path>"] [--evidence-note "<说明>"]   登记回执并翻 received（-n 落盘为回执正文；仓内回执须带 evidence）
   handoff forward <id>                     标记已转递
+  handoff wait <id> [--timeout <dur>] [--interval <dur>]  后台监听回执到达（到达自动退出唤醒；支持跨仓与同仓多窗口）
   handoff open <id>                        打开交接文件
   handoff show <id>                        triage 视图：frontmatter + 节标题 + 首行（不 dump 全文）
   handoff check                            全库合规体检（exit 0 = 合规，任务收尾判据；按根模式分支）

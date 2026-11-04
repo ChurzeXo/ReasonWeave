@@ -1,6 +1,6 @@
 # Handoff Hub 命令手册
 
-> 契约 **v2.12.5** 配套文档（原标 v2.9，2026-10-15 独立审计 AR-F9 发现版本漂移后更正）。所有涉及**交接、回执、验收**的命令全收录于此；**命令行为以 `handoff -h` 与引擎为准**，本文件为速查。
+> 契约 **v2.14.0** 配套文档（支持后台监听 `handoff wait` · 跨仓与同仓多窗口协同）。所有涉及**交接、回执、验收**的命令全收录于此；**命令行为以 `handoff -h` 与引擎为准**，本文件为速查。
 > 细则以 `README.md` 为准（跨仓 + **仓内模式**）；本文件只管「怎么敲命令」。
 
 ---
@@ -35,6 +35,7 @@
 | `forward` | `forward SWOOP-20260822-02-bug` | 标记已转递（draft → forwarded）。**可选的事后标记**——执行方对 draft/forwarded 一律照办（v2.12.5），不跑 forward 也挡不住回执 | 话术已发给对方后 |
 | `brief` | `brief` 或 `brief swoop` | 生成各依赖方收件箱 `inbox/<target>.md`（轻量快照 + 转递话术，供人工 / 不支持 CLI 的工具用） | 转递前 |
 | `prompt` | `prompt <ID>` | 输出单份详版转递提示词（复制给依赖方 Agent） | 需要单份详版时 |
+| `wait` | `wait <ID> [--timeout 30m]` | **后台监听回执**：挂起等待回执生成，收到回执自动 Exit 0 唤醒发起方/审计方进入实测闭环（支持跨仓与同仓多窗口协同） | 产出提示词后挂起等待 |
 | `sync` | `sync` | 扫 `receipts/` 自动登记回执（draft/forwarded → received，含 needs_iggle_change），iggle 侧收回执主入口 | 回执到达后 |
 | `close` | `close <ID> -n "已核实源码+tsc零错"` | **验收闭环**（received → closed）：结论写入交接「验收记录」节；无 `-n` 拒绝执行 | 核实通过后 |
 | `check` | `check` | 全库合规体检：命名/frontmatter/状态机/孤儿回执/验收记录。exit 0 = 通过 | **任务收尾硬门禁** |

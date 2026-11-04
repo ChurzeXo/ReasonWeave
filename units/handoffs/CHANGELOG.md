@@ -6,6 +6,8 @@
 
 ---
 
+> **v2.14.0 变更（2026-11-04 · 新增 `handoff wait` 后台监听 · 跨仓与同仓多窗口异步协同）**：动因——多 Agent / 多窗口工作流中，交接发起方停滞等待回执依赖人工在窗口间复制提示词，割裂感强且缺乏事件驱动机制。**① `handoff wait <id> [--timeout <dur>] [--interval <dur>]`**：专职后台监听子命令，配合 Agent `run_in_background` / 异步执行机制挂起，0 Token 待机。**② 状态与原子性判定**：轮询交接单与回执单状态流转，回执合规落地且状态翻为 `received`/`closed` 后自动打印结构化回执摘要并 **Exit 0 退出**，借由宿主系统的 Reactive Wakeup 机制自动唤醒发起方/审计方。**③ 防死锁超时保护**：内置可配置 TTL（默认 30m，支持 10m/1h/30s 等），超时安全退出（Exit 124）并提示人工排查。**④ 防偷工减料硬门禁注入**：唤醒输出中强化注入审计纪律（**严禁仅静态读码或自报采信**，必须在终端独立运行验收命令后闭环）。**⑤ 同仓多窗口与跨仓全覆盖**：仓内自动读取 Lane 身份与自然角色，跨仓自动识别回执落地。动 `STUB_BODY` ⇒ 各载体须重跑 `handoff install`。
+
 > **v2.13.0 变更（2026-10-26 · 仓内角色映射 + 同仓提示词重构 + 防提前闭环 + 审计动作契约）**：动因——Tappy 仓内交接 `audit-20261026-01-task` 暴露三类缺陷：①提示词把项目名 / lane slug 当沟通角色；②发起方自填审计回执并提前闭环；③审计 Agent 仅静态读码即宣称通过。**① 仓内角色映射（Lane Identifier → Engineer Role）**：`handoff.mjs` 新增默认映射 `impl→实现方` / `audit→审计方` / `arch·design→架构设计方`，`.handoff-hub.json` 的 `lane_labels` 可显式覆盖、缺省回退默认。**② 同仓提示词重构**：严禁项目名；出站 `请【<目标角色>】接单：<路径>（<主题>）`、入站 `请【<发起角色>】查收【<本方角色>】回执：<路径>（<结论> · 是否需改动：<是/否>）`；`printReceiptDeliveryLine` 仓内模式弃用 `detectRepo`、改读回执 frontmatter `from_lane`/`to_lane` 拼角色。**③ 防提前闭环（Anti-Self-Closing）**：`receipt` 据 `HANDOFF_LANE` 硬拒发起方自填 / 越界写回执，落 `author_lane`，`accept`/`check` 双侧核验回执确由接收方撰写。**④ 审计动作契约**：`to_lane=audit` 时在接入桩 + `handoff prompt` 输出 + 交接文档「给执行方」节强制注入「审计方严禁仅静态读码，独立执行验收判据中所有测试与校验命令，以实测输出为准绳，严禁采信自报」。动 `STUB_BODY` ⇒ 各载体须重跑 `handoff install`。
 
 > v2.3 变更：回执必附「部署提示（含钉值协同）+ 转递话术」——细则见 `RESPONSE-TEMPLATE.md`；钉值更新判据（消费方何时必须改 `REQUIRED_SWEEP_COMMIT`）见 Swoop `AGENTS.md §8`「版本钉死协同」。
