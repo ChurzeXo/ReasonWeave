@@ -1978,12 +1978,17 @@ function printWaitWakeupSummary(id, hFile, rFile, hFm) {
 }
 
 /** 后台监听回执状态变迁（支持跨仓与同仓多窗口协同）。
- * 设计为配合 Agent run_in_background 执行：挂起 0 Token 消耗，回执到达时 Exit 0 唤醒。 */
+ * 设计为配合 Agent run_in_background 执行：挂起 0 Token 消耗，回执到达时 Exit 0 唤醒。
+ * 针对 macOS / Apple Silicon 能效深度优化：
+ * 1. fs.watch 事件驱动：系统内核级事件监听，有变动瞬间触发唤醒（毫秒级响应），无变动时不占用 CPU。
+ * 2. mtime 守卫：未检测到文件修改时间变动时，跳过 readFileSync 与正则解析，消除重复磁盘与 CPU 开销。
+ * 3. 自适应动态退避（Adaptive Backoff）：定时器防丢事件保底，随时间自动拉长休眠周期，大幅减少 CPU 唤醒次数，彻底避免发热与卡顿。
+ */
 async function cmdWait(args) {
   const timeoutVal = flagValue(args, '--timeout') || flagValue(args, '-t');
   const intervalVal = flagValue(args, '--interval') || flagValue(args, '-i');
   const timeoutMs = parseDuration(timeoutVal, 1800);
-  const intervalMs = Math.max(500, parseDuration(intervalVal, 3));
+  const explicitIntervalMs = intervalVal ? Math.max(500, parseDuration(intervalVal, 3)) : null;
 
   const valFlags = ['--timeout', '-t', '--interval', '-i'];
   const valueIdx = new Set();
@@ -2021,28 +2026,95 @@ async function cmdWait(args) {
   console.log(`⏳ [Handoff Wait] 正在监听交接 ${id} 的回执到达...`);
   console.log(`   - 当前状态: ${curStatus || 'draft'}`);
   console.log(`   - 目标文件: ${path.relative(ROOT, rFile)}`);
-  console.log(`   - 超时设定: ${formatDuration(timeoutMs)} (检查间隔: ${formatDuration(intervalMs)})`);
+  console.log(`   - 超时设定: ${formatDuration(timeoutMs)} (能效模式: 事件驱动 + 自适应退避)`);
   console.log(`   - 运行模式: ${MODE === 'intra-repo' ? '仓内模式 (intra-repo)' : '跨仓模式'}`);
   if (process.env.HANDOFF_LANE) {
     console.log(`   - 当前窗口 Lane: ${process.env.HANDOFF_LANE}`);
   }
   console.log(`   (提示: 此命令设计为在后台运行 run_in_background，回执到达时将 Exit 0 唤醒主会话)\n`);
 
+  let lastHMtime = 0;
+  let lastRMtime = 0;
+
+  // 设置 fs.watch 监听目录变动（事件驱动瞬间唤醒）
+  let triggerResolve = null;
+  const watchers = [];
+  const onFsEvent = (filename) => {
+    if (!filename || filename.includes(id)) {
+      if (triggerResolve) {
+        const r = triggerResolve;
+        triggerResolve = null;
+        r('fs-event');
+      }
+    }
+  };
+
+  const safeWatch = (targetDir) => {
+    try {
+      if (fs.existsSync(targetDir)) {
+        const w = fs.watch(targetDir, { persistent: false }, (eventType, filename) => {
+          onFsEvent(filename);
+        });
+        watchers.push(w);
+      }
+    } catch {}
+  };
+
+  safeWatch(H_DIR);
+  safeWatch(R_DIR);
+
+  const cleanupWatchers = () => {
+    for (const w of watchers) {
+      try { w.close(); } catch {}
+    }
+    watchers.length = 0;
+  };
+
+  process.on('exit', cleanupWatchers);
+
+  // 自适应动态退避（未显式指定间隔时根据等待时长智能拉长兜底轮询）
+  const getNextInterval = (elapsed) => {
+    if (explicitIntervalMs) return explicitIntervalMs;
+    if (elapsed < 30_000) return 2_000;       // 前 30 秒：2s
+    if (elapsed < 120_000) return 4_000;      // 30s ~ 2min：4s
+    if (elapsed < 300_000) return 8_000;      // 2min ~ 5min：8s
+    return 15_000;                            // 5min 以上长稳态：15s 保底
+  };
+
   while (true) {
     const elapsed = Date.now() - startTime;
     if (elapsed >= timeoutMs) {
+      cleanupWatchers();
       console.error(`\n⏰ [超时] 等待交接 ${id} 回执超过 ${formatDuration(timeoutMs)}，执行方未在时限内提交回执。`);
       console.error(`⚠️ 监听已退出 (Exit 124)。建议联系执行方或检查执行窗口进度。`);
       process.exit(124);
     }
 
     try {
-      if (fs.existsSync(hFile)) {
+      // 1. 检查 hFile 的 mtime 是否变动（mtime 守卫）
+      let hMtime = 0;
+      try {
+        if (fs.existsSync(hFile)) hMtime = fs.statSync(hFile).mtimeMs;
+      } catch {}
+
+      if (hMtime && hMtime !== lastHMtime) {
+        lastHMtime = hMtime;
         hFm = readFM(fs.readFileSync(hFile, 'utf8')) || {};
         curStatus = hFm.status;
       }
 
-      if (curStatus !== 'received' && curStatus !== 'closed' && fs.existsSync(rFile)) {
+      // 2. 检查 rFile 是否生成或更新
+      let rExists = false;
+      let rMtime = 0;
+      try {
+        if (fs.existsSync(rFile)) {
+          rExists = true;
+          rMtime = fs.statSync(rFile).mtimeMs;
+        }
+      } catch {}
+
+      if (curStatus !== 'received' && curStatus !== 'closed' && rExists && rMtime !== lastRMtime) {
+        lastRMtime = rMtime;
         const rRaw = fs.readFileSync(rFile, 'utf8');
         const rFm = readFM(rRaw);
         if (rFm && (rFm.handoff_id === id || !rFm.handoff_id)) {
@@ -2055,6 +2127,7 @@ async function cmdWait(args) {
       }
 
       if (curStatus === 'received' || curStatus === 'closed') {
+        cleanupWatchers();
         console.log(`\n🎉 [回执已就绪] 检测到交接 ${id} 状态已转为 ${curStatus}！`);
         printWaitWakeupSummary(id, hFile, rFile, hFm);
         process.exit(0);
@@ -2063,7 +2136,19 @@ async function cmdWait(args) {
       // 容忍读文件过程中的瞬时读写冲突
     }
 
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    // 结合自适应退避与 fs.watch 事件驱动：任意一个先触发即刻进入下一轮检查
+    const waitTime = Math.min(getNextInterval(elapsed), Math.max(0, timeoutMs - elapsed));
+    await new Promise((resolve) => {
+      let timer = null;
+      triggerResolve = (source) => {
+        if (timer) clearTimeout(timer);
+        resolve(source);
+      };
+      timer = setTimeout(() => {
+        triggerResolve = null;
+        resolve('timer');
+      }, Math.max(200, waitTime));
+    });
   }
 }
 

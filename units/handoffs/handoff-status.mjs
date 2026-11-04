@@ -85,9 +85,16 @@ function listMd(dir) {
   catch { return []; }
 }
 
+const hFiles = listMd(H_DIR);
+const rFiles = listMd(R_DIR);
+const hFmMap = new Map();
+const rFmMap = new Map();
+
 const handoffs = {};
-for (const f of listMd(H_DIR)) {
-  const fm = parseFM(fs.readFileSync(path.join(H_DIR, f), 'utf8'));
+for (const f of hFiles) {
+  let fm = null;
+  try { fm = parseFM(fs.readFileSync(path.join(H_DIR, f), 'utf8')); } catch {}
+  hFmMap.set(f, fm);
   if (!fm || !fm.handoff_id) continue;
   const rec = {
     id: fm.handoff_id,
@@ -110,24 +117,26 @@ for (const f of listMd(H_DIR)) {
 }
 
 const receipts = {};
-for (const f of listMd(R_DIR)) {
-  const fm = parseFM(fs.readFileSync(path.join(R_DIR, f), 'utf8'));
+for (const f of rFiles) {
+  let fm = null;
+  try { fm = parseFM(fs.readFileSync(path.join(R_DIR, f), 'utf8')); } catch {}
+  rFmMap.set(f, fm);
   const id = (fm && fm.handoff_id) || f.replace(/-resp\.md$/i, '').replace(/\.md$/i, '');
   receipts[id] = { file: `receipts/${f}`, needs: fm && fm.needs_iggle_change };
 }
 
-// ── 规范性校验（便于 agent / 自动化识别异常）──
+// ── 规范性校验（直接利用内存缓存，0 重复磁盘 I/O）──
 const warnings = [];
-for (const f of listMd(H_DIR)) {
+for (const f of hFiles) {
   const base = f.replace(/\.md$/i, '');
-  const fm = parseFM(fs.readFileSync(path.join(H_DIR, f), 'utf8'));
+  const fm = hFmMap.get(f);
   if (!fm || !fm.handoff_id) { warnings.push(`交接文件缺 frontmatter handoff_id：${f}`); continue; }
   if (base !== fm.handoff_id) warnings.push(`文件名(${base}) 与 frontmatter handoff_id(${fm.handoff_id}) 不一致：${f}`);
   if (!ID_RE.test(fm.handoff_id)) warnings.push(`handoff_id 不符合规范（应为 ${MODE === 'intra-repo' ? '<LANE>-<YYYYMMDD>-<NN>-<TYPE>' : '<TARGET>-<YYYYMMDD>-<NN>-<TYPE>'}）：${fm.handoff_id}`);
 }
-for (const f of listMd(R_DIR)) {
+for (const f of rFiles) {
   const base = f.replace(/-resp\.md$/i, '').replace(/\.md$/i, '');
-  const fm = parseFM(fs.readFileSync(path.join(R_DIR, f), 'utf8'));
+  const fm = rFmMap.get(f);
   const id = (fm && fm.handoff_id) || base;
   if (!handoffs[id]) warnings.push(`回执找不到对应交接：${f} (id=${id})`);
 }
