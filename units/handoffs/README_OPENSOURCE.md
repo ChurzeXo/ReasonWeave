@@ -1,5 +1,7 @@
 # Agent Baton (`baton`)
 
+### Lossless, API-like Task Handoff Between Multi-Repo AI Agents
+
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -11,8 +13,9 @@
 
 </div>
 
-> **Evidence-First, Zero-Trust Handoff & Double-Blind Audit Protocol for AI Coding Agents.**  
-> *Pass the baton between AI agents with cryptographic proofs, zero-token reactive sleep, and strict anti-spoofing audit gates.*
+> **Stop copy-pasting prompts and fighting context rot.**  
+> Penetrate repository boundaries with a single command, align strict collaboration contracts, enforce double-blind independent audits, and close the loop seamlessly via zero-token event-driven wakeups.  
+> *(Evidence-First, Zero-Trust Handoff & Double-Blind Audit Protocol for AI Coding Agents)*
 
 ---
 

@@ -11,7 +11,7 @@
   - 任务越界与待办低成本拦截捕获（`backlog`）
   - 提交前仓库不变量回归探测（`preflight`）
   - 本地化多层静态扫描与代码质量防线（`review-gate`）
-  - 跨端、跨仓库、多 Agent 离线工作交接与回执闭环（`handoffs`）
+  - 跨仓/同仓 Agent 任务交割与无损闭环（`handoffs` / `baton`：像调 API 一样无损直达，双盲审计与事件驱动无感闭环）
   - AEF 体系化落地全套参考（`playbook`）
 
 ## 3. 核心价值主张 (Value Proposition)

@@ -13,13 +13,22 @@ units/handoffs/inbox/
 units/handoffs/archive/
 units/handoffs/legacy/
 units/handoffs/reviews/
+units/handoffs/logs/
 units/handoffs/.handoff-hub.json
+units/handoffs/.audit-challenges.json
+units/handoffs/.handoff-worktrees/
+units/handoffs/.workbuddy/
 handoffs/handoffs/
 handoffs/receipts/
 handoffs/inbox/
 handoffs/archive/
 handoffs/legacy/
 handoffs/reviews/
+handoffs/logs/
+handoffs/.handoff-hub.json
+handoffs/.audit-challenges.json
+handoffs/.handoff-worktrees/
+handoffs/.workbuddy/
 
 # Node & package artifacts
 node_modules/

@@ -59,8 +59,11 @@ lab zspec guide             # 查看面向 AI Agent 的 ZSpec 实施指南
 lab migrate [项目路径]      # 将老项目中硬编码的路径一键平滑升级
 ```
 
-### 2. `handoff` — 跨仓/仓内多 Agent 协作引擎 (v2.16)
-支持双盲审计脱敏（`--blind`）、一次性审计防伪 Nonce（`--audit-nonce`）与后台待机自动唤醒（`--wait`）：
+### 2. `handoff` / `baton` — 跨仓/同仓 Agent 任务交割引擎 (v2.16)
+> **跨仓/同仓 Agent 间任务交割像调 API 一样无损直达**  
+> 拒绝人肉传话与上下文衰减。一条命令穿透仓库边界，接口与协作契约严密对齐，独立窗口双盲审计，事件驱动无感闭环。
+
+支持双盲审计脱敏（`--blind`）、一次性审计防伪 Nonce（`--audit-nonce`）与后台待机自动唤醒（`--wait` / `--daemon`）：
 ```bash
 handoff status --for <角色> # 冷启动直取当前角色的进行中待办
 handoff new <目标> <类型> "<标题>" # 创建交接单 (task/bug/feature/question)
@@ -84,7 +87,7 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 | **backlog** | [`units/backlog/`](units/backlog/) | 待办捕获：越界 / 待拍板 / 未来功能，一任务一文件，不打断当前工作流 |
 | **preflight** | [`units/preflight/`](units/preflight/) | 仓库不变量探针 + Git 提交门禁，防止“做完才发现还有一件事” |
 | **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + 本地 review 门禁，拦截危险注入与质量缺陷 |
-| **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 仓内离线交接枢纽（`handoff.mjs` 引擎），多 Agent 协同唯一出口 |
+| **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton / `handoff`），任务交接像调 API 一样无损直达与双盲审计 |
 | **playbook** | [`units/playbook/`](units/playbook/) | Agent Engineering Framework (AEF) 完整方法论手册与模板库 |
 
 > **向后兼容保证**：根目录下保留了指向各 Unit 的软链接（`adr`、`preflight`、`handoffs` 等），无论通过 `$(lab path <unit>)` 还是旧绝对路径均可无缝兼容。
@@ -126,8 +129,8 @@ lab zspec init "My Project"
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:6d32cc70 -->
-### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.16.0 为准）
+<!-- stub:sha256:d106c8d0 -->
+### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.16.5 为准）
 
 **早拦 Preflight（强制）**
 - **命令形态**：一律 `baton <op>` 或 `handoff <op>`（PATH shim → 中央引擎；幂等自愈 `baton link`）。若报 command not found：运行 `baton link`（或 `handoff link`）自愈（或通过 lab-agent-toolkit 重新 `npm link`）。
@@ -138,6 +141,7 @@ lab zspec init "My Project"
 - receipt 前确保 status 快照 **< 60 分钟**（超时重跑）。
 - 仓内优先读 frontmatter `workspace`（same/separate），禁用 mtime 推断。
 - 执行方**只写 receipt**，**不做 accept/reject**。
+- **严禁抢跑/虚假回执**：验收判据**全部实测通过**方可提交回执。执行中途遇阻、环境/多实例冲突或需讨论的中间状态，**仅记录于 reviews/ 或对话说明，严禁提交包含「已通过」的抢跑回执**。
 - 回执正文唯一源 = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`：**照抄其「回执模板（可直接复制）」骨架**（含 evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。
 - **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 `--evidence-paths "真实文件,..."` / `--evidence-commits "<sha>"`（无文件改动用 `--evidence-note "<原因>"`）；声称的路径须真实存在、提交须 `git cat-file -e` 可查，否则 receipt / accept / check 三处拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。
 - 收尾必须 `baton check`（或 `handoff check`）exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节」；存量豁免）。
@@ -149,8 +153,8 @@ lab zspec init "My Project"
 **最小操作序列（出站 = 建/发交接 · 强制闭环）**
 1. `baton new <target|lane> <type> "<标题>"`（或 `handoff new ...`）并填写正文
 2. **转递并挂起后台监听（必须执行）**：
-   执行 `baton forward <ID> --wait`（置于后台运行 `run_in_background: true`；需双盲脱敏加 `--blind`）
-   ——一条命令完成标记转递、打印接单提示词与挂起待机；回执到达后 Exit 0 自动唤醒本会话进行独立验收闭环。
+   执行 `baton forward <ID> --daemon`（推荐：脱钩后台常驻探针，命令立即退出）或 `baton forward <ID> --wait`（置于后台运行任务 `run_in_background: true`；需双盲脱敏加 `--blind`）
+   ——无论同工作区还是跨工作区，必须启动监听探针；回执到达后探针唤醒进行独立验收闭环。
 3. **输出交接提示词（末块规范）**：本地 AI 根据用户本地语言自适应输出，标题、描述与独立代码块分离（其后无任何正文）：
    ## 交接提示词
    > 直接复制下方提示词，发送给接收方 Agent 接单：
@@ -163,7 +167,7 @@ lab zspec init "My Project"
 2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 `to_lane == 当前 lane`；跨仓 = 落在目标收件箱）→ 确认目标 ID
 3. `baton show <ID>`
 4. 按边界最小改动（仅该 lane 应改文件）
-5. 写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → `baton receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"`（若 `to_lane=audit` 须附 `--audit-nonce "<nonce>"`；仓内必附 evidence；无文件改动用 `--evidence-note`）
+5. 实测全过方写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → `baton receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"`（若 `to_lane=audit` 须附 `--audit-nonce "<nonce>"`；仓内必附 evidence；无文件改动用 `--evidence-note`；中途受阻仅写 reviews/ 严禁提回执）
 6. `baton check`（exit 0）
 7. **自动唤醒闭环**：回执登记后，发起方后台监听探针将自动 Exit 0 唤醒进行验收，无需人工回传回执。
 
