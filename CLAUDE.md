@@ -1,7 +1,7 @@
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:15c880d6 -->
-### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.16.6 为准）
+<!-- stub:sha256:328da2d8 -->
+### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.17.0 为准）
 
 **早拦 Preflight（强制）**
 - **命令形态**：一律 `baton <op>` 或 `handoff <op>`（PATH shim → 中央引擎；幂等自愈 `baton link`）。若报 command not found：运行 `baton link`（或 `handoff link`）自愈（或通过 lab-agent-toolkit 重新 `npm link`）。
@@ -24,7 +24,7 @@
 **最小操作序列（出站 = 建/发交接 · 强制闭环）**
 1. `baton new <target|lane> <type> "<标题>"`（或 `handoff new ...`）并填写正文
 2. **转递并挂起后台监听（必须执行）**：
-   执行 `baton forward <ID> --wait`（或 `--daemon`，自动脱钩后台常驻探针，命令秒级退出；需双盲脱敏加 `--blind`）
+   执行 `baton forward <ID> --wait`（AI 客户端宿主进程树托管；人类终端可用 `--daemon` 脱钩；需双盲脱敏加 `--blind`）
    ——无论同工作区还是跨工作区，必须启动监听探针；回执到达后探针唤醒进行独立验收闭环。
 3. **输出交接提示词（末块规范）**：本地 AI 根据用户本地语言自适应输出，标题、描述与独立代码块分离（其后无任何正文）：
    ## 交接提示词

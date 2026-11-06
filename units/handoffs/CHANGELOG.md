@@ -6,6 +6,8 @@
 
 ---
 
+> **v2.17.0 变更（2026-11-06 · 解耦 --wait 与 --daemon · 构建全 AI 客户端与人类终端统一状态监听与唤醒模型 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——v2.16.6 将 `forward --wait` 强行合流为 `spawnDaemonWait` 脱钩后台，在人类终端免阻塞表现良好，但在托管式 AI 客户端（如 Google Antigravity、Claude Code、Cursor 等）中，因进程秒退导致宿主任务管理器无法接管后台任务，且孤儿 Node 退出时无法触发宿主 Reactive Wakeup 机制，导致长任务挂起与自动唤醒完全失效。①**语义解耦（Semantic Separation）**：还原 `--wait` 为标准托管阻塞等待（Managed process-tree waiting，保持进程树存活，依托 `fs.watch` + 自适应退避 0-Token 挂起，回执落地时 Exit 0 唤醒宿主）；还原 `--daemon` 为人类终端专用的 OS 孤儿脱钩（Detached OS daemon，秒退后台）；②**环境自适应感知（Smart Environment Auto-Detection）**：内置 `isAgentEnvironment()` 探针，感知 Antigravity、Claude Code、Cursor 等典型 Agent 宿主环境；在托管环境下，即便误传 `--daemon` 亦智能回退为托管阻塞等待，彻底杜绝唤醒丢失；③**统一规范接入桩（Agent Stub）**：出站最小操作序列指引升级为 `baton forward <ID> --wait`（AI 客户端宿主进程树托管；人类终端可选 `--daemon`）。
+
 > **v2.16.6 变更（2026-11-06 · forward --wait 统一为自脱钩后台守护 · 消除管道误杀面）**：动因——`baton forward <id> --wait` 原走进程内阻塞等待，在经由管道截断（如 `| head -6`）或外部工具超时包装时易遭 SIGPIPE/SIGTERM 误杀导致监听未挂起。①**forward --wait 统一为自脱钩守护**：`baton forward <id> --wait` 与 `--daemon` 彻底统一复用 `spawnDaemonWait`，父命令 <0.1s 退出、守护常驻后台并在回执到达时 Exit 0 唤醒；②**引导语与帮助文案纠正**：修复 `cmdNew` / `cmdNewIntra` 引导语中「置于后台运行」的脆弱描述，统一为自动脱钩后台守护安全指引，CLI 帮助同步更新；③**参数透明透传**：`wait` 与 `forward` 对 `--timeout` 等参数透传与独立 `baton wait` 行为完全保持一致。
 
 > **v2.16.5 变更（2026-11-06 · 守护监听路径纠偏 + 严防抢跑回执 + 出站守护探针规约 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——下游消费方实测反馈同仓协作时因混淆旧文档遗漏后台监听，且执行方中途受阻时抢跑提交 Verified 伪回执；同时修复 `spawnDaemonWait` 在同仓模式下日志路径嵌套 Bug。①**守护日志路径纠正**：修复 `spawnDaemonWait` 内 `ROOT` 叠加导致的 `.handoffs/.handoffs/logs` 嵌套目录；②**同仓免监听混淆消除**：移除历史模板「免转递」字样，明晰无论同仓还是跨仓，均必须启动后台监听探针以达成事件唤醒闭环；③**接入桩强化反抢跑回执**：早拦 Preflight 与入站序列明确要求「验收判据全部实测通过方可提交回执，中途受阻仅记录 reviews/，严禁提交抢跑回执」；④**出站优先推荐 `--daemon`**：一条命令完成转递、打印交接提示词与脱钩后台守护。
