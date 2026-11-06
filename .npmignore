@@ -1,10 +1,12 @@
 # 运行态历史数据（严禁打包发布）
+receipts/
 units/handoffs/handoffs/
 units/handoffs/receipts/
 units/handoffs/inbox/
 units/handoffs/archive/
 units/handoffs/legacy/
 units/handoffs/reviews/
+units/handoffs/.handoff-hub.json
 
 # 开发过程临时文档与测试日志
 units/preflight/evidence/2026-10-*/run*.txt

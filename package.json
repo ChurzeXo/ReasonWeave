@@ -6,6 +6,8 @@
   "main": "bin/lab.mjs",
   "bin": {
     "lab": "./bin/lab.mjs",
+    "baton": "./units/handoffs/handoff.mjs",
+    "agent-baton": "./units/handoffs/handoff.mjs",
     "handoff": "./units/handoffs/handoff.mjs",
     "adr-init": "./units/adr/scripts/adr-init.sh"
   },
@@ -22,6 +24,7 @@
     "docs/",
     "constitution.md",
     "README.md",
+    "INSTALL.md",
     "使用说明.md",
     "AGENTS.md",
     "units/adr/",

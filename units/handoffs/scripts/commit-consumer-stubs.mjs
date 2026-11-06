@@ -19,9 +19,9 @@ const TARGET_REPOS = [
 ];
 
 const STUB_FILES = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'README.md'];
-const COMMIT_MSG = 'chore(handoff): upgrade handoff stub to v2.15.0 with intra-repo prompt exemption';
+const COMMIT_MSG = 'chore(baton): upgrade baton stub to v2.16.0 with explicit outbound pass prompt & auto-wait';
 
-console.log('🚀 开始为 6 大下游消费方精准提交 Handoff v2.15.0 接入桩（含 AGENTS/CLAUDE/GEMINI）...\n');
+console.log('🚀 开始为 6 大下游消费方精准提交 Baton v2.16.0 接入桩（含 AGENTS/CLAUDE/GEMINI）...\n');
 
 const results = [];
 

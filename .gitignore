@@ -6,12 +6,14 @@ Thumbs.db
 *~
 
 # handoffs 运行态与个人历史数据（严格排除，保持能力库纯净）
+receipts/
 units/handoffs/handoffs/
 units/handoffs/receipts/
 units/handoffs/inbox/
 units/handoffs/archive/
 units/handoffs/legacy/
 units/handoffs/reviews/
+units/handoffs/.handoff-hub.json
 handoffs/handoffs/
 handoffs/receipts/
 handoffs/inbox/
@@ -26,6 +28,7 @@ yarn-debug.log*
 yarn-error.log*
 package-lock.json
 *.tgz
+*.zip
 
 # 临时证据与测试运行日志
 units/preflight/evidence/2026-10-*/run*.txt
