@@ -1,5 +1,13 @@
 # Backlog System Changelog
 
+## v1.2.0 (2026-11-06)
+
+- **《Agent 自主治理与隐患嗅探规范》（Autonomous Governance Spec）发布**：新增 `AUTONOMOUS-GOVERNANCE.md`，将 AI Agent 从被动工具人升级为具备系统免疫感知的架构协作者。
+- **三态分流漏斗**：严格规范 In-Scope（原地修复补测）、ADR（规则/底层事实变更）、Backlog（越界/长跑/需人类拍板）。
+- **立项合理性四问**：越界否、事实度量否、雪崩风险否、机器可判否。
+- **单句呈批规约**：规范任务汇报末尾的《建议沉淀项》，人类单句“可/准/驳”防线，坚决杜绝静默创建。
+- **领域插座中立化**：公共侧零业务硬编码，挂载至下游工程 `docs/backlogs/IRONRULES.md` 的领域高敏感嗅探雷区。
+
 ## v1.1 (2026-10-11)
 
 - **依赖方铁律泛化**：模块不再预设依赖方（移除 iggle/coreml/swoop/prospero/consul 硬编码枚举与「涉 Swoop/Prospero 条目铁律」），改为**依赖方铁律规范**（`README.md` §4）——不变量（涉依赖方条目必带三行声明）＋通用路由判据＋匿名样例。
