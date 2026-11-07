@@ -1,0 +1,108 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://lab.agent.toolkit/telemetry/canonical_event.json",
+  "title": "CanonicalTelemetryEvent",
+  "description": "Standard event envelope for Agent tool calls, skill executions, and target App perceptions",
+  "type": "object",
+  "required": [
+    "event_id",
+    "trace_id",
+    "span_id",
+    "seq",
+    "capture_run",
+    "level",
+    "category",
+    "timestamp",
+    "producer",
+    "data_sanitized"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique UUID for the event record"
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "Global task/session trace ID across the entire interaction"
+    },
+    "span_id": {
+      "type": "string",
+      "description": "Specific step or tool invocation span ID"
+    },
+    "parent_span_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional parent span ID for nested skill/tool invocations"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonically increasing sequence number within this producer session"
+    },
+    "capture_run": {
+      "type": "string",
+      "description": "Grouping key for a specific continuous execution run or batch"
+    },
+    "level": {
+      "type": "string",
+      "enum": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "description": "L0: Atomic action/UI frame; L1: Intent tool/skill call; L2: Incident/error/veto"
+    },
+    "category": {
+      "type": "string",
+      "description": "Event category, e.g., tool_call, skill_step, target_app_action, perception_frame, error"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of event creation"
+    },
+    "producer": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "instance_id": {
+          "type": "string"
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "type": "string"
+        },
+        "app_pkg": {
+          "type": "string"
+        },
+        "activity": {
+          "type": "string"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "description": "Structured sanitized event payload (e.g. tool name, args, latency_ms, status)"
+    },
+    "data_sanitized": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true; asserts that the payload has passed DataSanitizer"
+    }
+  }
+}

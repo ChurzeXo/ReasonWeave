@@ -16,6 +16,7 @@ units/               独立工程单元（各模块自治上下文）
   ├── review-gate/   SAST 扫描与代码质量防线
   ├── adr/           架构决策记录机制与模板
   ├── backlog/       待办捕获制度与模板
+  ├── telemetry/     通用可观测与遥测规范 (JSON Schema / SDK / 证据链)
   └── playbook/      Agent Engineering Framework 方法论全集
 specs/               Spec Kit 规划与实施产物
 docs/                辅助文档与待办 (docs/backlogs/)

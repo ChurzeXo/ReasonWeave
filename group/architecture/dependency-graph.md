@@ -13,15 +13,19 @@ graph TD
     REVIEW["units/review-gate (代码安全质量防线)"]
     ADR["units/adr (架构记忆)"]
     BACKLOG["units/backlog (待办捕获)"]
+    TELEMETRY["units/telemetry (可观测与通用遥测)"]
     
     PLAYBOOK -.->|"理论出处"| PREFLIGHT
     PLAYBOOK -.->|"理论出处"| REVIEW
     PLAYBOOK -.->|"理论出处"| ADR
     PLAYBOOK -.->|"理论出处"| BACKLOG
     PLAYBOOK -.->|"理论出处"| HANDOFFS
+    PLAYBOOK -.->|"理论出处"| TELEMETRY
     
     PREFLIGHT -.->|"可协同编排 (pre-commit.d)"| REVIEW
     HANDOFFS -.->|"闭环回执可联动"| BACKLOG
+    TELEMETRY -.->|"提供物理证据链 (Trace/L0/L1)"| HANDOFFS
+    TELEMETRY -.->|"提供不变量探针数据"| PREFLIGHT
 ```
 
 ## 2. Unit 详细清单与演进节奏
@@ -33,6 +37,7 @@ graph TD
 | `units/review-gate/` | Shell 脚本 + SAST | `VERSION.md` | opengrep, git | 低频 (规则与基线优化) |
 | `units/adr/` | Shell 引导 + 模板 | `VERSION.md` | bash | 低频 (模板档位演进) |
 | `units/backlog/` | 规范文档 + 模板 | `VERSION.md` | 无 | 低频 (记录格式演进) |
+| `units/telemetry/` | JSON Schema + SDK | `VERSION.md` | 无 | 中频 (契约扩展与 SDK 适配) |
 | `units/playbook/` | 文档与方法论全集 | `README.md` | 无 | 持续积累 |
 
 ## 3. 隔离与变更规则
