@@ -44,3 +44,6 @@ units/preflight/evidence/2026-10-*/run*.txt
 units/preflight/evidence/2026-10-*/verify*.txt
 preflight/evidence/2026-10-*/run*.txt
 preflight/evidence/2026-10-*/verify*.txt
+
+# intra-repo sub-hub
+.handoffs/
