@@ -70,11 +70,18 @@ baton forward <id> --blind --wait
 ```
 
 ### `baton wait`
-Standalone 0-Token event-driven watcher (powered by OS `fs.watch`).
+Standalone 0-Token event-driven watcher & lightweight pub/sub aggregator (powered by OS `fs.watch`).
 ```bash
+# Single handoff wait
 baton wait <id> [--timeout 60m] [--settle 10s] [--daemon]
+
+# Multi-handoff lightweight pub/sub aggregation (Join mode, waits for all to be delivered)
+baton wait <id1> <id2> [--all] [--timeout 60m] [--settle 10s]
+
+# Multi-handoff race mode (wakes upon the first delivered handoff)
+baton wait <id1> <id2> --any [--timeout 60m] [--settle 10s]
 ```
-*Note*: Exits with code `0` when final delivery lands (`delivered`/`closed`) and the settle buffer has fully elapsed. Automatically wakes up your coding agent session. Exits with `124` on timeout (with precise diagnostic reason).
+*Note*: Exits with code `0` when final delivery lands (`delivered`/`closed`) and the settle buffer has fully elapsed. Automatically wakes up your coding agent session. Exits with `124` on timeout with structured matrix diagnostic report.
 
 ### `baton prompt`
 Generate the standard, copy-pasteable baton pass prompt for manual cross-session/window relay.
