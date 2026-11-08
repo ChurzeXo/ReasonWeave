@@ -129,17 +129,17 @@ lab zspec init "My Project"
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:179136b9 -->
-### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.18.0 为准）
+<!-- stub:sha256:40e72d1e -->
+### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.19.0 为准）
 
 **早拦 Preflight（强制）**
 - **命令形态**：一律 `baton <op>` 或 `handoff <op>`（PATH shim → 中央引擎；幂等自愈 `baton link`）。若报 command not found：运行 `baton link`（或 `handoff link`）自愈（或通过 lab-agent-toolkit 重新 `npm link`）。
 - 调用 `show/receipt/deliver/accept/reject/check` 前，**必须先跑** `baton status`（或 `handoff status`，执行方冷启动用 `baton status --for <本方 lane|target>` 直取本方待办）且其输出在上下文中。
-- **状态语义（v2.18.0 · 五态生命周期）**：「进行中」= 未闭环（`status ≠ closed`）且归属当前方。**待办 = `draft` + `forwarded`**——落我归属即该我动工；`received` = 回执草稿已登记（待执行方交付）；`delivered` = 执行方已完成终态交付（等待发起方验收）；`closed` = 审计闭环完成。
-- **终态交付机制（v2.18.0 · 防抢跑竞态）**：回执文件落盘不等于会话结束。执行方必须通过 `baton deliver <ID>`（或 `baton receipt <ID> --deliver`）显式标记终态交付；未 deliver 之前发起方 wait 探针不唤醒、accept 硬拒闭环。发起方严禁在收到显式交付信号前提前修改 Backlog 或规划文档。
+- **状态语义（v2.19.0 · 五态生命周期）**：「进行中」= 未闭环（`status ≠ closed`）且归属当前方。**待办 = `draft` + `forwarded`**——落我归属即该我动工；`received` = 回执草稿已登记（待执行方交付）；`delivered` = 执行方已完成终态交付（等待发起方验收）；`closed` = 审计闭环完成。
+- **终态交付与平息机制（v2.19.0 · 防抢跑竞态与会话平息）**：回执文件落盘不等于会话结束。执行方必须通过 `baton deliver <ID>`（或 `baton receipt <ID> --deliver`）显式标记终态交付；探针检测到交付信号后启动平息缓冲（Settle Window），等待执行方会话彻底收尾退出后方 Exit 0 唤醒发起方。未 deliver 之前发起方 wait 探针不唤醒、accept 硬拒闭环。发起方严禁在收到显式交付信号前提前修改 Backlog 或规划文档。
 - 指定 ID 必须在「进行中」且归属当前方（仓内：`to_lane == 当前 lane`；跨仓：落在目标收件箱且未闭环）。找不到→停下并说明。
 - 未指定 ID 却有多条归属当前方的待办（draft/forwarded）→ 列出清单请用户点名，不擅自选。
-- receipt 前确保 status 快照 **< 60 分钟**（超时重跑）。
+- receipt 前确保 status 快照 **< 60 分钟**（超时重跑；长任务收尾时 deliver 自动宽容续期）。
 - 仓内优先读 frontmatter `workspace`（same/separate），禁用 mtime 推断。
 - 执行方**只写 receipt / deliver**，**不做 accept/reject**。
 - **严禁抢跑/虚假回执**：验收判据**全部实测通过**方可提交回执与交付。执行中途遇阻、环境/多实例冲突或需讨论的中间状态，**仅记录于 reviews/ 或对话说明，严禁提交包含「已通过」的抢跑回执**。
@@ -155,7 +155,7 @@ lab zspec init "My Project"
 1. `baton new <target|lane> <type> "<标题>"`（或 `handoff new ...`）并填写正文
 2. **转递并挂起后台监听（必须执行）**：
    执行 `baton forward <ID> --wait`（AI 客户端宿主进程树托管；人类终端可用 `--daemon` 脱钩；需双盲脱敏加 `--blind`）
-   ——无论同工作区还是跨工作区，必须启动监听探针；交付完成后探针唤醒进行独立验收闭环。
+   ——无论同工作区还是跨工作区，必须启动监听探针；交付完成并平息后探针唤醒进行独立验收闭环。
 3. **输出交接提示词（末块规范）**：本地 AI 根据用户本地语言自适应输出，标题、描述与独立代码块分离（其后无任何正文）：
    ## 交接提示词
    > 直接复制下方提示词，发送给接收方 Agent 接单：
@@ -168,9 +168,9 @@ lab zspec init "My Project"
 2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 `to_lane == 当前 lane`；跨仓 = 落在目标收件箱）→ 确认目标 ID
 3. `baton show <ID>`
 4. 按边界最小改动（仅该 lane 应改文件）
-5. 实测全过方写回执与交付：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → 优先使用 `baton receipt <ID> --deliver -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"`（或分步执行 receipt 后收尾执行 `baton deliver <ID>`）。（若 `to_lane=audit` 须附 `--audit-nonce "<nonce>"`；仓内必附 evidence；无文件改动用 `--evidence-note`；中途受阻仅写 reviews/ 严禁提回执）
-6. `baton check`（exit 0）
-7. **自动唤醒闭环**：执行方 deliver 登记后，发起方后台监听探针将自动 Exit 0 唤醒进行独立验收，无需人工回传回执。
+5. 实测全过方写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → 运行 `baton receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"`（或原子复合命令 `baton receipt <ID> --deliver ...` 直达交付）。（若 `to_lane=audit` 须附 `--audit-nonce "<nonce>"`；仓内必附 evidence；无文件改动用 `--evidence-note`；中途受阻仅写 reviews/ 严禁提回执）
+6. `baton check`（核验证据与锚节合规，exit 0）
+7. **终态交付与会话收尾**：运行 `baton deliver <ID>`（烙印 delivered 并触发平息缓冲后自动唤醒发起方；会话彻底收工结束）。
 
 详见 `$(lab path handoffs)/AGENT-GUIDE.md` 获取完整版 Preflight。
 <!-- handoff-stub:v2.1 end -->

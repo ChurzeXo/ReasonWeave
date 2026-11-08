@@ -86,15 +86,18 @@ lab zspec guide           # 查看面向 AI Agent 的 ZSpec 实施规范
 lab migrate [目标项目路径] # 将老项目中硬编码的路径一键平滑迁移为动态规范
 ```
 
-### 4.2 工作流交接中枢 `handoff`
+### 4.2 工作流交接中枢 `baton`（别名 `handoff`）
 
 ```bash
-handoff link              # 自动检测并自愈本机的 handoff PATH 软链接
-handoff status            # 查看当前活跃的交接单与待办状态
-handoff status --for <角色># 冷启动直取属于本方待办的任务单
-handoff new <目标> <类型> "<标题>"  # 创建新的交接单 (task/bug/feature/question)
-handoff forward <ID> --wait         # 转递交接单并挂起后台待机监听回执
-handoff receipt <ID> -n "<回执正文>" --evidence-paths "文件,..." # 提交可核验证据回执
+baton link                 # 自动检测并自愈本机的 baton / handoff PATH 软链接
+baton status               # 查看当前活跃的交接单与待办状态（五态生命周期）
+baton status --for <角色>  # 冷启动直取属于本方待办的任务单 (draft/forwarded)
+baton new <目标> <类型> "<标题>"   # 创建新的交接单 (task/bug/feature/question)
+baton forward <ID> --wait          # 转递交接单并挂起后台监听（到达后平息缓冲并 Exit 0 唤醒）
+baton receipt <ID> -n "<回执正文>" --evidence-paths "文件,..." # 登记回执（状态翻为 received）
+baton check                # 校验回执证据、锚节与接入桩合规性 (exit 0)
+baton deliver <ID>         # 执行方终态交付并翻 delivered（触发平息缓冲后唤醒发起方）
+baton accept <ID> -n "<验收结论>"  # 发起方独立实测后审计闭环 (closed)
 ```
 
 ### 4.3 架构决策记录 `adr-init`

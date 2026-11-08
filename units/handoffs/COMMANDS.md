@@ -64,16 +64,17 @@ baton forward <id> --blind --wait
 # Options:
 #   --daemon   Detach daemon process instantly (<0.1s) using Node.js unref()
 #   --blind    Physically sanitize <thinking> tags and subjective excuses
-#   --wait     Sleep at 0-Token until receipt is filed, waking automatically
-#   --timeout  Timeout duration (e.g. 30m, 1h; default: 30m)
+#   --wait     Sleep at 0-Token until delivery lands, waking automatically after settle window
+#   --timeout  Timeout duration (e.g. 60m, 2h; default: 60m)
+#   --settle   Settle window buffer before waking (default: 10s)
 ```
 
 ### `baton wait`
 Standalone 0-Token event-driven watcher (powered by OS `fs.watch`).
 ```bash
-baton wait <id> [--timeout 30m] [--daemon]
+baton wait <id> [--timeout 60m] [--settle 10s] [--daemon]
 ```
-*Note*: Exits with code `0` when final delivery lands (`delivered`/`closed`). Automatically wakes up your coding agent session. Exits with `124` on timeout.
+*Note*: Exits with code `0` when final delivery lands (`delivered`/`closed`) and the settle buffer has fully elapsed. Automatically wakes up your coding agent session. Exits with `124` on timeout (with precise diagnostic reason).
 
 ### `baton prompt`
 Generate the standard, copy-pasteable baton pass prompt for manual cross-session/window relay.
