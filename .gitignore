@@ -16,6 +16,7 @@ units/handoffs/reviews/
 units/handoffs/logs/
 units/handoffs/.handoff-hub.json
 units/handoffs/.audit-challenges.json
+units/handoffs/.watch/
 units/handoffs/.handoff-worktrees/
 units/handoffs/.workbuddy/
 handoffs/handoffs/
@@ -27,6 +28,7 @@ handoffs/reviews/
 handoffs/logs/
 handoffs/.handoff-hub.json
 handoffs/.audit-challenges.json
+handoffs/.watch/
 handoffs/.handoff-worktrees/
 handoffs/.workbuddy/
 
