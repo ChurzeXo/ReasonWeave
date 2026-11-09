@@ -158,13 +158,12 @@ function ensureTrailingNewline(s) { return /\n$/.test(s) ? s : s + '\n'; }
 const TARGETS = new Set(
   HUB_CONFIG && Array.isArray(HUB_CONFIG.targets) && HUB_CONFIG.targets.length
     ? HUB_CONFIG.targets.map(s => String(s).toLowerCase())
-    : ['frontend', 'backend', 'mobile', 'audit']
+    : (MODE === 'intra-repo' ? [] : ['frontend', 'backend', 'mobile'])
 );
 const TARGET_LABELS = {
   frontend: 'Frontend Web',
   backend: 'Backend API',
   mobile: 'Mobile Client',
-  audit: 'Security & Audit',
   ...(HUB_CONFIG && HUB_CONFIG.target_labels ? HUB_CONFIG.target_labels : {})
 };
 const TYPES = new Set(['bug', 'feature', 'breaking', 'question']);
@@ -999,9 +998,13 @@ function cmdReject(args) {
     const rRaw = fs.readFileSync(rFile, 'utf8');
     if (!/^## (驳回记录|Rejection Record)/im.test(rRaw)) {
       fs.writeFileSync(rFile, rRaw.replace(/\n*$/, '\n') + `\n## 驳回记录\n- 日期：${todayISO()}\n- 理由：${note}\n`, 'utf8');
+    } else {
+      fs.writeFileSync(rFile, rRaw.replace(/\n*$/, '\n') + `- 日期：${todayISO()}\n- 理由：${note}\n`, 'utf8');
     }
+    setFM(rFile, { delivered_at: '' });
   }
-  setFM(file, { status: 'forwarded', delivered_at: '' });
+  const rejectTime = new Date().toISOString();
+  setFM(file, { status: 'forwarded', delivered_at: '', rejected_at: rejectTime });
   console.log(`✅ 已驳回退回: ${id} → forwarded（驳回理由已写入回执文件）`);
 }
 
@@ -2318,8 +2321,12 @@ function cmdInit(args) {
   const lanes = getArg('--lanes', 'impl,audit').split(',').map(s => s.trim()).filter(Boolean);
   const types = getArg('--types', 'task,bug,feature,question,continuation').split(',').map(s => s.trim()).filter(Boolean);
   const project = getArg('--project', path.basename(repoRoot)).toLowerCase();
+  const targetArg = getArg('--targets', '');
+  const initTargets = new Set(
+    targetArg ? targetArg.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []
+  );
   // 防串味：lane 名不得与跨仓 TARGET 撞名
-  for (const l of lanes) if (TARGETS.has(l.toLowerCase())) {
+  for (const l of lanes) if (initTargets.has(l.toLowerCase())) {
     console.error(`lane 名「${l}」与跨仓 TARGET 撞名，请改用其它 lane 名`);
     process.exit(2);
   }
@@ -2330,6 +2337,7 @@ function cmdInit(args) {
     types,
     workspace_default: 'same',
     close_policy: 'sender',
+    ...(initTargets.size ? { targets: [...initTargets] } : {}),
   };
   fs.mkdirSync(path.join(hubRoot, 'handoffs'), { recursive: true });
   fs.mkdirSync(path.join(hubRoot, 'receipts'), { recursive: true });
@@ -2607,6 +2615,17 @@ function printWaitWakeupSummary(id, hFile, rFile, hFm) {
  * 2. mtime 守卫：未检测到文件修改时间变动时，跳过 readFileSync 与正则解析，消除重复磁盘与 CPU 开销。
  * 3. 自适应动态退避（Adaptive Backoff）：定时器防丢事件保底，随时间自动拉长休眠周期，大幅减少 CPU 唤醒次数，彻底避免发热与卡顿。
  */
+function isDeliveryValid(deliveredAt, rejectedAt) {
+  if (!deliveredAt) return false;
+  if (!rejectedAt) return true;
+  const dTime = new Date(deliveredAt).getTime();
+  const rTime = new Date(rejectedAt).getTime();
+  if (Number.isNaN(dTime) || Number.isNaN(rTime)) {
+    return deliveredAt > rejectedAt;
+  }
+  return dTime > rTime;
+}
+
 async function cmdWait(args) {
   const timeoutVal = flagValue(args, '--timeout') || flagValue(args, '-t');
   const intervalVal = flagValue(args, '--interval') || flagValue(args, '-i');
@@ -2669,20 +2688,28 @@ async function cmdWait(args) {
     }
     const rFile = path.join(R_DIR, `${id}-resp.md`);
     let hFm = readFM(fs.readFileSync(hFile, 'utf8')) || {};
+    let initialRMtime = 0;
+    try { if (fs.existsSync(rFile)) initialRMtime = fs.statSync(rFile).mtimeMs; } catch {}
+    let initialHMtime = 0;
+    try { if (fs.existsSync(hFile)) initialHMtime = fs.statSync(hFile).mtimeMs; } catch {}
     ticketMap.set(id, {
       id,
       hFile,
       rFile,
       hFm,
       status: hFm.status || 'draft',
-      lastHMtime: 0,
-      lastRMtime: 0,
+      lastHMtime: initialHMtime,
+      lastRMtime: initialRMtime,
     });
   }
 
   const isTicketReady = (t) => {
     const isLegacyExempt = t.hFm.created && t.hFm.created < '2026-11-08' && !t.hFm.delivered_at;
-    return t.status === 'delivered' || t.status === 'closed' || Boolean(t.hFm.delivered_at) || (t.status === 'received' && isLegacyExempt);
+    const isDeliveredAfterReject = isDeliveryValid(t.hFm.delivered_at, t.hFm.rejected_at);
+    return (t.status === 'delivered' && isDeliveredAfterReject) ||
+           t.status === 'closed' ||
+           (Boolean(t.hFm.delivered_at) && isDeliveredAfterReject) ||
+           (t.status === 'received' && isLegacyExempt);
   };
   const getReadyTickets = () => [...ticketMap.values()].filter(isTicketReady);
 
@@ -2878,13 +2905,16 @@ async function cmdWait(args) {
           const rRaw = fs.readFileSync(t.rFile, 'utf8');
           const rFm = readFM(rRaw);
           if (rFm && (rFm.handoff_id === id || rFm.id === id || !rFm.handoff_id)) {
-            const isDelivered = Boolean(rFm.delivered_at || t.hFm.delivered_at || rFm.status === 'delivered' || t.hFm.status === 'delivered');
+            const hasValidRDelivered = isDeliveryValid(rFm.delivered_at, t.hFm.rejected_at);
+            const hasValidHDelivered = isDeliveryValid(t.hFm.delivered_at, t.hFm.rejected_at);
+            const isDelivered = Boolean(hasValidRDelivered || hasValidHDelivered || (rFm.status === 'delivered' && !t.hFm.rejected_at) || (t.hFm.status === 'delivered' && !t.hFm.rejected_at));
             if (isDelivered) {
+              const deliverTime = (hasValidRDelivered && rFm.delivered_at) ? rFm.delivered_at : new Date().toISOString();
               const needsChange = Boolean(rFm.needs_change || rFm.needs_iggle_change);
-              setFM(t.hFile, { status: 'delivered', delivered_at: rFm.delivered_at || new Date().toISOString(), ...(MODE !== 'intra-repo' ? { needs_iggle_change: needsChange } : {}) });
+              setFM(t.hFile, { status: 'delivered', delivered_at: deliverTime, ...(MODE !== 'intra-repo' ? { needs_iggle_change: needsChange } : {}) });
               t.status = 'delivered';
               t.hFm.status = 'delivered';
-              t.hFm.delivered_at = rFm.delivered_at || new Date().toISOString();
+              t.hFm.delivered_at = deliverTime;
             } else {
               // 回执文件更新但执行方尚未宣布交付：仅跨仓记录 seen，绝不抢跑翻 received 触发唤醒
               if (MODE !== 'intra-repo' && t.status !== 'received') {
