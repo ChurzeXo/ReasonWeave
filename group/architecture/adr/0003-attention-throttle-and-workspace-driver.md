@@ -5,7 +5,7 @@
 - **状态（Status）**：🔒 Frozen
 - **冻结日期**：2026-11-09
 - **决策人**：churze + Antigravity
-- **关联证据**：`units/handoffs/README.md` (契约 v2.20.0), `group/contracts/npm-packaging.md`, `constitution.md`
+- **关联证据**：Commit `915121b`, `units/handoffs/README.md` (契约 v2.21.0), `units/worktree/worktree.mjs`, `units/review-gate/clean-runner.mjs`
 
 ---
 
