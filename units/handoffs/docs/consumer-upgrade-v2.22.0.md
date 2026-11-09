@@ -113,3 +113,22 @@ baton check; echo "  check_rc=$?"
 `baton accept` 的状态机只允许 `delivered → closed`，并强制校验回执存在、`delivered_at` 已落、内容门禁、非自填回执（`handoff.mjs` §cmdAccept）。这 5 份既无回执也无终态交付声明，**任何单方面 close 都会绕过 D5 防抢跑机制**——而本次双盲审计刚刚验过该机制。因此保留 `forwarded` 作为审计轨迹，而不是伪造交付。若日后要清理状态，只能由对应下游 Agent 自行交回执后闭环；当前 CLI 无撤回 / 归档命令。
 
 外链：审计全记录 `lab/.handoffs/reviews/audit-20261109-02-task-evidence.md`；审计回执 `lab/.handoffs/receipts/audit-20261109-02-task-resp.md`；第 2 轮判定 `lab/.handoffs/reviews/impl-20261109-01-task-verdict-r2.md`；Swoop 验收 `units/handoffs/reviews/SWOOP-20261109-01-breaking-acceptance.md`；契约唯一事实源 `$(lab path handoffs)/README.md` v2.22.0 + `CHANGELOG.md`。
+
+## 9. 消费方如何「引用 lab 仓」（2026-11-09 20:2x 盘点 · 澄清「更新引用」的确切对象）
+
+本机是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule、npm 版本依赖或 commit 钉值。因此 lab 仓 `push` 后引用自动指向最新，**不存在需要逐仓 bump 的版本号**。
+
+| 引用形态 | 本机落点 | 本轮动作 |
+|---|---|---|
+| 全局 npm 包 | `lab-agent-toolkit -> ../../../../../../../Documents/lab`（npm link 软链） | 重跑 `npm link` RC=0，复核目标仍指向 lab 仓 |
+| `baton` CLI | `~/.local/bin/baton -> lab/units/handoffs/handoff.mjs`（软链） | 复核，自动最新 |
+| 顶层模块路径 | `lab/{handoffs,adr,backlog,preflight,playbook,review-gate} -> units/<同名>`（软链） | 复核，旧式 `~/Documents/lab/handoffs/...` 仍可解析 |
+| 动态指针 | `$(lab path <unit>)/...`，各仓 AGENTS/CLAUDE/README 主用 | 六模块 `README.md` 全部可达；`lab doctor` 绿灯 |
+| 硬编码旧路径 | `~/Documents/lab/...` | 活跃载体仅 `OWSEL/Owsel/AGENTS.md:28` 一处 → 已改 `$(lab path backlog)/README.md`（契约场景三断言 A）。历史日志 / `reviews/` 属档案，不动 |
+| 模板副本 | iggle / Swoop / Prospero 的 `review-gate/scan.sh`、`scripts/preflight.sh` | 与 lab 源模板有差异，**全是项目定制**（RULESETS、EXCLUDE_RULES、校准值），且副本已用动态指针 → **禁止用源模板覆盖**，不更新 |
+| git submodule / npm 依赖 / commit 钉值 / tag / worktree | **均不存在**（7 仓无 `.gitmodules`、无 `package.json` 依赖、无 worktree；lab 无 tag） | 无需更新；`package.json` 仍 `1.0.0`，若要跨机器按版本分发需 `npm version` + `npm publish`（公开动作，另行授权） |
+| 全局载体 | `~/.claude/CLAUDE.md`、`~/.config/opencode/AGENTS.md` | 桩已 `1d843498` == 引擎 v2.22.0 |
+
+复核：7 仓 `baton link --check` 全 RC=0、cross `baton check` RC=0、4 个 git 仓 `git status --porcelain` 0 行、lab 仓工作树 clean、本批 6 份交接状态未扰动。
+
+> ⚠️ **工具坑（本轮踩）**：`lab migrate --help` **不是只读帮助**，会立即执行单向有损替换（`~/Documents/lab/...` → `$(lab path ...)`）。在 lab 仓根执行会改坏安装说明、CLI 帮助文本与大量历史票据。查用法请读 `bin/lab.mjs`，预览只能用 `lab migrate <dir> --dry-run`。另：macOS 无 `timeout` 命令，带 `timeout` 的 grep 会静默返回 0 命中（假阴性）。
