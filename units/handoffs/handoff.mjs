@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const BATON_VERSION = '2.22.0';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -239,13 +240,15 @@ function resolveLaneRole(lane) {
   return lane; // 未知 lane：slug 仍可用，不臆造角色
 }
 
-/** 判定是否处于 AI Agent 托管环境中（用于决定是进程树托管等待还是 OS 孤儿脱钩）。
+/** 判定是否处于 AI Agent 托管环境中（用于判定宿主特征，不再隐式改变 --daemon 语义）。
  *
  * 核心原理：
  * 1. AI 客户端（如 Google Antigravity、Claude Code、Cursor、Windsurf 等）通过托管子进程树
  *    （Managed Subprocess / Background Task）实现长任务挂起与 Exit 0 零 Token 反应式唤醒。
  * 2. 在 Agent 宿主环境中执行 detached+unref 脱钩会导致宿主误判任务结束、丢失进程树句柄且无法唤醒。
  * 3. 探针按环境变量与管道特征智能感知宿主，支持 BATON_MANAGED_MODE 强行指定（1=托管, 0=脱钩）。
+ * 4. 显式 --daemon 在 Agent 环境下不再降级为阻塞假成功，直接报错退出并提示改用宿主后台任务；
+ *    脱钩后门：BATON_MANAGED_MODE=0 可强制允许脱钩。
  */
 function isAgentEnvironment() {
   if (process.env.BATON_MANAGED_MODE === '0') return false;
@@ -934,6 +937,10 @@ function cmdAccept(args) {
   setFM(file, updateFM);
   console.log(`✅ 已审计闭环: ${id}（验收记录已写入交接文档）`);
 
+  // 清理注册表避免孤儿文件 (D2)
+  const watchFile = path.join(ROOT, '.watch', `${id}.json`);
+  try { if (fs.existsSync(watchFile)) fs.unlinkSync(watchFile); } catch {}
+
   // ── Worktree 生命周期回收（微内核驱动挂载）──
   if (fm.workspace === 'worktree') {
     if (args.includes('--prune-worktree') || args.includes('-p')) {
@@ -1031,7 +1038,7 @@ function extractConclusion(raw) {
  *  跨仓：detectRepo→TARGET_LABELS 拼仓库标签（跨仓方向以仓库为角色，不在本次修改范围）；
  *  **仓内（v2.13 修复）：严禁 detectRepo 拼仓库名**，改读回执 frontmatter 的 from_lane/to_lane，
  *  用 resolveLaneRole 拼自然角色（杜绝「请收 Tappy 回执」式把项目名当沟通角色的事故）。 */
-function printReceiptDeliveryLine(rFile, needsChange) {
+function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
   let lines = 0, bytes = 0, fromLane = '', toLane = '', rawText = '';
   try {
     const buf = fs.readFileSync(rFile);
@@ -1042,11 +1049,16 @@ function printReceiptDeliveryLine(rFile, needsChange) {
     const fm = readFM(text) || {};
     fromLane = fm.from_lane || '';
     toLane = fm.to_lane || '';
+    if (fm.delivered_at) isDelivered = true;
   } catch { /* 读不到不阻断主流程 */ }
   const flag = needsChange ? '是' : '否';
   const display = rFile.startsWith(os.homedir()) ? '~' + rFile.slice(os.homedir().length) : rFile;
   if (MODE === 'intra-repo') {
-    console.log(`\n✅ 仓内回执已生效（状态已翻为 received，后台监听已自动感知并唤醒发起方/审计方进行验收闭环，无需人工复制转递提示词）。\n`);
+    if (isDelivered) {
+      console.log(`\n✅ 仓内终态交付已生效（状态推进为 delivered，后台监听已自动感知平息并唤醒发起方/审计方进行独立验收闭环）。\n`);
+    } else {
+      console.log(`\n✅ 仓内回执已登记为草稿（status: received）。注意：还需 baton deliver <ID> 才会唤醒发起方。\n`);
+    }
     return;
   }
   console.log(`\n📋 回执交付行（复制给发起方 Agent，一行即完整）:\n`);
@@ -1143,8 +1155,8 @@ function cmdReceipt(args) {
       console.log(`✅ 已登记仓内回执: ${rFile}`);
       console.log(`   交接 ${id} 状态翻为 received${needsChange ? '（需改动）' : ''}`);
     }
-    console.log(`\n💡 提示：回执已就绪（status: received）。执行方自检全过并收尾时，请运行 baton deliver ${id} 确认最终交付（唤醒发起方验收）。\n`);
-    printReceiptDeliveryLine(rFile, needsChange);
+    console.log(`\n💡 提示：回执已就绪（status: received）。注意：还需 baton deliver ${id} 才会唤醒发起方！自检全过并收尾时请运行该命令。\n`);
+    printReceiptDeliveryLine(rFile, needsChange, false);
     return;
   }
   // ── 跨仓模式 ──
@@ -1165,8 +1177,8 @@ function cmdReceipt(args) {
     console.log(`✅ 已登记回执: ${rFile}`);
     console.log(`   交接 ${id} 状态翻为 received${needsChange ? '（需发起方改动）' : ''}`);
   }
-  console.log(`\n💡 提示：回执已登记（status: received）。执行方自检全过并收尾时，请运行 baton deliver ${id} 确认最终交付（唤醒发起方验收）。\n`);
-  printReceiptDeliveryLine(rFile, needsChange);
+  console.log(`\n💡 提示：回执已登记（status: received）。注意：还需 baton deliver ${id} 才会唤醒发起方！自检全过并收尾时请运行该命令。\n`);
+  printReceiptDeliveryLine(rFile, needsChange, false);
 }
 
 /** 执行方显式终态交付（deliver）：会话收尾且自检全过时宣布完成交付并落印 delivered_at，推进为 delivered 态 */
@@ -1251,7 +1263,7 @@ function cmdDeliver(args) {
   console.log(`🚀 [交付成功] 交接 ${id} 状态已推进为 delivered！`);
   console.log(`   交付时间: ${nowISO}`);
   console.log(`   执行方已确认终态交付。发起方/审计方后台 wait 探针将自动唤醒进行独立验收。`);
-  printReceiptDeliveryLine(rFile, Boolean(hFm.needs_change || rFm.needs_change || rFm.needs_iggle_change));
+  printReceiptDeliveryLine(rFile, Boolean(hFm.needs_change || rFm.needs_change || rFm.needs_iggle_change), true);
 }
 
 /** 将 wait 命令作为完全脱钩的独立后台守护进程启动（金蝉脱壳 · 0-阻塞瞬间退出）。
@@ -1367,15 +1379,15 @@ async function cmdForward(args) {
     if (isDaemon && !isAgentEnvironment()) {
       // 人类交互终端显式指定 --daemon：走脱钩后台守护（秒退）
       spawnDaemonWait(id, waitArgs);
-    } else {
-      if (isDaemon && isAgentEnvironment()) {
-        const isZh = detectLang() === 'zh';
-        if (isZh) {
-          console.log(`🤖 [AI 宿主环境感知] 检测到 Agent 托管管道，--daemon 自动切换为托管阻塞等待（保持进程树存活以供宿主任务管理器捕获并在回执到达时 Exit 0 唤醒）。\n`);
-        } else {
-          console.log(`🤖 [Agent Host Detected] In managed agent environment, --daemon automatically falls back to managed blocking wait (preserves process-tree for reactive wakeup on Exit 0).\n`);
-        }
+    } else if (isDaemon && isAgentEnvironment()) {
+      const isZh = detectLang() === 'zh';
+      if (isZh) {
+        console.error(`❌ [环境限制] 检测到 Agent 托管管道环境，--daemon 无法安全脱钩（可能导致长任务被宿主 SIGTERM 杀死或假成功）。\n   请以宿主后台任务方式运行 'baton wait ${id}'（如 run_command async / background task），或移除 --daemon。\n   （如确需在宿主内强制脱钩，请设置环境变量 BATON_MANAGED_MODE=0）\n`);
+      } else {
+        console.error(`❌ [Host Restriction] Detected Agent managed environment: --daemon cannot safely detach.\n   Please run 'baton wait ${id}' as a host background task, or remove --daemon.\n   (To force detach in an agent environment, set BATON_MANAGED_MODE=0)\n`);
       }
+      process.exit(3);
+    } else {
       // 托管环境或普通 --wait：直接调用 cmdWait，保持在宿主管道中供宿主平台接管并唤醒
       await cmdWait([id, ...waitArgs]);
     }
@@ -1614,6 +1626,7 @@ function cmdCheck() {
 function cmdCheckIntra() {
   const problems = [];
   const lanes = new Set((HUB_CONFIG.lanes || []).map(s => String(s).toLowerCase()));
+  const targets = new Set((HUB_CONFIG.targets || []).map(s => String(s).toLowerCase()));
   const types = new Set([...(HUB_CONFIG.types || []), ...INTRA_TYPES].map(s => String(s).toLowerCase()));
   if (!lanes.size) problems.push(`[配置] .handoff-hub.json 缺 lanes（仓内交接靠 lane 路由）`);
   const hAll = fs.existsSync(H_DIR) ? fs.readdirSync(H_DIR).filter(f => f.endsWith('.md')) : [];
@@ -1627,7 +1640,7 @@ function cmdCheckIntra() {
     if (fm.handoff_id !== id) problems.push(`[交接] handoff_id(${fm.handoff_id}) ≠ 文件名: ${f}`);
     if (fm.mode !== 'intra-repo') problems.push(`[交接] mode 应为 intra-repo，但为 ${fm.mode}: ${f}`);
     if (!fm.to_lane || !lanes.has(String(fm.to_lane).toLowerCase())) problems.push(`[交接] to_lane(${fm.to_lane}) 不在配置 lanes(${[...lanes].join('/')}): ${f}`);
-    if (fm.from_lane && !lanes.has(String(fm.from_lane).toLowerCase())) problems.push(`[交接] from_lane(${fm.from_lane}) 不在配置 lanes: ${f}`);
+    if (fm.from_lane && !lanes.has(String(fm.from_lane).toLowerCase()) && !targets.has(String(fm.from_lane).toLowerCase())) problems.push(`[交接] from_lane(${fm.from_lane}) 不在配置 lanes 或 targets: ${f}`);
     if (!types.has(String(fm.type).toLowerCase())) problems.push(`[交接] type 非法(${fm.type}): ${f}`);
     if (!STATUSES.has(fm.status)) problems.push(`[交接] status 非法(${fm.status}): ${f}`);
     if (fm.workspace && !['same', 'separate', 'worktree'].includes(fm.workspace)) problems.push(`[交接] workspace 非法(${fm.workspace}): ${f}`);
@@ -1975,26 +1988,11 @@ function cmdInstall(args) {
 function cmdLink(args) {
   const engine = fs.realpathSync(process.argv[1]);
   const remove = args.includes('--remove');
+  const checkOnly = args.includes('--check');
   const home = process.env.HOME;
   const canonical = path.join(home, '.local/bin', 'handoff');
   const inPath = (d) => String(process.env.PATH || '').split(path.delimiter).filter(Boolean).includes(d);
   const writable = (d) => { try { fs.accessSync(d, fs.constants.W_OK); return true; } catch { return false; } };
-
-  // --remove：摘除 shim（测试/回退用）
-  if (remove) {
-    let removed = false;
-    for (const d of [canonical, ...String(process.env.PATH || '').split(path.delimiter).filter(Boolean)]) {
-      const p = path.join(d, 'handoff');
-      try {
-        if (fs.lstatSync(p).isSymbolicLink() && fs.realpathSync(p) === engine) { fs.unlinkSync(p); console.log(`🗑️ 已摘除: ${p}`); removed = true; }
-      } catch { /* 不存在或非本引擎 shim → 跳过 */ }
-    }
-    if (!removed) console.log('未找到指向中央引擎的 handoff shim，无需摘除。');
-    return;
-  }
-
-  // 引擎须可执行（shebang 已在；缺执行位时补上，否则 symlink 也无法运行）
-  try { fs.chmodSync(engine, 0o755); } catch (e) { console.error(`⚠️ 无法补执行位: ${engine} — ${e.message}`); }
 
   // 选落点
   let dir = null;
@@ -2011,35 +2009,120 @@ function cmdLink(args) {
   }
   if (!dir) {
     dir = path.dirname(canonical);
-    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error(`❌ 无法创建 ${dir}: ${e.message}`); process.exit(1); }
-    if (!inPath(dir)) console.log(`⚠️ ${dir} 不在当前 PATH —— 请把它加入 shell profile，例如: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
   }
 
-  const link = path.join(dir, 'handoff');
-  try {
-    const st = fs.lstatSync(link);
-    if (st.isSymbolicLink()) {
-      if (fs.realpathSync(link) === engine) {
-        console.log(`↩️ 已是最新: ${link} → ${engine}`);
-        verifyLink(link);
-        return;
+  // --check：健康检查（桩版本一致性 + shim 校验，可由 baton link --check 或 baton doctor 调用）
+  if (checkOnly) {
+    let ok = true;
+    console.log(`🔍 [Baton 诊断] 引擎版本: v${BATON_VERSION}`);
+    for (const binName of ['baton', 'handoff']) {
+      const p = path.join(dir, binName);
+      try {
+        if (fs.lstatSync(p).isSymbolicLink() && fs.realpathSync(p) === engine) {
+          console.log(`✅ [Shim 正常] ${p} → ${engine}`);
+        } else {
+          console.log(`⚠️ [Shim 需同步] ${p} 未指向本引擎`);
+        }
+      } catch {
+        console.log(`ℹ️ [Shim 未创建] ${p}`);
       }
-      fs.unlinkSync(link);
-      console.log(`🔁 原 shim 指向 ${fs.realpathSync(link)}（非中央引擎），改指: ${engine}`);
-    } else {
-      const bak = `${link}.bak-${todayISO()}`;
-      fs.renameSync(link, bak);
-      console.log(`📦 ${link} 是普通文件（非符号链接），已备份为 ${bak} 后重建为 shim。`);
     }
-  } catch { /* 不存在 → 直接建 */ }
-  fs.symlinkSync(engine, link);
-  console.log(`✅ 已接入: ${link} → ${engine}`);
-  verifyLink(link);
+    const checkTargets = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'README.md']
+      .map(f => path.join(process.cwd(), f))
+      .filter(f => fs.existsSync(f));
+    let stubChecked = 0;
+    for (const t of checkTargets) {
+      const content = fs.readFileSync(t, 'utf8');
+      const m = content.match(/契约 v(\d+\.\d+\.\d+)/) || content.match(/Contract v(\d+\.\d+\.\d+)/);
+      if (m) {
+        stubChecked++;
+        const stubVer = m[1];
+        if (stubVer === BATON_VERSION) {
+          console.log(`✅ [桩版本一致] ${path.basename(t)}: 桩版本 == 引擎版本 (v${stubVer})`);
+        } else {
+          console.error(`❌ [桩版本漂移] ${path.basename(t)}: 桩版本 (v${stubVer}) ≠ 引擎版本 (v${BATON_VERSION})！`);
+          ok = false;
+        }
+      }
+    }
+    if (stubChecked > 0 && ok) {
+      console.log(`🎉 判定结果: 桩版本 == 引擎版本 (v${BATON_VERSION})`);
+      process.exit(0);
+    } else if (!ok) {
+      console.error(`❌ 判定结果: 检测到桩版本与引擎版本不一致，请运行 baton link 或 baton install 自动同步。`);
+      process.exit(1);
+    } else {
+      console.log(`ℹ️ 当前目录未发现接入桩，跳过桩版本判定。`);
+      process.exit(0);
+    }
+  }
+
+  // --remove：摘除 shim（测试/回退用）
+  if (remove) {
+    let removed = false;
+    for (const d of [canonical, ...String(process.env.PATH || '').split(path.delimiter).filter(Boolean)]) {
+      for (const binName of ['handoff', 'baton']) {
+        const p = path.join(d, binName);
+        try {
+          if (fs.lstatSync(p).isSymbolicLink() && fs.realpathSync(p) === engine) { fs.unlinkSync(p); console.log(`🗑️ 已摘除: ${p}`); removed = true; }
+        } catch { /* 不存在或非本引擎 shim → 跳过 */ }
+      }
+    }
+    if (!removed) console.log('未找到指向中央引擎的 handoff/baton shim，无需摘除。');
+    return;
+  }
+
+  // 引擎须可执行（shebang 已在；缺执行位时补上，否则 symlink 也无法运行）
+  try { fs.chmodSync(engine, 0o755); } catch (e) { console.error(`⚠️ 无法补执行位: ${engine} — ${e.message}`); }
+
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  if (!inPath(dir)) console.log(`⚠️ ${dir} 不在当前 PATH —— 请把它加入 shell profile，例如: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
+
+  for (const binName of ['handoff', 'baton']) {
+    const link = path.join(dir, binName);
+    try {
+      const st = fs.lstatSync(link);
+      if (st.isSymbolicLink()) {
+        if (fs.realpathSync(link) === engine) {
+          console.log(`↩️ 已是最新: ${link} → ${engine}`);
+          verifyLink(link, binName);
+          continue;
+        }
+        fs.unlinkSync(link);
+        console.log(`🔁 原 shim 指向 ${fs.realpathSync(link)}（非中央引擎），改指: ${engine}`);
+      } else {
+        const bak = `${link}.bak-${todayISO()}`;
+        fs.renameSync(link, bak);
+        console.log(`📦 ${link} 是普通文件（非符号链接），已备份为 ${bak} 后重建为 shim。`);
+      }
+    } catch { /* 不存在 → 直接建 */ }
+    fs.symlinkSync(engine, link);
+    console.log(`✅ 已接入: ${link} → ${engine}`);
+    verifyLink(link, binName);
+  }
+
+  // 检查接入桩版本，若有漂移则自动重生成
+  const projectTargets = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'README.md']
+    .map(f => path.join(process.cwd(), f))
+    .filter(f => fs.existsSync(f));
+  let hasDrift = false;
+  for (const t of projectTargets) {
+    const content = fs.readFileSync(t, 'utf8');
+    const m = content.match(/契约 v(\d+\.\d+\.\d+)/) || content.match(/Contract v(\d+\.\d+\.\d+)/);
+    if (m && m[1] !== BATON_VERSION) {
+      hasDrift = true;
+      break;
+    }
+  }
+  if (hasDrift) {
+    console.log(`🔁 [自动重生成] 检测到当前工作区接入桩版本与引擎不一致，正在自动同步...`);
+    cmdInstall(['--project']);
+  }
 }
-function verifyLink(link) {
+function verifyLink(link, binName = 'handoff') {
   try {
     execFileSync(link, [], { stdio: ['ignore', 'pipe', 'pipe'] });
-    console.log(`   验证通过: \`handoff\` 可直接调用（裸命令即中央引擎）。`);
+    console.log(`   验证通过: \`${binName}\` 可直接调用（裸命令即中央引擎）。`);
   } catch (e) {
     console.error(`⚠️ shim 已建但验证调用失败: ${e.message}`);
   }
@@ -2565,11 +2648,11 @@ async function cmdWait(args) {
     if (isAgentEnvironment()) {
       const isZh = detectLang() === 'zh';
       if (isZh) {
-        console.log(`🤖 [AI 宿主环境感知] 检测到 Agent 托管管道，--daemon 自动切换为托管阻塞等待（保持进程树存活以供宿主任务管理器捕获并在回执到达时 Exit 0 唤醒）。\n`);
+        console.error(`❌ [环境限制] 检测到 Agent 托管管道环境，--daemon 无法安全脱钩（可能导致长任务被宿主 SIGTERM 杀死或假成功）。\n   请以宿主后台任务方式运行 'baton wait ${ids.join(' ')}'（如 run_command async / background task），或移除 --daemon。\n   （如确需在宿主内强制脱钩，请设置环境变量 BATON_MANAGED_MODE=0）\n`);
       } else {
-        console.log(`🤖 [Agent Host Detected] In managed agent environment, --daemon automatically falls back to managed blocking wait (preserves process-tree for reactive wakeup on Exit 0).\n`);
+        console.error(`❌ [Host Restriction] Detected Agent managed environment: --daemon cannot safely detach.\n   Please run 'baton wait ${ids.join(' ')}' as a host background task, or remove --daemon.\n   (To force detach in an agent environment, set BATON_MANAGED_MODE=0)\n`);
       }
-      // 不 return，继续向下执行 cmdWait 托管阻塞等待
+      process.exit(3);
     } else {
       spawnDaemonWait(ids, args);
       return;
@@ -2679,7 +2762,54 @@ async function cmdWait(args) {
     watchers.length = 0;
   };
 
-  process.on('exit', cleanupWatchers);
+  // ── 监听注册表（D2 · .handoffs/.watch/<id>.json）──────────────────────────────
+  const WATCH_DIR = path.join(ROOT, '.watch');
+  try { fs.mkdirSync(WATCH_DIR, { recursive: true }); } catch {}
+
+  const writeWatchRegistry = () => {
+    const startedAt = new Date().toISOString();
+    for (const id of ids) {
+      const watchFile = path.join(WATCH_DIR, `${id}.json`);
+      const payload = {
+        id,
+        pid: process.pid,
+        started_at: startedAt,
+        timeout_ms: timeoutMs,
+        interval_ms: explicitIntervalMs || null,
+        host_env: isAgentEnvironment() ? 'agent' : 'terminal'
+      };
+      try {
+        fs.writeFileSync(watchFile, JSON.stringify(payload, null, 2), 'utf8');
+      } catch {}
+    }
+  };
+
+  const cleanupWatchRegistry = () => {
+    for (const id of ids) {
+      const watchFile = path.join(WATCH_DIR, `${id}.json`);
+      try {
+        if (fs.existsSync(watchFile)) {
+          const raw = fs.readFileSync(watchFile, 'utf8');
+          const data = JSON.parse(raw);
+          if (data && data.pid === process.pid) {
+            fs.unlinkSync(watchFile);
+          }
+        }
+      } catch {}
+    }
+  };
+
+  const cleanupAll = () => {
+    cleanupWatchRegistry();
+    cleanupWatchers();
+  };
+
+  process.on('exit', cleanupAll);
+  process.on('SIGINT', () => { cleanupAll(); process.exit(130); });
+  process.on('SIGTERM', () => { cleanupAll(); process.exit(143); });
+  process.on('SIGHUP', () => { cleanupAll(); process.exit(129); });
+
+  writeWatchRegistry();
 
   // 自适应动态退避（未显式指定间隔时根据等待时长智能拉长兜底轮询）
   const getNextInterval = (elapsed) => {
@@ -2693,7 +2823,7 @@ async function cmdWait(args) {
   while (true) {
     const elapsed = Date.now() - startTime;
     if (elapsed >= timeoutMs) {
-      cleanupWatchers();
+      cleanupAll();
       console.error(`\n⏰ [超时诊断] 聚合等待超时（已持续监听 ${formatDuration(timeoutMs)} · 模式: ${mode.toUpperCase()}）。`);
       console.error(`📊 各交接单最新状态矩阵：`);
       for (const [id, t] of ticketMap.entries()) {
@@ -2797,7 +2927,7 @@ async function cmdWait(args) {
           console.log(`🎉 [会话已平息] 执行方会话已彻底结束，正式唤醒发起方！`);
         }
 
-        cleanupWatchers();
+        cleanupAll();
         if (ids.length === 1) {
           const singleT = readyTickets[0];
           console.log(`\n🎉 [交付已就绪] 检测到交接 ${singleT.id} 状态已转为 ${singleT.status}！`);
@@ -2858,6 +2988,7 @@ switch (cmd) {
   case 'import': cmdImport(rest); break;
   case 'install': cmdInstall(rest); break;
   case 'link': cmdLink(rest); break;
+  case 'doctor': cmdLink(['--check', ...rest]); break;
   case 'brief': cmdBrief(rest); break;
   case 'sync': cmdSync(); break;
   case 'wait': await cmdWait(rest); break;
