@@ -1630,7 +1630,7 @@ function cmdCheckIntra() {
     if (fm.from_lane && !lanes.has(String(fm.from_lane).toLowerCase())) problems.push(`[交接] from_lane(${fm.from_lane}) 不在配置 lanes: ${f}`);
     if (!types.has(String(fm.type).toLowerCase())) problems.push(`[交接] type 非法(${fm.type}): ${f}`);
     if (!STATUSES.has(fm.status)) problems.push(`[交接] status 非法(${fm.status}): ${f}`);
-    if (fm.workspace && !['same', 'separate'].includes(fm.workspace)) problems.push(`[交接] workspace 非法(${fm.workspace}): ${f}`);
+    if (fm.workspace && !['same', 'separate', 'worktree'].includes(fm.workspace)) problems.push(`[交接] workspace 非法(${fm.workspace}): ${f}`);
     if ((fm.status === 'received' || fm.status === 'delivered' || fm.status === 'closed') && !fs.existsSync(path.join(R_DIR, `${id}-resp.md`)))
       problems.push(`[交接] status=${fm.status} 但缺回执 receipts/${id}-resp.md: ${f}`);
     if (fm.status === 'closed' && !fm.closed)
