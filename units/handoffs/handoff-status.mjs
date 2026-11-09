@@ -225,7 +225,7 @@ function nextStep(r) {
   const t = (r.target || '').toLowerCase();
   switch (r.status) {
     case 'draft':
-      if (t === 'coreml') return isZh ? '同工作区，无需转递：切 coreml 角色执行 → 写回执' : 'Same workspace: switch to coreml role → write receipt';
+      if (t === 'coreml') return isZh ? '同工作区，不用请人转交：切 coreml 角色直接做 → 写回执' : 'Same workspace: switch to coreml role → write receipt';
       if (t === 'iggle') return isZh ? '依赖方发起，iggle 侧适配本仓' : 'Initiated by dependency, adapter work';
       return isZh ? `待转递：输 /inbox 生成收件箱转给 ${t}` : `Pending forward: pass to ${t}`;
     case 'forwarded':
