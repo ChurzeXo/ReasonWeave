@@ -5,7 +5,7 @@
 
 ## 0. 一句话结论
 
-**下游零文件改动。** 引擎已发布，接入桩 sha 仍 `1d843498` 无需重刷；下游唯一要做的是按交接的 5 条判据逐条终端实测，然后写回执。
+**下游零文件改动，升级已收口（见 §7）。** 引擎已发布，接入桩 sha 仍 `1d843498`；逐仓 `baton install --project` 幂等返回「已是最新」，无需重刷、无需下游写回执、无需等待监听。
 
 ## 1. 发布事实
 
@@ -13,7 +13,7 @@
 |---|---|
 | 引擎版本 | v2.22.0 |
 | 提交 | `506e77e`（D1–D4）/ `413a65b`（D5） |
-| 推送 | `ba23ea5..413a65b main -> main`，origin/main 已同步、工作树 clean |
+| 推送 | `ba23ea5..413a65b`（D1–D5 发布）、`413a65b..e179ee4`（执行包与运行态忽略）；origin/main 已同步 |
 | 独立双盲审计 | `audit-20261109-02-task` 7/7 判据通过，回执已 `baton deliver` |
 | 桩 sha | `1d843498`（本轮未动 `STUB_BODY`） |
 
@@ -93,12 +93,23 @@ baton check; echo "  check_rc=$?"
 - 不变式：消费方经 `$(lab path handoffs)` 动态引用引擎，行为变更不需改桩；**桩 sha 不变即证明无载体漂移**。
 - 残留风险（不阻塞）：`reject` / `deliver` 门禁失败仍 RC=0（自动化勿只看退出码，须显式核验状态变化）；`cmdReject` 驳回记录可能追加到文件尾部（纯排版）。
 
-## 7. 谁接手
+## 7. 收口状态（2026-11-09 20:01 · 用户指示关闭监听并授权上游直接收口）
 
-| 角色 | 动作 |
+| 项 | 状态 |
 |---|---|
-| 6 个 target 的下游 Agent | 冷启动 `baton status --for <target>` 收件 → 5 条判据逐条终端实测 → 写 `receipts/<ID>-resp.md` → `baton deliver`。**执行方不 accept / reject** |
-| 上游 lab 侧发起方 | 聚合探针 `baton wait … --all`（pid 27041）在回执到齐后自动唤醒，做独立验收与闭环 |
-| 用户 | **无需转递任何提示词**；系统状态本身就是交接 |
+| 引擎发布 | v2.22.0 已推送 `origin/main`（`506e77e` / `413a65b` / `e179ee4`），工作树 clean |
+| 下游桩 | 6 仓逐仓 `baton install --project` RC=0「已是最新」；三载体 sha 均 `1d843498`；`link --check` 全 RC=0 |
+| 下游文件 | **零改动**：4 个 git 仓 `git status --porcelain` 前后均 0 行；桩固定说明行仍准确，改它反而触发 sha 漂移 |
+| 无桩仓 | TappyOperations 本就未接入桩，不新建文件（避免无谓改动） |
+| Swoop | 已交付回执，发起方自备夹具独立验收通过 → `status: closed` + `accepted_at`；取证见 `reviews/SWOOP-20261109-01-breaking-acceptance.md` |
+| 其余 5 份交接 | 保持 `forwarded`、无回执；按用户授权**不再等待**，保留为审计轨迹，不产生任何后续动作（原因见 §8） |
+| 三非 target 仓 | 桩已最新、零改动；知会见 §5，不进回执通道 |
+| 监听 | 聚合探针已停止，`.watch` 运行态清空；`status` 显示 `[⚠️ 无监听]` 属预期，非故障 |
 
-外链：审计全记录 `lab/.handoffs/reviews/audit-20261109-02-task-evidence.md`；审计回执 `lab/.handoffs/receipts/audit-20261109-02-task-resp.md`；第 2 轮判定 `lab/.handoffs/reviews/impl-20261109-01-task-verdict-r2.md`；契约唯一事实源 `$(lab path handoffs)/README.md` v2.22.0 + `CHANGELOG.md`。
+**不再有接手方**：下游无需任何操作，用户无需转递任何提示词，上游不再等待回执。F1（Nonce 门禁虚设）仍待发起方裁决，不阻塞本次发布。
+
+## 8. 为什么 5 份工单不闭环
+
+`baton accept` 的状态机只允许 `delivered → closed`，并强制校验回执存在、`delivered_at` 已落、内容门禁、非自填回执（`handoff.mjs` §cmdAccept）。这 5 份既无回执也无终态交付声明，**任何单方面 close 都会绕过 D5 防抢跑机制**——而本次双盲审计刚刚验过该机制。因此保留 `forwarded` 作为审计轨迹，而不是伪造交付。若日后要清理状态，只能由对应下游 Agent 自行交回执后闭环；当前 CLI 无撤回 / 归档命令。
+
+外链：审计全记录 `lab/.handoffs/reviews/audit-20261109-02-task-evidence.md`；审计回执 `lab/.handoffs/receipts/audit-20261109-02-task-resp.md`；第 2 轮判定 `lab/.handoffs/reviews/impl-20261109-01-task-verdict-r2.md`；Swoop 验收 `units/handoffs/reviews/SWOOP-20261109-01-breaking-acceptance.md`；契约唯一事实源 `$(lab path handoffs)/README.md` v2.22.0 + `CHANGELOG.md`。
