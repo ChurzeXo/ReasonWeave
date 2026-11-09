@@ -32,9 +32,11 @@ cd lab
 npm link
 ```
 
-运行后，系统全局即可直接使用以下三大核心 CLI：
+运行后，系统全局即可直接使用以下核心 CLI 工具链：
 - 🌐 `lab`：能力库总管、环境体检、路径动态解析与 ZSpec 脚手架
-- 🔄 `handoff`：工作流跨仓/仓内交接中枢与防伪回执引擎
+- 🔄 `baton` / `handoff`：工作流交割中枢、防伪回执、注意力节流静默管道与事件驱动引擎 (v2.21)
+- 🌳 `baton-worktree`：基于 Git Worktree 的多 Agent 物理目录隔离调度引擎
+- 🛡️ `baton-audit-runner`：双盲审计自动化运行器（无上下文独立重跑测试，Exit Code 真实裁决）
 - 📐 `adr-init`：架构决策记录 (ADR) 快速引导初始化
 
 ### 3. 环境自检 (Doctor)
@@ -59,20 +61,35 @@ lab zspec guide             # 查看面向 AI Agent 的 ZSpec 实施指南
 lab migrate [项目路径]      # 将老项目中硬编码的路径一键平滑升级
 ```
 
-### 2. `handoff` / `baton` — 跨仓/同仓 Agent 任务交割引擎 (v2.16)
+### 2. `baton` / `handoff` — 任务交割与注意力节流引擎 (v2.21)
 > **跨仓/同仓 Agent 间任务交割像调 API 一样无损直达**  
 > 拒绝人肉传话与上下文衰减。一条命令穿透仓库边界，接口与协作契约严密对齐，独立窗口双盲审计，事件驱动无感闭环。
 
-支持双盲审计脱敏（`--blind`）、一次性审计防伪 Nonce（`--audit-nonce`）与后台待机自动唤醒（`--wait` / `--daemon`）：
+支持物理工作树隔离（`--workspace worktree`）、静默管道（`baton throttle`）、双盲审计脱敏（`--blind`）、一次性审计防伪 Nonce（`--audit-nonce`）与后台待机自动唤醒（`--wait` / `--daemon`）：
 ```bash
-handoff status --for <角色> # 冷启动直取当前角色的进行中待办
-handoff new <目标> <类型> "<标题>" # 创建交接单 (task/bug/feature/question)
-handoff forward <ID> --wait        # 转递并挂起后台监听，对方回执到达后自动唤醒闭环
-handoff receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." # 提交可核验证据回执
-handoff check                      # 闭环状态与回执规范性核验
+baton status --for <角色>           # 冷启动直取当前角色的进行中待办
+baton new <目标> <类型> "<标题>" [--workspace worktree] # 创建交接单，支持自动分配物理工作树
+baton forward <ID> --wait           # 转递并挂起后台监听，对方回执到达后自动唤醒闭环
+baton throttle <ID> -- <command...> # 静默管道运行长任务，阻断过程噪音，失败即刻触发 Red 告警
+baton receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." # 提交可核验证据回执
+baton deliver <ID>                  # 执行方终态交付并翻 delivered
+baton close <ID> [--prune-worktree] # 发起方验收闭环并自动回收临时隔离工作树
+baton check                         # 闭环状态与回执规范性核验
 ```
 
-### 3. `adr-init` — 架构决策记录脚手架
+### 3. `baton-worktree` — 物理隔离调度引擎
+```bash
+baton-worktree allocate <ID>        # 为工单创建专属物理目录 (.worktrees/<ID>) 并软链依赖缓存
+baton-worktree list                 # 查看所有活跃工作树状态与分支
+baton-worktree prune <ID> [--force] # 安全回收工作树与临时分支
+```
+
+### 4. `baton-audit-runner` — 双盲审计自动化运行器
+```bash
+baton-audit-runner run <ID> [--auto-receipt] # 在无上下文隔离进程中自动重跑测试命令，Exit 0 自动签发回执
+```
+
+### 5. `adr-init` — 架构决策记录脚手架
 ```bash
 adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 ```
@@ -86,8 +103,9 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 | **adr** | [`units/adr/`](units/adr/) | 架构决策记录（ADR），三档强度 light / standard / frozen，跨会话架构记忆 |
 | **backlog** | [`units/backlog/`](units/backlog/) | 待办捕获：越界 / 待拍板 / 未来功能，一任务一文件，不打断当前工作流 |
 | **preflight** | [`units/preflight/`](units/preflight/) | 仓库不变量探针 + Git 提交门禁，防止“做完才发现还有一件事” |
-| **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + 本地 review 门禁，拦截危险注入与质量缺陷 |
-| **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton / `handoff`），任务交接像调 API 一样无损直达与双盲审计 |
+| **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + 本地 review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`) |
+| **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton / 契约 v2.21），任务交接 API 化、注意力节流静默管道与事件唤醒 |
+| **worktree** | [`units/worktree/`](units/worktree/) | 基于 Git Worktree 的物理目录隔离调度引擎，为多 Agent 并发分配独立沙盒并智能共享依赖缓存 |
 | **playbook** | [`units/playbook/`](units/playbook/) | Agent Engineering Framework (AEF) 完整方法论手册与模板库 |
 
 > **向后兼容保证**：根目录下保留了指向各 Unit 的软链接（`adr`、`preflight`、`handoffs` 等），无论通过 `$(lab path <unit>)` 还是旧绝对路径均可无缝兼容。
