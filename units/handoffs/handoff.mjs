@@ -21,9 +21,43 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
+
+// ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
+function resolveWorkspaceDriver() {
+  if (process.env.BATON_WORKSPACE_DRIVER && fs.existsSync(process.env.BATON_WORKSPACE_DRIVER)) {
+    return { type: 'script', cmd: process.execPath, args: [process.env.BATON_WORKSPACE_DRIVER] };
+  }
+  const localDriver = path.resolve(SCRIPT_ROOT, '..', 'worktree', 'worktree.mjs');
+  if (fs.existsSync(localDriver)) {
+    return { type: 'script', cmd: process.execPath, args: [localDriver] };
+  }
+  try {
+    const whichCmd = process.platform === 'win32' ? 'where baton-worktree' : 'which baton-worktree';
+    const binPath = execSync(whichCmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n')[0];
+    if (binPath && fs.existsSync(binPath)) {
+      return { type: 'bin', cmd: binPath, args: [] };
+    }
+  } catch {}
+  return null;
+}
+
+function invokeWorkspaceDriver(action, ticketId, extraArgs = []) {
+  const driver = resolveWorkspaceDriver();
+  if (!driver) return null;
+  try {
+    const allArgs = [...driver.args, action, ticketId, ...extraArgs];
+    const out = execFileSync(driver.cmd, allArgs, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+    return out;
+  } catch (err) {
+    return { error: err.message };
+  }
+}
 
 // ── 作用域根解析（仓内模式 ⊃ 同工作区，提案 PROPOSAL-2026-10-09-intra-repo-mode.md）──
 // 模式由「解析到的根」推断：命中 `.handoff-hub.json` ⇒ 仓内模式（intra-repo）；否则回退 lab Hub（cross）。
@@ -382,7 +416,7 @@ function checkReceiptPrompt(f, fm, raw, problems) {
   if (f.startsWith('COREML-')) return; // 跨仓同工作区侧免转递（历史豁免，COREML-* 专属）
   // 仓内模式（v2.15.0 减负）：已有 handoff wait 状态机后台监听与响应式自动唤醒，
   // 彻底废除仓内回执必须含「## 转递提示词」节的盲肠要求，免除复制粘贴传话仪式。
-  if (MODE === 'intra-repo' || fm?.mode === 'intra-repo' || fm?.workspace === 'same') return;
+  if (MODE === 'intra-repo' || fm?.mode === 'intra-repo' || fm?.workspace === 'same' || fm?.workspace === 'worktree') return;
   // 标题允许带后缀（如「## 转递提示词（必含 · 供用户原样复制）」），故不锚行尾。
   // 逐行切分取节体——不用正则前瞻：JS 无 \Z（那是 Python），照搬会在 JS 里退化成字面「Z」而匹配失败。
   const secs = receiptSections(raw, '转递提示词');
@@ -709,13 +743,25 @@ function cmdNewIntra(args) {
   if (!types.has(type.toLowerCase())) { console.error(`type 必须是 ${[...types].join(' / ')}`); process.exit(2); }
   const l = lane.toLowerCase();
   const ty = type.toLowerCase();
-  const title = rest.join(' ').trim() || '(无标题)';
+  let ws = HUB_CONFIG.workspace_default || 'same';
+  const restClean = [];
+  for (let i = 0; i < rest.length; i++) {
+    if ((rest[i] === '--workspace' || rest[i] === '-ws') && rest[i + 1]) {
+      const candidate = rest[i + 1].toLowerCase();
+      if (['same', 'separate', 'worktree'].includes(candidate)) {
+        ws = candidate;
+      }
+      i++;
+    } else {
+      restClean.push(rest[i]);
+    }
+  }
+  const title = restClean.join(' ').trim() || '(无标题)';
   const ymd = todayYMD();
   const seq = nextSeqFor(l, ymd);
   const id = `${l}-${ymd}-${seq}-${ty}`;
   const file = path.join(H_DIR, `${id}.md`);
   if (fs.existsSync(file)) { console.error('已存在: ' + file); process.exit(1); }
-  const ws = HUB_CONFIG.workspace_default || 'same';
   // 审计动作契约（v2.13）：to_lane=audit 时把强制审计动作注入交接文档「给执行方」节，
   // 让审计 agent 读到的就是约束本身（严禁仅静态读码、独立执行验收判据）。
   const auditNote = (l === 'audit')
@@ -887,6 +933,18 @@ function cmdAccept(args) {
   if (deliveredAt) updateFM.delivered_at = deliveredAt;
   setFM(file, updateFM);
   console.log(`✅ 已审计闭环: ${id}（验收记录已写入交接文档）`);
+
+  // ── Worktree 生命周期回收（微内核驱动挂载）──
+  if (fm.workspace === 'worktree') {
+    if (args.includes('--prune-worktree') || args.includes('-p')) {
+      const pOut = invokeWorkspaceDriver('prune', id, ['--force']);
+      if (!pOut?.error) {
+        console.log(`🧹 [Worktree 回收] 已自动清理工单 [${id}] 的隔离工作树与临时分支。`);
+      }
+    } else {
+      console.log(`ℹ️ [Worktree 提示] 本工单运行于隔离工作树，可执行 baton-worktree prune ${id} 回收磁盘空间（或在 close 时加 --prune-worktree）。`);
+    }
+  }
 }
 
 /** 审计驳回（reject）：发起方收回执后实测不过 ⇒ received → forwarded（退回执行方继续改）。
@@ -1273,6 +1331,32 @@ async function cmdForward(args) {
   } else {
     setFM(file, { status: 'forwarded' });
     console.log(`✅ 已标记转递: ${id}`);
+  }
+
+  // ── Worktree 自动分配（微内核驱动挂载 · ADR-0003）──
+  if (fm && fm.workspace === 'worktree') {
+    const driver = resolveWorkspaceDriver();
+    if (driver) {
+      const out = invokeWorkspaceDriver('allocate', id, ['--json']);
+      try {
+        const json = typeof out === 'string' ? JSON.parse(out) : null;
+        if (json && json.path) {
+          const isZh = detectLang() === 'zh';
+          if (isZh) {
+            console.log(`🌳 [Worktree 物理隔离就绪] 已为工单分配专属工作树: \x1b[32m${json.path}\x1b[0m (分支: ${json.branch})`);
+          } else {
+            console.log(`🌳 [Worktree Ready] Allocated isolated workspace: \x1b[32m${json.path}\x1b[0m (branch: ${json.branch})`);
+          }
+        }
+      } catch {}
+    } else {
+      const isZh = detectLang() === 'zh';
+      if (isZh) {
+        console.warn(`⚠️ [Worktree 提示] 工单声明了 workspace: worktree，但未探测到可用 Workspace Driver。请在隔离分支下执行，或安装 units/worktree。`);
+      } else {
+        console.warn(`⚠️ [Worktree Notice] Ticket declared workspace: worktree, but no Workspace Driver was found.`);
+      }
+    }
   }
 
   // 无论跨仓还是仓内（含 same / separate），一律输出标准交接提示词供一键复制
@@ -1725,9 +1809,17 @@ function cmdPrompt(args) {
       console.log(`\n## 交接提示词\n`);
       console.log(`> 直接复制下方提示词，发送给接收方 Agent 接单：\n`);
       console.log(`\`\`\`text`);
-      console.log(`请【${toRole}】接单：${display}（${title}）`);
+      if (ws === 'worktree') {
+        const wtRel = path.join('.worktrees', id);
+        console.log(`请【${toRole}】在隔离工作树（${wtRel}）接单：${display}（${title}）`);
+      } else {
+        console.log(`请【${toRole}】接单：${display}（${title}）`);
+      }
       console.log(`\`\`\`\n`);
-      if (ws !== 'same') {
+      if (ws === 'worktree') {
+        const wtRel = path.join('.worktrees', id);
+        console.log(`（发送方注 · 任务在专属工作树 ${wtRel} 物理隔离进行，切勿在主代码目录就地修改，验收完成后自动回收。）\n`);
+      } else if (ws !== 'same') {
         console.log(`（发送方注 · 异工作区请先同步工作树。）\n`);
       } else {
         console.log(`（若已挂起后台监听，回执登记后状态机会自动感知唤醒发起方闭环。）\n`);
@@ -1739,9 +1831,17 @@ function cmdPrompt(args) {
       console.log(`\n## Baton Pass Prompt\n`);
       console.log(`> Copy the prompt below to pass to the receiver Agent:\n`);
       console.log(`\`\`\`text`);
-      console.log(`Please [${toRole}] take handoff: ${display} (${title})`);
+      if (ws === 'worktree') {
+        const wtRel = path.join('.worktrees', id);
+        console.log(`Please [${toRole}] take handoff in isolated worktree (${wtRel}): ${display} (${title})`);
+      } else {
+        console.log(`Please [${toRole}] take handoff: ${display} (${title})`);
+      }
       console.log(`\`\`\`\n`);
-      if (ws !== 'same') {
+      if (ws === 'worktree') {
+        const wtRel = path.join('.worktrees', id);
+        console.log(`(Sender note: task executes in isolated worktree ${wtRel}. Do not edit main directory directly.)\n`);
+      } else if (ws !== 'same') {
         console.log(`(Sender note: separate workspace detected, please sync git tree first.)\n`);
       } else {
         console.log(`(If background listener is running, the state machine will automatically wake up upon receipt.)\n`);
@@ -2259,6 +2359,117 @@ function formatDuration(ms) {
   return `${(ms / 3600000).toFixed(1).replace(/\.0$/, '')}h`;
 }
 
+// ── 注意力节流与三级中断模型（Attention Throttle · ADR-0003）──────────────────
+function notifyInterrupt(level, title, message) {
+  // 1. 控制台视觉输出
+  if (level === 'red') {
+    console.error(`\n🚨 \x1b[41m\x1b[37m[RED INTERRUPT · 系统级阻断中断]\x1b[0m \x1b[31m${title}\x1b[0m`);
+    console.error(`   ${message}\n`);
+  } else if (level === 'yellow') {
+    console.log(`\n🔔 \x1b[43m\x1b[30m[YELLOW INTERRUPT · 交付待验收中断]\x1b[0m \x1b[33m${title}\x1b[0m`);
+    console.log(`   ${message}\n`);
+  }
+
+  // 2. 宿主桌面系统通知（macOS osascript / Linux notify-send）
+  if (process.platform === 'darwin') {
+    try {
+      const sound = level === 'red' ? 'Basso' : 'Glass';
+      const safeTitle = title.replace(/"/g, '\\"');
+      const safeMsg = message.replace(/"/g, '\\"');
+      execFileSync('osascript', ['-e', `display notification "${safeMsg}" with title "${safeTitle}" sound name "${sound}"`], { stdio: 'ignore' });
+    } catch {}
+  } else if (process.platform === 'linux') {
+    try {
+      const urgency = level === 'red' ? 'critical' : 'normal';
+      execFileSync('notify-send', ['-u', urgency, title, message], { stdio: 'ignore' });
+    } catch {}
+  }
+}
+
+function sanitizeId(id) {
+  if (!id) return '';
+  return String(id).trim().replace(/[^a-zA-Z0-9._-]/g, '-');
+}
+
+/**
+ * baton throttle <ticket-id> -- <command...>
+ * 静默管道包装：将耗时子任务完全重定向至 .handoffs/logs/<ticket-id>.log
+ * 阻断过程噪音；仅在 Exit != 0 时触发 Red 中断冒泡
+ */
+function cmdThrottle(args) {
+  const dashIdx = args.indexOf('--');
+  const ticketId = args.slice(0, dashIdx !== -1 ? dashIdx : 1).find(a => !a.startsWith('-'));
+  const cmdParts = dashIdx !== -1 ? args.slice(dashIdx + 1) : args.slice(1);
+
+  if (!ticketId || cmdParts.length === 0) {
+    console.error('用法: baton throttle <ticket-id> -- <command...>');
+    console.error('示例: baton throttle impl-01 -- npm test');
+    process.exit(2);
+  }
+
+  const cleanId = sanitizeId(ticketId);
+  const fullCmd = cmdParts.join(' ');
+  const logDir = path.join(ROOT, 'logs');
+  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, `${cleanId}.log`);
+
+  const isZh = detectLang() === 'zh';
+  if (isZh) {
+    console.log(`🔇 [注意力节流 · 静默管道] 工单 [${cleanId}] 正在静默执行: \x1b[36m${fullCmd}\x1b[0m`);
+    console.log(`   过程日志流向: ${logFile}`);
+  } else {
+    console.log(`🔇 [Attention Throttle · Silent Pipe] Ticket [${cleanId}] running silently: \x1b[36m${fullCmd}\x1b[0m`);
+    console.log(`   Process logs redirected to: ${logFile}`);
+  }
+
+  const logFd = fs.openSync(logFile, 'a');
+  fs.writeSync(logFd, `\n=== [${new Date().toISOString()}] START: ${fullCmd} ===\n`);
+
+  const startTime = Date.now();
+  let exitCode = 0;
+  try {
+    execSync(fullCmd, {
+      stdio: ['ignore', logFd, logFd],
+      env: { ...process.env, CI: 'true', THROTTLE_SILENT: '1' },
+      cwd: ROOT
+    });
+    fs.writeSync(logFd, `=== [${new Date().toISOString()}] FINISHED: Exit 0 ===\n`);
+  } catch (err) {
+    exitCode = err.status !== undefined ? err.status : 1;
+    fs.writeSync(logFd, `=== [${new Date().toISOString()}] FAILED: Exit ${exitCode} ===\n`);
+  } finally {
+    fs.closeSync(logFd);
+  }
+
+  const durationSec = ((Date.now() - startTime) / 1000).toFixed(2);
+
+  if (exitCode === 0) {
+    if (isZh) {
+      console.log(`✅ [静默执行完成 · Green] 耗时 ${durationSec}s，过程零噪音打扰。`);
+    } else {
+      console.log(`✅ [Silent Run Completed · Green] Took ${durationSec}s with zero noise.`);
+    }
+    process.exit(0);
+  } else {
+    // 触发 Red 级别中断
+    const failMsg = isZh
+      ? `工单 [${cleanId}] 执行命令失败 (Exit ${exitCode})，请人工排查！`
+      : `Ticket [${cleanId}] command failed with Exit ${exitCode}. Human intervention needed.`;
+    notifyInterrupt('red', 'Baton 任务执行阻断', failMsg);
+
+    // 读取最后 15 行错误日志直接展示
+    try {
+      const logs = fs.readFileSync(logFile, 'utf8').trim().split('\n');
+      const tail = logs.slice(-15).join('\n');
+      console.error('\n' + '─'.repeat(30) + ' [末尾错误日志] ' + '─'.repeat(30));
+      console.error(tail);
+      console.error('─'.repeat(74) + '\n');
+    } catch {}
+
+    process.exit(exitCode);
+  }
+}
+
 /** 打印 wait 唤醒摘要，引导发起方/审计方进行独立实测与闭环。 */
 function printWaitWakeupSummary(id, hFile, rFile, hFm) {
   let rFm = {}, rText = '', conclusion = '';
@@ -2302,11 +2513,8 @@ function printWaitWakeupSummary(id, hFile, rFile, hFm) {
   console.log(`5. 如验收不通过则驳回重做：`);
   console.log(`   baton reject ${id} -n "驳回原因与缺失点..."\n`);
 
-  if (process.env.BATON_DAEMON && process.platform === 'darwin') {
-    try {
-      execFileSync('osascript', ['-e', `display notification "交接 ${id} 回执已到达，请进行独立实测验收" with title "Agent Baton"`]);
-    } catch {}
-  }
+  // 触发 Yellow 级别交付待验收中断
+  notifyInterrupt('yellow', 'Baton 工单交付待验收', `工单 ${id} 回执已到达并通过平息缓冲，请进行独立实测验收！`);
 }
 
 /** 后台监听回执状态变迁（支持跨仓与同仓多窗口协同）。
@@ -2501,6 +2709,7 @@ async function cmdWait(args) {
           console.error(`  - ${id}: ${t.status} ⏳ (等待执行方接单与提交回执)`);
         }
       }
+      notifyInterrupt('red', 'Baton 监听超时阻断', `工单等待超时 (${formatDuration(timeoutMs)})，未收到终态交付信号，请人工排查！`);
       console.error(`⚠️ 监听已退出 (Exit 124)。建议联系对应执行方或检查执行窗口进度。`);
       process.exit(124);
     }
@@ -2652,23 +2861,30 @@ switch (cmd) {
   case 'brief': cmdBrief(rest); break;
   case 'sync': cmdSync(); break;
   case 'wait': await cmdWait(rest); break;
+  case 'throttle':
+  case 'silent':
+    cmdThrottle(rest);
+    break;
   case 'drift': cmdDrift(rest); break;
   default: {
     const isZh = detectLang() === 'zh';
     if (isZh) {
-      console.log(`Agent Baton (baton) CLI · v2.20.0 (alias: handoff)
+      console.log(`Agent Baton (baton) CLI · v2.21.0 (alias: handoff)
 用法:
   baton init [--cross] [--root <dir>] [--targets <a,b>] [--lanes <a,b>]
                                                初始化 Hub（--cross 为跨仓中立中枢，默认仓内子 Hub）
   baton import --from <dir>                    扫描旧交接目录生成只读快照
-  baton new <target|lane> <type> <标题...>     创建交接（跨仓 target / 仓内 lane）
+  baton new <target|lane> <type> <标题...> [--workspace worktree]
+                                               创建交接（跨仓 target / 仓内 lane / 支持 worktree 隔离）
   baton status [--json] [--for <t|lane>] [--mermaid]
                                                查看未闭环摘要（支持 --mermaid 拓扑图）
-  baton accept <id> -n "<验收结论>" [--by <lane>] 审计闭环（close 为同义别名）
+  baton accept <id> -n "<验收结论>" [--by <lane>] [--prune-worktree]
+                                               审计闭环（close 为同义别名，可选自动回收隔离工作树）
   baton reject <id> -n "<驳回理由>"            审计驳回（退回执行方继续改）
   baton receipt <id> [-n "<回执正文>"] [--deliver] [--evidence-paths "..."] [--evidence-commits "..."] [--audit-nonce "..."]
                                                登记回执并翻 received（可选 --deliver 一步直达交付）
   baton deliver <id> [-n "<交付补充说明>"]     执行方终态交付并翻 delivered（触发发起方独立实测）
+  baton throttle <id> -- <cmd...>              静默管道运行耗时任务（三级中断过滤，仅在失败/交付时唤醒）
   baton forward <id> [--wait] [--daemon] [--blind]
                                                标记已转递（--wait 托管阻塞监听；--daemon 脱钩后台守护；--blind 双盲脱敏）
   baton wait <id1> [id2 ...] [--any|--all] [--timeout <dur>] [--settle <dur>] [--daemon]

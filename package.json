@@ -8,6 +8,8 @@
     "lab": "./bin/lab.mjs",
     "baton": "./units/handoffs/handoff.mjs",
     "agent-baton": "./units/handoffs/handoff.mjs",
+    "baton-worktree": "./units/worktree/worktree.mjs",
+    "baton-audit-runner": "./units/review-gate/clean-runner.mjs",
     "handoff": "./units/handoffs/handoff.mjs",
     "adr-init": "./units/adr/scripts/adr-init.sh"
   },
@@ -15,8 +17,8 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "test": "node bin/lab.mjs doctor && node units/handoffs/handoff.mjs status",
-    "postinstall": "chmod +x bin/lab.mjs units/handoffs/handoff.mjs units/adr/scripts/adr-init.sh units/preflight/templates/preflight.sh units/preflight/templates/check.sh units/review-gate/templates/scan.sh 2>/dev/null || true"
+    "test": "node bin/lab.mjs doctor && node units/handoffs/handoff.mjs status && node units/worktree/worktree.mjs --help && node units/review-gate/clean-runner.mjs --help",
+    "postinstall": "chmod +x bin/lab.mjs units/handoffs/handoff.mjs units/worktree/worktree.mjs units/review-gate/clean-runner.mjs units/adr/scripts/adr-init.sh units/preflight/templates/preflight.sh units/preflight/templates/check.sh units/review-gate/templates/scan.sh 2>/dev/null || true"
   },
   "files": [
     "bin/",
@@ -43,6 +45,7 @@
     "units/review-gate/VERSION.md",
     "units/review-gate/CHANGELOG.md",
     "units/review-gate/AGENTS.md",
+    "units/review-gate/clean-runner.mjs",
     "units/handoffs/AGENT-GUIDE.md",
     "units/handoffs/AGENTS.md",
     "units/handoffs/CHANGELOG.md",
@@ -51,7 +54,8 @@
     "units/handoffs/README.md",
     "units/handoffs/RESPONSE-TEMPLATE.md",
     "units/handoffs/handoff-status.mjs",
-    "units/handoffs/handoff.mjs"
+    "units/handoffs/handoff.mjs",
+    "units/worktree/"
   ],
   "keywords": [
     "agent",

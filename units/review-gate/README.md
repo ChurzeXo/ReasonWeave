@@ -75,6 +75,21 @@
 - 与 Layer-1 关系：Layer-2 抓语义/并发/设计，Layer-1 抓硬规则；两者结论冲突时以「能跑通且人工验证」为准，**不盲信任一层**。
 - 对**无 remote 的本地仓**：PR-Agent / CodeRabbit / pr-af 等 PR 驱动工具**失效**（无 PR 触发），本地 review 技能是兜底。
 
+## 6.5 Layer-3 双盲审计自动化重跑器 (Clean Context Runner)
+
+> **定位（v1.1.0 引入 · ADR-0003）**：在多 Agent 协同流程中（尤其是 `to_lane=audit`），杜绝实现方自测自评与粉饰测试结果；由独立的无上下文干净进程自动重跑「验收判据」命令。
+
+- **原则**：Hooks are Law —— 唯有实际物理子进程 Exit 0 算通过，严禁口头声明。
+- **环境隔离**：自动识别并进入 `.worktrees/<ticket-id>` 隔离工作树，清洗大模型主观环境变量。
+- **CLI 用法**：
+  ```bash
+  # 自动重跑工单的验收测试
+  baton-audit-runner run <ticket-id>
+
+  # 显式指定测试命令与物理工作树并自动落盘回执
+  baton-audit-runner run <ticket-id> --cmd "npm test" --auto-receipt
+  ```
+
 ## 7. 诚实边界（必读）
 
 - **规则仍从 semgrep.dev 下载**（只读 GET，未上传）；离线/防火墙可能拉不到 → 进阶：把规则缓存到本地目录用 `--config <本地路径>`。

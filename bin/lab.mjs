@@ -28,6 +28,8 @@ Lab Agent Engineering Toolkit (AEF v1.0)
 
 全局命令 CLI:
   handoff                     调用工作流跨仓/仓内交接中枢
+  baton-worktree              管理多 Agent 物理隔离工作树
+  baton-audit-runner          双盲审计独立进程自动重跑器
   adr-init                    初始化项目架构决策记录 (ADR)
 `);
 }
@@ -40,6 +42,7 @@ function listUnits() {
     { name: 'review-gate', desc: 'SAST 静态扫描 (OpenGrep) 与代码评审防线' },
     { name: 'adr', desc: '架构决策记录机制 (light/standard/frozen)' },
     { name: 'backlog', desc: '待办捕获制度 (一任务一文件)' },
+    { name: 'worktree', desc: '基于 Git Worktree 的物理目录隔离调度引擎' },
     { name: 'playbook', desc: 'Agent Engineering Framework (AEF) 完整方法论' },
   ];
   for (const u of units) {

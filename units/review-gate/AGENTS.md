@@ -15,6 +15,7 @@
 3. **变量化、不绑项目**：规则集 / 排除项 / 基线路径 / 扫描扩展名全部用环境变量或顶部变量，预设按语言栈切换；不得写死 Tappy 的 Kotlin/Android 特征。
 4. **基线 = 主动接受的清单**：模板与文档反复强调「人工过目」，不自动信任。
 5. **多门禁共存走 dispatcher（口径与 preflight 统一）**：git 一仓只允许一个 `.githooks/pre-commit` → 各门禁作 `.githooks/pre-commit.d/` 子检查，编排器见 `~/Documents/lab/preflight/templates/pre-commit`。**禁止**「合并/焊入既有脚本」口径（手改焊死 hook 是 v1.0.2/v1.0.3 两 bug 的根因模式）。
+6. **双盲审计独立实测（Clean Runner 纪律）**：审计方严禁仅依靠静态读码或自测口令盖章。必须通过 `clean-runner.mjs` 启动独立进程重跑测试，以实际物理 Exit Code 为唯一准绳。禁止伪造或绕过测试结果。
 
 ## 版本化纪律
 

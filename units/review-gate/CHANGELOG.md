@@ -1,5 +1,13 @@
 # Changelog — review-gate
 
+## v1.1.0 (2026-11-09)
+- **新增双盲审计自动化运行器（Clean Context Runner · `clean-runner.mjs`）**：
+  - 核心 CLI 导出：`baton-audit-runner run <ticket-id> [--worktree <path>] [--cmd "<command>"] [--auto-receipt]`；
+  - **Hooks are Law 物理裁决**：剥离 Agent 自测自评与主观思维链上下文，直接以干净子进程重跑工单「验收判据」命令，以真实物理 Exit Code 作为唯一准绳；
+  - **智能工作树环境挂载**：自动探测并适配 `.worktrees/<ticket-id>` 隔离工作区；
+  - **全自动审计回执签发**：Exit 0 后支持一键落盘符合 `RESPONSE-TEMPLATE.md` 的审计回执单，自动注入真实 Commit SHA 与改动文件证据；
+  - 支撑 ADR-0003 与 Backlog 06 落地。
+
 ## v1.0.5 (2026-10-15)
 - **统一「多门禁共存」口径，与 preflight 对齐（闭合 KF-4）**：git 一仓只允许一个 `.githooks/pre-commit` —— 放弃「合并/焊入既有 hook」旧措辞，全模块改用 **dispatcher 模式**（各门禁作 `.githooks/pre-commit.d/` 子检查，编排器见 `~/Documents/lab/preflight/templates/pre-commit`）。
 - 受影响文件：`README.md`（§3.2 步骤 1 + §8 新增共存条目）、`AGENTS.md`（核心约定新增第 5 条）、`docs/new-project-prompt.md`、`docs/existing-project-prompt.md`（步骤 1/5 + 回复项）、`docs/transfers/{iggle,prospero,swoop}.md`（既有 hook 仓：步骤 1 改为「既有 hook 移入 `.d/00-existing` + 本模块 `.d/10-review-gate` + dispatcher 编排」；硬约束与回复项同步）。

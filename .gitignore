@@ -47,3 +47,6 @@ preflight/evidence/2026-10-*/verify*.txt
 
 # intra-repo sub-hub
 .handoffs/
+
+# Baton / Lab Worktrees
+.worktrees/

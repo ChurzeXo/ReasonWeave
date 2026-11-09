@@ -9,6 +9,7 @@ graph TD
     PLAYBOOK["units/playbook (方法论顶层母版)"]
     
     HANDOFFS["units/handoffs (协作中枢)"]
+    WORKTREE["units/worktree (物理隔离引擎)"]
     PREFLIGHT["units/preflight (不变量门禁)"]
     REVIEW["units/review-gate (代码安全质量防线)"]
     ADR["units/adr (架构记忆)"]
@@ -19,7 +20,9 @@ graph TD
     PLAYBOOK -.->|"理论出处"| ADR
     PLAYBOOK -.->|"理论出处"| BACKLOG
     PLAYBOOK -.->|"理论出处"| HANDOFFS
+    PLAYBOOK -.->|"理论出处"| WORKTREE
     
+    HANDOFFS -.->|"调用工作区驱动 (Workspace Driver)"| WORKTREE
     PREFLIGHT -.->|"可协同编排 (pre-commit.d)"| REVIEW
     HANDOFFS -.->|"闭环回执可联动"| BACKLOG
 ```
@@ -29,6 +32,7 @@ graph TD
 | Unit | 类型 | 版本源 | 外部依赖 | 演进频率 |
 |---|---|---|---|---|
 | `units/handoffs/` | Node CLI 引擎 | `VERSION.md` / README | Node.js >= 18 | 高频 (协作契约与状态机演进) |
+| `units/worktree/` | Node CLI 引擎 | `VERSION.md` / README | git, Node.js >= 18 | 中频 (物理隔离与缓存优化) |
 | `units/preflight/` | Shell 脚本 + 探针 | `VERSION.md` | git, POSIX shell | 中频 (探针与门禁项扩充) |
 | `units/review-gate/` | Shell 脚本 + SAST | `VERSION.md` | opengrep, git | 低频 (规则与基线优化) |
 | `units/adr/` | Shell 引导 + 模板 | `VERSION.md` | bash | 低频 (模板档位演进) |

@@ -9,6 +9,7 @@
 |:---:|------|:---:|:---:|:---:|------|
 | 0001 | Handoff 异步后台监听与响应式唤醒架构决策 | 🔒 Frozen | 2026-11-04 | handoffs | `0001-handoff-async-wait-and-reactive-wakeup.md` |
 | 0002 | 仓内交接回执去仪式化与自动唤醒闭环规范 | 🔒 Frozen | 2026-11-04 | handoffs | `0002-de-ritualize-handoff-prompt-for-intra-repo.md` |
+| 0003 | 基于注意力节流的分层协同与 Handoff 微内核解耦架构 | 🔒 Frozen | 2026-11-09 | handoffs / global | `0003-attention-throttle-and-workspace-driver.md` |
 
 ## 状态说明
 - **Proposed** — 已起草，等待评审。不入 Agent 上下文。
