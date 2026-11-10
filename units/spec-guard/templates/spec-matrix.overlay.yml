@@ -1,0 +1,25 @@
+# spec-guard 覆写与跨端契约层 (Overlay)
+#
+# 注意：spec-guard 默认推行 Code-as-Spec-Matrix，即直接通过源码扫描 @Invariant 注解与 ADR 状态表。
+# 本文件仅作为【跨端/跨语言无直接代码引用】（如 Android ↔ Python）或特殊契约的按需覆写层。
+
+version: "1.0"
+
+# 跨端跨语言契约覆盖定义
+invariants:
+  - id: "ADR-060:Gate1"
+    name: "跨端设备排他锁互斥"
+    status: "in_progress" # verified | in_progress | unwired | blocked
+    adr_file: "ADR-060-twenty-four-hour-ota-timing-and-business-interlock-spec.md"
+    cross_repo_contracts:
+      - repo: "Tappy"
+        edge: "mcp-server/device_lock.py ↔ android/app/src/main/.../ServiceWatchdog.kt"
+        protocol: "WS Frame: system_update_available"
+    assertions:
+      - type: "cross_boundary_contract"
+        target: "tests/contract/test_device_lock_interlock.py"
+        marker: "@invariant(\"ADR-060:Gate1\")"
+    production:
+      symbols:
+        - "mcp_server.device_lock#acquire_device_probe_guard"
+      wiring_status: "unwired"

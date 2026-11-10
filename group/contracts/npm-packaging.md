@@ -11,6 +11,7 @@
 |---|---|---|
 | `lab` | `bin/lab.mjs` | 能力库总管命令（`lab list`, `lab path <unit>`, `lab doctor`） |
 | `handoff` | `units/handoffs/handoff.mjs` | 工作流交接与回执闭环引擎 |
+| `spec-guard` | `units/spec-guard/bin/spec-guard.mjs` | 架构规约与漂移守卫 CLI (别名: `drift-gate`) |
 | `adr-init` | `units/adr/scripts/adr-init.sh` | 架构决策记录引导初始化 |
 
 ## 3. 消费方集成模式

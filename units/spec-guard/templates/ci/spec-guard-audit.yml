@@ -1,0 +1,23 @@
+name: Architecture Spec & Drift Audit
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 2 * * *' # 每日凌晨异步对账
+
+jobs:
+  spec-guard-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '>=18'
+
+      - name: Run spec-guard full audit
+        run: |
+          npx lab-agent-toolkit spec-guard check --strict

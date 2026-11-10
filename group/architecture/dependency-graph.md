@@ -13,16 +13,19 @@ graph TD
     PREFLIGHT["units/preflight (不变量门禁)"]
     REVIEW["units/review-gate (代码安全质量防线)"]
     ADR["units/adr (架构记忆)"]
+    SPECGUARD["units/spec-guard (规约与漂移守卫)"]
     BACKLOG["units/backlog (待办捕获)"]
     
     PLAYBOOK -.->|"理论出处"| PREFLIGHT
     PLAYBOOK -.->|"理论出处"| REVIEW
     PLAYBOOK -.->|"理论出处"| ADR
+    PLAYBOOK -.->|"理论出处"| SPECGUARD
     PLAYBOOK -.->|"理论出处"| BACKLOG
     PLAYBOOK -.->|"理论出处"| HANDOFFS
     PLAYBOOK -.->|"理论出处"| WORKTREE
     
-    HANDOFFS -.->|"调用工作区驱动 (Workspace Driver)"| WORKTREE
+    SPECGUARD -.->|"对账 Invariant & Status"| ADR
+    PREFLIGHT -.->|"可协同编排 (pre-commit.d)"| SPECGUARD
     PREFLIGHT -.->|"可协同编排 (pre-commit.d)"| REVIEW
     HANDOFFS -.->|"闭环回执可联动"| BACKLOG
 ```
@@ -36,6 +39,7 @@ graph TD
 | `units/preflight/` | Shell 脚本 + 探针 | `VERSION.md` | git, POSIX shell | 中频 (探针与门禁项扩充) |
 | `units/review-gate/` | Shell 脚本 + SAST | `VERSION.md` | opengrep, git | 低频 (规则与基线优化) |
 | `units/adr/` | Shell 引导 + 模板 | `VERSION.md` | bash | 低频 (模板档位演进) |
+| `units/spec-guard/` | Node CLI 引擎 | `VERSION.md` / README | Node.js >= 18 | 中频 (规约对账与边界探针演进) |
 | `units/backlog/` | 规范文档 + 模板 | `VERSION.md` | 无 | 低频 (记录格式演进) |
 | `units/playbook/` | 文档与方法论全集 | `README.md` | 无 | 持续积累 |
 

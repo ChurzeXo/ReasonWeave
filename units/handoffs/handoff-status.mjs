@@ -271,7 +271,7 @@ for (const r of rows) {
 const open = rows.filter(r => r.status !== 'closed');
 const byStatus = {};
 for (const r of open) (byStatus[r.status] = byStatus[r.status] || []).push(r);
-const receiptButStale = open.filter(r => r.hasReceipt && r.status !== 'received' && r.status !== 'closed');
+const receiptButStale = open.filter(r => r.hasReceipt && r.status !== 'received' && r.status !== 'delivered' && r.status !== 'closed');
 
 // ── 下一步导航 ──
 // 状态名中文化 + 每项给出「谁该做什么」，消除「看到状态名却不知下一步」的记忆负担。

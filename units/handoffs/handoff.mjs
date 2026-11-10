@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.22.0';
+const BATON_VERSION = '2.23.0';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -428,7 +428,7 @@ function checkReceiptPrompt(f, fm, raw, problems) {
   }
   // AR-②：只验节名存在会被「空壳节」蒙混（曾有一份回执节名为空、交付行写在另一个重复节里，
   // check 照过）。故再验**至少一个节内含标准可复制交付行**（新式「请收 <仓> 回执：」或旧式「登记回执：」）。
-  const LINE_RE = /^[ \t]*(?:请【[^】]*】查收【[^】]*】回执[ \t]*[：:]|请收[ \t]*\S+[ \t]*回执[ \t]*[：:]|登记回执[ \t]*[：:])/m;
+  const LINE_RE = /^[ \t]*(?:请【[^】]*】查收【[^】]*】回执(?:[ \t]*\[[^\]]+\])?[ \t]*[：:]|请收[ \t]*\S+[ \t]*回执(?:[ \t]*\[[^\]]+\])?[ \t]*[：:]|登记回执(?:[ \t]*\[[^\]]+\])?[ \t]*[：:])/m;
   const hasLine = secs.some(b => LINE_RE.test(b));
   if (!hasLine) {
     problems.push(`[回执] 「## 转递提示词」节为空 — 须含一行可复制交付行（「请收 <写回执仓> 回执：<路径>（…）」或旧式「登记回执：<路径>」）: ${f}`);
@@ -1042,7 +1042,7 @@ function extractConclusion(raw) {
  *  **仓内（v2.13 修复）：严禁 detectRepo 拼仓库名**，改读回执 frontmatter 的 from_lane/to_lane，
  *  用 resolveLaneRole 拼自然角色（杜绝「请收 Tappy 回执」式把项目名当沟通角色的事故）。 */
 function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
-  let lines = 0, bytes = 0, fromLane = '', toLane = '', rawText = '';
+  let lines = 0, bytes = 0, fromLane = '', toLane = '', rawText = '', ticketId = '';
   try {
     const buf = fs.readFileSync(rFile);
     bytes = buf.length;
@@ -1052,22 +1052,30 @@ function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
     const fm = readFM(text) || {};
     fromLane = fm.from_lane || '';
     toLane = fm.to_lane || '';
+    ticketId = fm.handoff_id || path.basename(rFile).replace(/-resp\.md$/, '');
     if (fm.delivered_at) isDelivered = true;
   } catch { /* 读不到不阻断主流程 */ }
   const flag = needsChange ? '是' : '否';
   const display = rFile.startsWith(os.homedir()) ? '~' + rFile.slice(os.homedir().length) : rFile;
+  const isZh = detectLang() === 'zh';
   if (MODE === 'intra-repo') {
+    const toRole = resolveLaneRole(toLane) || toLane || (isZh ? '发起方' : 'Initiator');
+    const fromRole = resolveLaneRole(fromLane) || fromLane || (isZh ? '本方' : 'Executor');
     if (isDelivered) {
-      console.log(`\n✅ 仓内终态交付已生效（状态推进为 delivered，后台监听已自动感知平息并唤醒发起方/审计方进行独立验收闭环）。\n`);
+      console.log(`\n✅ 仓内终态交付已生效 [${ticketId}]（状态推进为 delivered，后台监听已自动感知平息并唤醒发起方/审计方进行独立验收闭环）。`);
+      console.log(`📋 可复制交付提示词（同对话多工单精准对齐）:`);
+      console.log(`\`\`\`text`);
+      console.log(`请【${toRole}】查收【${fromRole}】回执 [${ticketId}]：${display}（已交付 · 需发起方改动：${flag}）`);
+      console.log(`\`\`\`\n`);
     } else {
-      console.log(`\n✅ 仓内回执已登记为草稿（status: received）。注意：还需 baton deliver <ID> 才会唤醒发起方。\n`);
+      console.log(`\n✅ 仓内回执已登记为草稿 [${ticketId}]（status: received）。注意：还需 baton deliver ${ticketId} 才会唤醒发起方。\n`);
     }
     return;
   }
   console.log(`\n📋 回执交付行（复制给发起方 Agent，一行即完整）:\n`);
   const repo = detectRepo(process.cwd());
   const label = repo ? (TARGET_LABELS[repo] || repo) : (path.basename(process.cwd()) || '本仓');
-  console.log(`请收 ${label} 回执：${display}（${lines} 行 / ${bytes} 字节 · 需发起方改动：${flag}）`);
+  console.log(`请收 ${label} 回执 [${ticketId}]：${display}（${lines} 行 / ${bytes} 字节 · 需发起方改动：${flag}）`);
   console.log(`\n（接收方注 · 勿复制给发起方：该行触发「收回执」路由——发起方读回执并审计；内容已闭环时，回复里要说清「接下来由谁处理、我这边是否还动」，不要写「无需转递」这类看不出责任主体的说法。）`);
 }
 
@@ -1396,10 +1404,27 @@ async function cmdForward(args) {
     }
   } else {
     const isZh = detectLang() === 'zh';
-    if (isZh) {
-      console.log(`\n👉 提示: 请立即启动后台监听: baton forward ${id} --wait（由 AI 宿主托管或阻塞等待），以便在回执到达时自动唤醒。`);
+    const noWaitExplicit = args.includes('--no-wait');
+    if (isAgentEnvironment() && !noWaitExplicit) {
+      if (isZh) {
+        console.warn(`\n⚠️  [安全警示: 必须挂起监听] 检测到在 Agent 环境下转递未带 --wait！`);
+        console.warn(`   真相提醒：Baton 是基于本地文件系统内核事件（fs.watch）的总线。`);
+        console.warn(`   即使执行方是外部客户端（Cursor/WorkBuddy/Antigravity 等）或人类终端，对方运行 baton deliver 也会直接落盘唤醒。`);
+        console.warn(`   严禁以为「外部客户端等不到」而跳过监听！请立即执行:`);
+        console.warn(`   👉 baton wait ${id} （请作为后台任务/Background Task 运行）\n`);
+      } else {
+        console.warn(`\n⚠️  [Security Warning: Listener Required] Detected 'forward' without --wait in an Agent environment!`);
+        console.warn(`   Fact: Baton is an fs.watch filesystem event bus.`);
+        console.warn(`   Even if the executor is an external client (Cursor/WorkBuddy, etc.), 'baton deliver' will wake you up immediately.`);
+        console.warn(`   Never skip waiting assuming external clients cannot be detected! Run immediately:`);
+        console.warn(`   👉 baton wait ${id} (run as a background task)\n`);
+      }
     } else {
-      console.log(`\n👉 Notice: Please start background listener immediately: baton forward ${id} --wait (managed by agent host or blocking wait) to auto-wake upon receipt.`);
+      if (isZh) {
+        console.log(`\n👉 提示: 请立即启动后台监听: baton forward ${id} --wait（由 AI 宿主托管或阻塞等待），以便在回执到达时自动唤醒。`);
+      } else {
+        console.log(`\n👉 Notice: Please start background listener immediately: baton forward ${id} --wait (managed by agent host or blocking wait) to auto-wake upon receipt.`);
+      }
     }
   }
 }
@@ -1496,11 +1521,11 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = "### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.22.0 为准）\n\n**早拦 Preflight（强制）**\n- **命令形态**：一律 `baton <op>` 或 `handoff <op>`（PATH shim → 中央引擎；幂等自愈 `baton link`）。若报 command not found：运行 `baton link`（或 `handoff link`）自愈（或通过 lab-agent-toolkit 重新 `npm link`）。\n- 调用 `show/receipt/deliver/accept/reject/check` 前，**必须先跑** `baton status`（或 `handoff status`，执行方冷启动用 `baton status --for <本方 lane|target>` 直取本方待办）且其输出在上下文中。\n- **状态语义（v2.20.0 · 五态生命周期）**：「进行中」= 未闭环（`status ≠ closed`）且归属当前方。**待办 = `draft` + `forwarded`**——落我归属即该我动工；`received` = 回执草稿已登记（待执行方交付）；`delivered` = 执行方已完成终态交付（等待发起方验收）；`closed` = 审计闭环完成。\n- **终态交付与平息机制（v2.20.0 · 防抢跑竞态与会话平息）**：回执文件落盘不等于会话结束。执行方必须通过 `baton deliver <ID>`（或 `baton receipt <ID> --deliver`）显式标记终态交付；探针检测到交付信号后启动平息缓冲（Settle Window），等待执行方会话彻底收尾退出后方 Exit 0 唤醒发起方。未 deliver 之前发起方 wait 探针不唤醒、accept 硬拒闭环。发起方严禁在收到显式交付信号前提前修改 Backlog 或规划文档。\n- **物理工作树隔离（v2.21.0 · workspace: worktree）**：支持 `workspace: worktree`，自动在 `.worktrees/<id>` 下创建轻量沙箱并软链共享构建缓存（`node_modules`、`target`、`.venv`），主仓库零污染且构建零损耗。工单闭环时使用 `baton close <ID> --prune-worktree` 自动安全回收。\n- **注意力节流管道（v2.21.0 · baton throttle）**：执行方在后台长任务运行时，推荐使用 `baton throttle <ID> -- <cmd>` 包装运行。三级中断过滤机制阻断日志刷屏对人类与主控上下文的注意力劫持（仅致命错误红灯突破，常规流直接静默落盘）。\n- **无污染双盲重跑（v2.21.0 · clean-runner / baton-audit-runner）**：审计方验收时，推荐使用 `baton-audit-runner <ID>` 在干净上下文独立重跑验收判据命令，自动校验真实 Exit Code 并固化 `--evidence-commits` 与 `--evidence-paths`。\n- 指定 ID 必须在「进行中」且归属当前方（仓内：`to_lane == 当前 lane`；跨仓：落在目标收件箱且未闭环）。找不到→停下并说明。\n- 未指定 ID 却有多条归属当前方的待办（draft/forwarded）→ 列出清单请用户点名，不擅自选。\n- receipt 前确保 status 快照 **< 60 分钟**（超时重跑；长任务收尾时 deliver 自动宽容续期）。\n- 仓内优先读 frontmatter `workspace`（same/separate/worktree），禁用 mtime 推断。\n- 执行方**只写 receipt / deliver**，**不做 accept/reject**。\n- **严禁抢跑/虚假回执**：验收判据**全部实测通过**方可提交回执与交付。执行中途遇阻、环境/多实例冲突或需讨论的中间状态，**仅记录于 reviews/ 或对话说明，严禁提交包含「已通过」的抢跑回执**。\n- 回执正文唯一源 = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`：**照抄其「回执模板（可直接复制）」骨架**（含 evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。\n- **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 `--evidence-paths \"真实文件,...\"` / `--evidence-commits \"<sha>\"`（无文件改动用 `--evidence-note \"<原因>\"`）；声称的路径须真实存在、提交须 `git cat-file -e` 可查，否则 receipt / deliver / accept / check 拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。\n- 收尾必须 `baton check`（或 `handoff check`）exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节」；存量豁免）。\n- **回复收尾（交接提示词规范）**：发起交接（出站）时，回复最末块**必须固定为交接提示词（由本地 AI 根据用户本地语言自适应呈现：中文使用 `## 交接提示词`，英文使用 `## Baton Pass Prompt`）**。标题、描述说明与具体的接单指令必须严格分离，提示词置于独立代码块（```text）中，方便人类一键复制发给接收方 Agent（其后无任何正文）。执行方交付（入站）后，因发起方已挂起后台探针自动唤醒，无需再写回执提示词。\n- **对外话术（v2.22.0 · 通俗优先 · 强制）**：跟用户交代进度与收尾时，必须让人只读该段就判断出「谁在做、我这边还动不动」——**说清三点：对方是谁 + 对方要做什么 + 我这边是否还有待办**。**禁用「无需转递」「已闭环」这类只描述内部机制、看不出责任主体的缩写**。正例：「我这边做完了，报告已交出去；接下来由实现方复查并收单，系统会自动通知它，你不用转告。」机器锚点（`## 转递提示词` 节名、`forward`/`deliver` 子命令）不变，勿改名。\n- **审计动作契约（v2.13 · to_lane=audit 强制）**：审计方（接收方 to_lane=audit）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明，不采信）。其余 lane 亦建议独立实测，但审计 lane 为硬纪律。\n- **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = `请【<目标角色>】接单：<交接路径>（<主题>）`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；`.handoff-hub.json` 的 `lane_labels` 可覆盖）。\n- **防提前闭环与双盲审计防伪（v2.16.0）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执；`to_lane=audit` 派发时自动签发一次性 `Audit Nonce`，审计回执必须携带 `--audit-nonce \"<nonce>\"`，硬性拦截同一会话自签；支持 `baton forward --blind` 物理脱敏主观思维链与自辩借口。\n\n**最小操作序列（出站 = 建/发交接 · 强制闭环）**\n1. `baton new <target|lane> <type> \"<标题>\"`（或 `handoff new ...`）并填写正文\n2. **转递并挂起后台监听（必须执行）**：\n   执行 `baton forward <ID> --wait`（多工单并发聚合监听可执行 `baton wait <id1> [id2 ...] [--any|--all]`；AI 客户端宿主进程树托管；人类终端可用 `--daemon` 脱钩；需双盲脱敏加 `--blind`）\n   ——无论同工作区还是跨工作区，必须启动监听探针；交付完成并平息后探针唤醒进行独立验收闭环。\n3. **输出交接提示词（末块规范）**：本地 AI 根据用户本地语言自适应输出，标题、描述与独立代码块分离（其后无任何正文）：\n   ## 交接提示词\n   > 直接复制下方提示词，发送给接收方 Agent 接单：\n   ```text\n   请【<目标角色>】接单：<交接路径>（<主题>）\n   ```\n\n**最小操作序列（入站 = 接单/回执/交付）**\n1. `baton status --for <本方 lane|target>`（冷启动直取本方待办；全量 `baton status` 供发起方巡检）\n2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 `to_lane == 当前 lane`；跨仓 = 落在目标收件箱）→ 确认目标 ID\n3. `baton show <ID>`\n4. 按边界最小改动（仅该 lane 应改文件）\n5. 实测全过方写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → 运行 `baton receipt <ID> -n \"<正文>\" --evidence-paths \"真实文件,...\" --evidence-commits \"<sha>\"`（或原子复合命令 `baton receipt <ID> --deliver ...` 直达交付）。（若 `to_lane=audit` 须附 `--audit-nonce \"<nonce>\"`；仓内必附 evidence；无文件改动用 `--evidence-note`；中途受阻仅写 reviews/ 严禁提回执）\n6. `baton check`（核验证据与锚节合规，exit 0）\n7. **终态交付与会话收尾**：运行 `baton deliver <ID>`（烙印 delivered 并触发平息缓冲后自动唤醒发起方；会话彻底收工结束）。\n\n详见 `$(lab path handoffs)/AGENT-GUIDE.md` 获取完整版 Preflight。";
+const STUB_BODY_ZH = "### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.23.0 为准）\n\n**早拦 Preflight（强制）**\n- **命令形态**：一律 `baton <op>` 或 `handoff <op>`（PATH shim → 中央引擎；幂等自愈 `baton link`）。若报 command not found：运行 `baton link`（或 `handoff link`）自愈（或通过 lab-agent-toolkit 重新 `npm link`）。\n- 调用 `show/receipt/deliver/accept/reject/check` 前，**必须先跑** `baton status`（或 `handoff status`，执行方冷启动用 `baton status --for <本方 lane|target>` 直取本方待办）且其输出在上下文中。\n- **状态语义（v2.20.0 · 五态生命周期）**：「进行中」= 未闭环（`status ≠ closed`）且归属当前方。**待办 = `draft` + `forwarded`**——落我归属即该我动工；`received` = 回执草稿已登记（待执行方交付）；`delivered` = 执行方已完成终态交付（等待发起方验收）；`closed` = 审计闭环完成。\n- **终态交付与平息机制（v2.20.0 · 防抢跑竞态与会话平息）**：回执文件落盘不等于会话结束。执行方必须通过 `baton deliver <ID>`（或 `baton receipt <ID> --deliver`）显式标记终态交付；探针检测到交付信号后启动平息缓冲（Settle Window），等待执行方会话彻底收尾退出后方 Exit 0 唤醒发起方。未 deliver 之前发起方 wait 探针不唤醒、accept 硬拒闭环。发起方严禁在收到显式交付信号前提前修改 Backlog 或规划文档。\n- **物理工作树隔离（v2.21.0 · workspace: worktree）**：支持 `workspace: worktree`，自动在 `.worktrees/<id>` 下创建轻量沙箱并软链共享构建缓存（`node_modules`、`target`、`.venv`），主仓库零污染且构建零损耗。工单闭环时使用 `baton close <ID> --prune-worktree` 自动安全回收。\n- **注意力节流管道（v2.21.0 · baton throttle）**：执行方在后台长任务运行时，推荐使用 `baton throttle <ID> -- <cmd>` 包装运行。三级中断过滤机制阻断日志刷屏对人类与主控上下文的注意力劫持（仅致命错误红灯突破，常规流直接静默落盘）。\n- **无污染双盲重跑（v2.21.0 · clean-runner / baton-audit-runner）**：审计方验收时，推荐使用 `baton-audit-runner <ID>` 在干净上下文独立重跑验收判据命令，自动校验真实 Exit Code 并固化 `--evidence-commits` 与 `--evidence-paths`。\n- **监听必须性与反借口（v2.23.0 · 严禁擅跳监听）**：无论执行方是同窗口子 Agent、外部客户端（Cursor/WorkBuddy/Antigravity 等）、独立终端还是人工，`baton` 是底层文件系统事件总线（`fs.watch`），外部任何终端执行 `baton deliver` 会直接写入工单，探针能瞬间感知并唤醒。**严禁以「执行方是外部客户端/等不到回执/会空耗超时」为由擅自跳过后台监听**；发起方转递后必须挂起 `baton forward <ID> --wait`（或由宿主作为后台任务挂起 `baton wait <ID>`）。\n- 指定 ID 必须在「进行中」且归属当前方（仓内：`to_lane == 当前 lane`；跨仓：落在目标收件箱且未闭环）。找不到→停下并说明。\n- 未指定 ID 却有多条归属当前方的待办（draft/forwarded）→ 列出清单请用户点名，不擅自选。\n- receipt 前确保 status 快照 **< 60 分钟**（超时重跑；长任务收尾时 deliver 自动宽容续期）。\n- 仓内优先读 frontmatter `workspace`（same/separate/worktree），禁用 mtime 推断。\n- 执行方**只写 receipt / deliver**，**不做 accept/reject**。\n- **严禁抢跑/虚假回执**：验收判据**全部实测通过**方可提交回执与交付。执行中途遇阻、环境/多实例冲突或需讨论的中间状态，**仅记录于 reviews/ 或对话说明，严禁提交包含「已通过」的抢跑回执**。\n- 回执正文唯一源 = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`：**照抄其「回执模板（可直接复制）」骨架**（含 evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。\n- **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 `--evidence-paths \"真实文件,...\"` / `--evidence-commits \"<sha>\"`（无文件改动用 `--evidence-note \"<原因>\"`）；声称的路径须真实存在、提交须 `git cat-file -e` 可查，否则 receipt / deliver / accept / check 拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。\n- 收尾必须 `baton check`（或 `handoff check`）exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节」；存量豁免）。\n- **回复收尾（交接提示词规范）**：发起交接（出站）时，回复最末块**必须固定为交接提示词（由本地 AI 根据用户本地语言自适应呈现：中文使用 `## 交接提示词`，英文使用 `## Baton Pass Prompt`）**。标题、描述说明与具体的接单指令必须严格分离，提示词置于独立代码块（```text）中，方便人类一键复制发给接收方 Agent（其后无任何正文）。执行方交付（入站）后，因发起方已挂起后台探针自动唤醒，无需再写回执提示词。\n- **对外话术（v2.22.0 · 通俗优先 · 强制）**：跟用户交代进度与收尾时，必须让人只读该段就判断出「谁在做、我这边还动不动」——**说清三点：对方是谁 + 对方要做什么 + 我这边是否还有待办**。**禁用「无需转递」「已闭环」这类只描述内部机制、看不出责任主体的缩写**。正例：「我这边做完了，报告已交出去；接下来由实现方复查并收单，系统会自动通知它，你不用转告。」机器锚点（`## 转递提示词` 节名、`forward`/`deliver` 子命令）不变，勿改名。\n- **审计动作契约（v2.13 · to_lane=audit 强制）**：审计方（接收方 to_lane=audit）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明，不采信）。其余 lane 亦建议独立实测，但审计 lane 为硬纪律。\n- **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = `请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；`.handoff-hub.json` 的 `lane_labels` 可覆盖）。\n- **防提前闭环与双盲审计防伪（v2.16.0）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执；`to_lane=audit` 派发时自动签发一次性 `Audit Nonce`，审计回执必须携带 `--audit-nonce \"<nonce>\"`，硬性拦截同一会话自签；支持 `baton forward --blind` 物理脱敏主观思维链与自辩借口。\n\n**最小操作序列（出站 = 建/发交接 · 强制闭环）**\n1. `baton new <target|lane> <type> \"<标题>\"`（或 `handoff new ...`）并填写正文\n2. **转递并挂起后台监听（必须执行）**：\n   执行 `baton forward <ID> --wait`（多工单并发聚合监听可执行 `baton wait <id1> [id2 ...] [--any|--all]`；AI 客户端宿主进程树托管；人类终端可用 `--daemon` 脱钩；需双盲脱敏加 `--blind`）\n   ——无论同工作区还是跨工作区、内部还是外部客户端，必须启动监听探针（严禁以等不到为由跳过）；交付完成并平息后探针唤醒进行独立验收闭环。\n3. **输出交接提示词（末块规范）**：本地 AI 根据用户本地语言自适应输出，标题、描述与独立代码块分离（其后无任何正文）：\n   ## 交接提示词\n   > 直接复制下方提示词，发送给接收方 Agent 接单：\n   ```text\n   请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）\n   ```\n\n**最小操作序列（入站 = 接单/回执/交付）**\n1. `baton status --for <本方 lane|target>`（冷启动直取本方待办；全量 `baton status` 供发起方巡检）\n2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 `to_lane == 当前 lane`；跨仓 = 落在目标收件箱）→ 确认目标 ID\n3. `baton show <ID>`\n4. 按边界最小改动（仅该 lane 应改文件）\n5. 实测全过方写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → 运行 `baton receipt <ID> -n \"<正文>\" --evidence-paths \"真实文件,...\" --evidence-commits \"<sha>\"`（或原子复合命令 `baton receipt <ID> --deliver ...` 直达交付）。（若 `to_lane=audit` 须附 `--audit-nonce \"<nonce>\"`；仓内必附 evidence；无文件改动用 `--evidence-note`；中途受阻仅写 reviews/ 严禁提回执）\n6. `baton check`（核验证据与锚节合规，exit 0）\n7. **终态交付与会话收尾**：运行 `baton deliver <ID>`（烙印 delivered 并触发平息缓冲后自动唤醒发起方；会话彻底收工结束）。\n\n详见 `$(lab path handoffs)/AGENT-GUIDE.md` 获取完整版 Preflight。";
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = "### Agent Baton (Handoff) Guard Stub (Contract v2.22.0 · Details in $(lab path handoffs)/README.md)\n\n**Mandatory Preflight**\n- **CLI Form**: Always use `baton <op>` or `handoff <op>` (PATH shim → central engine; self-healing with `baton link`). If command not found: run `baton link` (or `handoff link`) or reinstall via `npm link`.\n- Before calling `show/receipt/deliver/accept/reject/check`, you **MUST** run `baton status` (or `handoff status`; executor cold start uses `baton status --for <lane|target>`) and have its output in context.\n- **Status Semantics (v2.20.0 · 5-State Lifecycle)**: \"In Progress\" = unclosed (`status ≠ closed`) and assigned to current party. **Pending = `draft` + `forwarded`**—assigned to me means I start work. `received` = receipt drafted (awaiting delivery); `delivered` = final delivery complete (awaiting audit); `closed` = audit closed.\n- **Final Delivery & Settle Mechanism (v2.20.0 · Anti-Race & Session Settle)**: Landing a receipt file does NOT equal session completion. The executor MUST explicitly mark delivery via `baton deliver <ID>` (or `baton receipt <ID> --deliver`); the wait probe initiates a settle window upon delivery, waiting for the executor session to fully conclude before waking the initiator with Exit 0. Before deliver, initiator wait probe will NOT wake up, and accept hard-fails. Initiators MUST NOT modify Backlog or specs before final delivery.\n- **Physical Worktree Isolation (v2.21.0 · workspace: worktree)**: Supports `workspace: worktree`, allocating isolated git worktrees under `.worktrees/<id>` with auto-symlinked build caches (`node_modules`, `target`, `.venv`) for zero-pollution and zero-overhead builds. Auto-prune on closure via `baton close <ID> --prune-worktree`.\n- **Attention Throttle Pipeline (v2.21.0 · baton throttle)**: Executors running long background tasks should wrap commands with `baton throttle <ID> -- <cmd>` to filter noise and protect agent/human attention (three-tier interrupt filter; only fatal red interrupts breach).\n- **Clean Double-Blind Audit Runner (v2.21.0 · clean-runner / baton-audit-runner)**: Auditors are encouraged to run `baton-audit-runner <ID>` to execute acceptance criteria in a clean context, evaluating true exit codes and generating solid evidence arguments.\n- Target ID must be \"In Progress\" and assigned to current party (intra-repo: `to_lane == current lane`; cross-repo: located in target inbox and unclosed). If not found → halt and report.\n- Unspecified ID with multiple pending tasks → list candidates for human selection, do not guess.\n- Status snapshot before receipt must be **< 60 minutes old** (rerun if stale; deliver auto-refreshes during long task wrap-up).\n- Intra-repo prioritizes frontmatter `workspace` (same/separate/worktree); disable mtime heuristics.\n- Executor **only writes receipt / deliver**, **never calls accept/reject**.\n- **Anti-Premature / Counterfeit Receipts**: Submit receipts ONLY when all acceptance criteria **have actually passed in execution**. Intermediate blockers, runtime/environment conflicts, or ongoing discussions **must be recorded in reviews/ or reported in conversation—never submit a premature receipt claiming \"Verified\"**.\n- Single source of truth for receipt body = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`: copy its skeleton (including evidence fields). Do not improvise.\n- **Evidence Hard Gate (v2.12.3)**: Receipts must include verifiable evidence `--evidence-paths \"file1,...\"` / `--evidence-commits \"<sha>\"` (or `--evidence-note \"<reason>\"` if no code changed). Claimed paths must exist and commits must resolve via `git cat-file -e`. Declaration without modification = counterfeit receipt.\n- Wrap up must pass `baton check` (or `handoff check`) with exit 0 (non-empty body + ## sections + status/verdict anchor).\n- **Reply Ending (Baton Pass Prompt Standard)**: When initiating a handoff (outbound), the last section of your reply **MUST be the Baton Pass Prompt (adapted by local AI to the user's active language: e.g. `## Baton Pass Prompt` in English, `## 交接提示词` in Chinese)**. Title, instructions, and the command MUST be strictly separated, enclosing the command in a standalone code block (```text) for one-click human copying (no text after this block). When submitting a receipt (inbound), initiator wait probe auto-wakes; no receipt prompt needed.\n- **Human-Facing Wording (v2.22.0 · Plain Language · Mandatory)**: When reporting progress or wrapping up to the user, make it obvious who acts next and whether you still have work left—state (1) who the other party is, (2) what they must do, (3) whether you have pending work. **Never output mechanism-only abbreviations such as \"no handoff needed\" or \"closed\" as a standalone conclusion.** Machine anchors (`## 转递提示词` section name, `forward`/`deliver` subcommands) must not be renamed.\n- **Audit Action Contract (v2.13 · to_lane=audit mandatory)**: Auditor **MUST NOT merely read code statically**—must **independently execute** all tests and verification commands in terminal. Self-reports (\"tests passed\") are unverified claims and must not be blindly trusted.\n- **Natural Role Mapping (v2.13)**: Never use repo name or lane slug as conversational role. Outbound = `Please [Role] take handoff: <path> (<topic>)`. Roles map from lane (impl→Implementation / audit→Audit / arch→Architecture; customizable in `.handoff-hub.json`).\n- **Anti-Premature Closure & Double-Blind Audit (v2.16.0)**: Receipts **must be independently authored by to_lane**—from_lane is forbidden from self-authoring. Audit dispatch issues a one-time `Audit Nonce`, required via `--audit-nonce \"<nonce>\"`. Supports `baton forward --blind` for cognitive desensitization.\n\n**Minimal Workflow (Outbound = Create/Forward · Mandatory Closure)**\n1. `baton new <target|lane> <type> \"<Title>\"` (or `handoff new ...`) and fill body\n2. **Forward and listen in background (Mandatory)**:\n   Run `baton forward <ID> --wait` (for concurrent tasks, run `baton wait <id1> [id2 ...] [--any|--all]`; managed by AI host as background task; human terminals can use `--daemon` to detach; add `--blind` for double-blind audit)\n   — Mandatory for both same and separate workspaces; auto-wakes upon final delivery and session settle with exit 0 for independent audit.\n3. **Output Baton Pass Prompt (Tail block standard)**: Local AI adapts to the user's active language with title, instructions, and code block separated:\n   ## Baton Pass Prompt\n   > Copy the prompt below to pass to the receiver Agent:\n   ```text\n   Please [Target Role] take handoff: <path> (<topic>)\n   ```\n\n**Minimal Workflow (Inbound = Receive/Receipt/Deliver)**\n1. `baton status --for <lane|target>`\n2. Filter pending (`draft`/`forwarded`) assigned to current party → confirm target ID\n3. `baton show <ID>`\n4. Minimal scoped modification (only files belonging to this lane)\n5. Write receipt only after all tests pass: follow `$(lab path handoffs)/RESPONSE-TEMPLATE.md` → run `baton receipt <ID> -n \"<Body>\" --evidence-paths \"file1,...\" --evidence-commits \"<sha>\"` (or atomic `baton receipt <ID> --deliver ...`). (audit requires `--audit-nonce \"<nonce>\"`; blocked progress goes to reviews/ only, never submit premature receipt)\n6. `baton check` (verify evidence and anchors pass, exit 0)\n7. **Final Delivery & Session Wrap-Up**: Run `baton deliver <ID>` (marks delivered and enters settle buffer before waking initiator; session wraps up).\n\nSee `$(lab path handoffs)/AGENT-GUIDE.md` for full Preflight.";
+const STUB_BODY_EN = "### Agent Baton (Handoff) Guard Stub (Contract v2.23.0 · Details in $(lab path handoffs)/README.md)\n\n**Mandatory Preflight**\n- **CLI Form**: Always use `baton <op>` or `handoff <op>` (PATH shim → central engine; self-healing with `baton link`). If command not found: run `baton link` (or `handoff link`) or reinstall via `npm link`.\n- Before calling `show/receipt/deliver/accept/reject/check`, you **MUST** run `baton status` (or `handoff status`; executor cold start uses `baton status --for <lane|target>`) and have its output in context.\n- **Status Semantics (v2.20.0 · 5-State Lifecycle)**: \"In Progress\" = unclosed (`status ≠ closed`) and assigned to current party. **Pending = `draft` + `forwarded`**—assigned to me means I start work. `received` = receipt drafted (awaiting delivery); `delivered` = final delivery complete (awaiting audit); `closed` = audit closed.\n- **Final Delivery & Settle Mechanism (v2.20.0 · Anti-Race & Session Settle)**: Landing a receipt file does NOT equal session completion. The executor MUST explicitly mark delivery via `baton deliver <ID>` (or `baton receipt <ID> --deliver`); the wait probe initiates a settle window upon delivery, waiting for the executor session to fully conclude before waking the initiator with Exit 0. Before deliver, initiator wait probe will NOT wake up, and accept hard-fails. Initiators MUST NOT modify Backlog or specs before final delivery.\n- **Physical Worktree Isolation (v2.21.0 · workspace: worktree)**: Supports `workspace: worktree`, allocating isolated git worktrees under `.worktrees/<id>` with auto-symlinked build caches (`node_modules`, `target`, `.venv`) for zero-pollution and zero-overhead builds. Auto-prune on closure via `baton close <ID> --prune-worktree`.\n- **Attention Throttle Pipeline (v2.21.0 · baton throttle)**: Executors running long background tasks should wrap commands with `baton throttle <ID> -- <cmd>` to filter noise and protect agent/human attention (three-tier interrupt filter; only fatal red interrupts breach).\n- **Clean Double-Blind Audit Runner (v2.21.0 · clean-runner / baton-audit-runner)**: Auditors are encouraged to run `baton-audit-runner <ID>` to execute acceptance criteria in a clean context, evaluating true exit codes and generating solid evidence arguments.\n- **Mandatory Listening & Anti-Excuses (v2.23.0)**: Regardless of whether the executor is an in-session subagent, an external client (Cursor/WorkBuddy/Antigravity, etc.), a standalone terminal, or a human, baton operates on local filesystem events (fs.watch). Any baton deliver immediately wakes the probe. **Never skip background listening claiming \"executor is external client / cannot wait / will timeout\".** Initiators MUST maintain baton forward <ID> --wait (or host background task baton wait <ID>).\n- Target ID must be \"In Progress\" and assigned to current party (intra-repo: `to_lane == current lane`; cross-repo: located in target inbox and unclosed). If not found → halt and report.\n- Unspecified ID with multiple pending tasks → list candidates for human selection, do not guess.\n- Status snapshot before receipt must be **< 60 minutes old** (rerun if stale; deliver auto-refreshes during long task wrap-up).\n- Intra-repo prioritizes frontmatter `workspace` (same/separate/worktree); disable mtime heuristics.\n- Executor **only writes receipt / deliver**, **never calls accept/reject**.\n- **Anti-Premature / Counterfeit Receipts**: Submit receipts ONLY when all acceptance criteria **have actually passed in execution**. Intermediate blockers, runtime/environment conflicts, or ongoing discussions **must be recorded in reviews/ or reported in conversation—never submit a premature receipt claiming \"Verified\"**.\n- Single source of truth for receipt body = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`: copy its skeleton (including evidence fields). Do not improvise.\n- **Evidence Hard Gate (v2.12.3)**: Receipts must include verifiable evidence `--evidence-paths \"file1,...\"` / `--evidence-commits \"<sha>\"` (or `--evidence-note \"<reason>\"` if no code changed). Claimed paths must exist and commits must resolve via `git cat-file -e`. Declaration without modification = counterfeit receipt.\n- Wrap up must pass `baton check` (or `handoff check`) with exit 0 (non-empty body + ## sections + status/verdict anchor).\n- **Reply Ending (Baton Pass Prompt Standard)**: When initiating a handoff (outbound), the last section of your reply **MUST be the Baton Pass Prompt (adapted by local AI to the user's active language: e.g. `## Baton Pass Prompt` in English, `## 交接提示词` in Chinese)**. Title, instructions, and the command MUST be strictly separated, enclosing the command in a standalone code block (```text) for one-click human copying (no text after this block). When submitting a receipt (inbound), initiator wait probe auto-wakes; no receipt prompt needed.\n- **Human-Facing Wording (v2.22.0 · Plain Language · Mandatory)**: When reporting progress or wrapping up to the user, make it obvious who acts next and whether you still have work left—state (1) who the other party is, (2) what they must do, (3) whether you have pending work. **Never output mechanism-only abbreviations such as \"no handoff needed\" or \"closed\" as a standalone conclusion.** Machine anchors (`## 转递提示词` section name, `forward`/`deliver` subcommands) must not be renamed.\n- **Audit Action Contract (v2.13 · to_lane=audit mandatory)**: Auditor **MUST NOT merely read code statically**—must **independently execute** all tests and verification commands in terminal. Self-reports (\"tests passed\") are unverified claims and must not be blindly trusted.\n- **Natural Role Mapping (v2.13)**: Never use repo name or lane slug as conversational role. Outbound = `Please [Role] take handoff [<ID>]: <path> (<topic>)`. Roles map from lane (impl→Implementation / audit→Audit / arch→Architecture; customizable in `.handoff-hub.json`).\n- **Anti-Premature Closure & Double-Blind Audit (v2.16.0)**: Receipts **must be independently authored by to_lane**—from_lane is forbidden from self-authoring. Audit dispatch issues a one-time `Audit Nonce`, required via `--audit-nonce \"<nonce>\"`. Supports `baton forward --blind` for cognitive desensitization.\n\n**Minimal Workflow (Outbound = Create/Forward · Mandatory Closure)**\n1. `baton new <target|lane> <type> \"<Title>\"` (or `handoff new ...`) and fill body\n2. **Forward and listen in background (Mandatory)**:\n   Run `baton forward <ID> --wait` (for concurrent tasks, run `baton wait <id1> [id2 ...] [--any|--all]`; managed by AI host as background task; human terminals can use `--daemon` to detach; add `--blind` for double-blind audit)\n   — Mandatory for all scenarios (never skip claiming external client); auto-wakes upon final delivery and session settle with exit 0 for independent audit.\n3. **Output Baton Pass Prompt (Tail block standard)**: Local AI adapts to the user's active language with title, instructions, and code block separated:\n   ## Baton Pass Prompt\n   > Copy the prompt below to pass to the receiver Agent:\n   ```text\n   Please [Target Role] take handoff [<ID>]: <path> (<topic>)\n   ```\n\n**Minimal Workflow (Inbound = Receive/Receipt/Deliver)**\n1. `baton status --for <lane|target>`\n2. Filter pending (`draft`/`forwarded`) assigned to current party → confirm target ID\n3. `baton show <ID>`\n4. Minimal scoped modification (only files belonging to this lane)\n5. Write receipt only after all tests pass: follow `$(lab path handoffs)/RESPONSE-TEMPLATE.md` → run `baton receipt <ID> -n \"<Body>\" --evidence-paths \"file1,...\" --evidence-commits \"<sha>\"` (or atomic `baton receipt <ID> --deliver ...`). (audit requires `--audit-nonce \"<nonce>\"`; blocked progress goes to reviews/ only, never submit premature receipt)\n6. `baton check` (verify evidence and anchors pass, exit 0)\n7. **Final Delivery & Session Wrap-Up**: Run `baton deliver <ID>` (marks delivered and enters settle buffer before waking initiator; session wraps up).\n\nSee `$(lab path handoffs)/AGENT-GUIDE.md` for full Preflight.";
 const STUB_SHA_EN = crypto.createHash('sha256').update(STUB_BODY_EN).digest('hex').slice(0, 8);
 const STUB_BLOCK_EN = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_EN} -->\n${STUB_BODY_EN}\n${STUB_END}`;
 
@@ -1623,6 +1648,7 @@ function cmdCheck() {
   reportSize();
   reportMissingReceiptPrompt();
   reportStalePending();
+  reportUnwatchedPending();
 }
 
 // 仓内模式门禁：按 ROOT 模式（配置）分支；per-file `mode` 仅作一致性校验，不替代根模式判定
@@ -1687,6 +1713,7 @@ function cmdCheckIntra() {
   console.log(`✅ check 通过（仓内模式）: ${hAll.length} 份交接 / ${rAll.length} 份回执，全部合规`);
   reportSize();
   reportStalePending();
+  reportUnwatchedPending();
 }
 
 /** 体积提示（**非阻断** · 契约 v2.6 的体积预算）。
@@ -1739,7 +1766,7 @@ function reportMissingReceiptPrompt() {
     // （2026-09-10 教训：宽松写法 /登记回执/ 把 PROSPERO-20260910-01-bug-resp.md 第 31 行
     //  的改动描述误判为「已含」，产生假阴性）。行首可带一个反引号（提示词常写成 `xxx` 行内代码）。
     // v2.8.2：新式「请收 <写回执仓> 回执：」与旧式「登记回执：」均认（存量回执/旧记忆不回改）。
-    if (/^`?(登记回执|请收[^\n：]*回执|请【[^\n】]*】查收【[^\n】]*】回执|Please review[^\n:]*receipt|Register receipt)[：:]/im.test(raw)) continue;
+    if (/^`?(登记回执|请收[^\n：]*回执|请【[^\n】]*】查收【[^\n】]*】回执|Please review[^\n:]*receipt|Register receipt)(?:[ \t]*\[[^\]]+\])?[：:]/im.test(raw)) continue;
     rows.push(f);
   }
   if (!rows.length) return;
@@ -1774,6 +1801,39 @@ function reportStalePending() {
   console.log(`⏳ 待执行滞留（draft/forwarded ≥${STALE_PENDING_DAYS} 天未推进 · 非阻断）：${rows.length} 项`);
   for (const r of rows) console.log(`   ${r.age} 天 ${r.status}  ${r.id}`);
   console.log(`   滞留 = 交接已落归属方但未见动工/回执——执行方跑 \`handoff status --for <本方>\` 认领开工；发起方该催办（status --json 可查）。`);
+}
+
+/** 监听状态诊断提示（非阻断 · v2.23.0）。
+ *
+ * 检查当前仓库已转递（forwarded）的工单是否存在存活的 wait 监听探针。
+ * 若无存活监听，输出显式提醒，防范 Agent 因「以为外部客户端等不到」而跳过监听造成闭环断崖。 */
+function reportUnwatchedPending() {
+  if (!fs.existsSync(H_DIR)) return;
+  const re = MODE === 'intra-repo' ? INTRA_ID_RE : H_RE;
+  const rows = [];
+  const watchDir = path.join(ROOT, '.watch');
+  for (const f of listMdFiles(H_DIR, re)) {
+    const fm = readFM(fs.readFileSync(path.join(H_DIR, f), 'utf8'));
+    if (!fm || fm.status !== 'forwarded') continue;
+    const watchFile = path.join(watchDir, `${fm.handoff_id}.json`);
+    let hasWatcher = false;
+    if (fs.existsSync(watchFile)) {
+      try {
+        const wData = JSON.parse(fs.readFileSync(watchFile, 'utf8'));
+        if (wData && wData.pid) {
+          process.kill(wData.pid, 0);
+          hasWatcher = true;
+        }
+      } catch {}
+    }
+    if (!hasWatcher) {
+      rows.push(fm.handoff_id);
+    }
+  }
+  if (!rows.length) return;
+  console.log(`⚠️  未挂起后台监听（已转递但无存活 wait 探针 · v2.23.0）：${rows.length} 份`);
+  for (const id of rows) console.log(`   handoffs/${id}.md → [⚠️ 无监听]`);
+  console.log(`   提示：Baton 为本地文件系统事件总线（fs.watch）。无论执行方是外部客户端还是独立终端，deliver 均可自动唤醒。请运行: baton wait <ID>`);
 }
 
 /** 当前工作区归属哪个仓库（用于方向自检）。
@@ -1827,9 +1887,9 @@ function cmdPrompt(args) {
       console.log(`\`\`\`text`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
-        console.log(`请【${toRole}】在隔离工作树（${wtRel}）接单：${display}（${title}）`);
+        console.log(`请【${toRole}】在隔离工作树（${wtRel}）接单 [${id}]：${display}（${title}）`);
       } else {
-        console.log(`请【${toRole}】接单：${display}（${title}）`);
+        console.log(`请【${toRole}】接单 [${id}]：${display}（${title}）`);
       }
       console.log(`\`\`\`\n`);
       if (ws === 'worktree') {
@@ -1849,9 +1909,9 @@ function cmdPrompt(args) {
       console.log(`\`\`\`text`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
-        console.log(`Please [${toRole}] take handoff in isolated worktree (${wtRel}): ${display} (${title})`);
+        console.log(`Please [${toRole}] take handoff [${id}] in isolated worktree (${wtRel}): ${display} (${title})`);
       } else {
-        console.log(`Please [${toRole}] take handoff: ${display} (${title})`);
+        console.log(`Please [${toRole}] take handoff [${id}]: ${display} (${title})`);
       }
       console.log(`\`\`\`\n`);
       if (ws === 'worktree') {
@@ -1899,7 +1959,7 @@ function cmdPrompt(args) {
     console.log(`\n## 交接提示词\n`);
     console.log(`> 直接复制下方提示词，发送给接收方 Agent 接单：\n`);
     console.log(`\`\`\`text`);
-    console.log(`请收 ${targetLabel} 交接：${display}（${title}）`);
+    console.log(`请收 ${targetLabel} 交接 [${id}]：${display}（${title}）`);
     console.log(`\`\`\`\n`);
     console.log(`（若已挂起后台监听，回执登记后状态机会自动感知唤醒发起方闭环。）\n`);
   } else {
@@ -1908,7 +1968,7 @@ function cmdPrompt(args) {
     console.log(`\n## Baton Pass Prompt\n`);
     console.log(`> Copy the prompt below to pass to the receiver Agent:\n`);
     console.log(`\`\`\`text`);
-    console.log(`Please [${targetLabel}] take handoff: ${display} (${title})`);
+    console.log(`Please [${targetLabel}] take handoff [${id}]: ${display} (${title})`);
     console.log(`\`\`\`\n`);
     console.log(`(If background listener is running, the state machine will automatically wake up upon receipt.)\n`);
   }
@@ -3030,7 +3090,7 @@ switch (cmd) {
   default: {
     const isZh = detectLang() === 'zh';
     if (isZh) {
-      console.log(`Agent Baton (baton) CLI · v2.22.0 (alias: handoff)
+      console.log(`Agent Baton (baton) CLI · v${BATON_VERSION} (alias: handoff)
 用法:
   baton init [--cross] [--root <dir>] [--targets <a,b>] [--lanes <a,b>]
                                                初始化 Hub（--cross 为跨仓中立中枢，默认仓内子 Hub）

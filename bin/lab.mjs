@@ -33,6 +33,7 @@ Lab Agent Engineering Toolkit (AEF v1.0)
   baton-audit-runner          双盲审计独立进程自动重跑器
   lab-orphan                  死代码与孤儿资产清道夫 CLI
   adr-init                    初始化项目架构决策记录 (ADR)
+  spec-guard                  架构规约与漂移守卫 CLI (别名: drift-gate)
 `);
 }
 
@@ -43,6 +44,7 @@ function listUnits() {
     { name: 'preflight', desc: '仓库不变量探针与提交门禁' },
     { name: 'review-gate', desc: 'SAST 静态扫描 (OpenGrep) 与代码评审防线' },
     { name: 'adr', desc: '架构决策记录机制 (light/standard/frozen)' },
+    { name: 'spec-guard', desc: '架构规约与漂移守卫单元 (P3\' Invariant ↔ Assertion ↔ Code 对账)' },
     { name: 'backlog', desc: '待办捕获制度 (一任务一文件)' },
     { name: 'worktree', desc: '基于 Git Worktree 的物理目录隔离调度引擎' },
     { name: 'orphan', desc: '全局死代码与孤儿资产清道夫公共单元 (Core + Adapters)' },
@@ -59,12 +61,22 @@ function getPath(unitName) {
     console.log(PKG_ROOT);
     return;
   }
-  const target = path.join(UNITS_DIR, unitName);
+  const aliases = {
+    'drift-gate': 'spec-guard',
+  };
+  const resolved = aliases[unitName] || unitName;
+  const target = path.join(UNITS_DIR, resolved);
   if (fs.existsSync(target)) {
     console.log(target);
   } else {
-    console.error(`错误: 未找到 Unit "${unitName}"。`);
-    process.exit(1);
+    // 检查根目录下是否有软链接
+    const rootSymlink = path.join(PKG_ROOT, unitName);
+    if (fs.existsSync(rootSymlink)) {
+      console.log(fs.realpathSync(rootSymlink));
+    } else {
+      console.error(`错误: 未找到 Unit "${unitName}"。`);
+      process.exit(1);
+    }
   }
 }
 
@@ -375,6 +387,27 @@ switch (command) {
     const subArgs = args.slice(1);
     try {
       const out = execFileSync(process.execPath, [orphanBin, ...subArgs], {
+        encoding: 'utf8',
+        stdio: ['inherit', 'pipe', 'pipe'],
+      });
+      process.stdout.write(out);
+    } catch (err) {
+      if (err.stdout) process.stdout.write(err.stdout);
+      if (err.stderr) process.stderr.write(err.stderr);
+      process.exit(err.status || 1);
+    }
+    break;
+  }
+  case 'spec-guard':
+  case 'drift-gate': {
+    const specGuardBin = path.join(UNITS_DIR, 'spec-guard', 'bin', 'spec-guard.mjs');
+    if (!fs.existsSync(specGuardBin)) {
+      console.error('错误: 未找到 spec-guard 模块执行文件。');
+      process.exit(1);
+    }
+    const subArgs = args.slice(1);
+    try {
+      const out = execFileSync(process.execPath, [specGuardBin, ...subArgs], {
         encoding: 'utf8',
         stdio: ['inherit', 'pipe', 'pipe'],
       });
