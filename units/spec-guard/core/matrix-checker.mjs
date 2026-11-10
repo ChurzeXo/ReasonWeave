@@ -102,15 +102,19 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
       allKnownInvariantIds.add(inv.canonicalId);
       allKnownInvariantIds.add(inv.localId);
 
-      // 在源码中严格匹配绑定的断言（严格边界）
+      // 在源码中严格匹配绑定的断言（严格边界，且防跨 ADR 串标）
       const matchingAssertions = codeInvariants.filter((item) => {
-        // item.id 可能为 "ADR-060:H-1" 或 "H-1"
-        return (
-          item.id === inv.canonicalId ||
-          (item.id === inv.localId && item.file.includes(adrId.toLowerCase())) ||
-          containsStrictInvariant(item.id, inv.canonicalId) ||
-          containsStrictInvariant(item.id, inv.localId)
-        );
+        // 若断言 ID 包含 ADR 前缀（如 "ADR-060:H-1"）
+        if (item.id.includes(':')) {
+          const [prefix, local] = item.id.split(':');
+          if (prefix.toUpperCase() !== adrId.toUpperCase()) {
+            return false;
+          }
+          return local === inv.localId || containsStrictInvariant(local, inv.localId);
+        }
+        // 若断言 ID 仅有局部名（如 "H-1"），仅当文件名包含该 ADR 编号时方认可
+        return (item.id === inv.localId || containsStrictInvariant(item.id, inv.localId)) &&
+               item.file.toLowerCase().includes(adrId.toLowerCase());
       });
 
       // 检查是否有对应的 ContractOnly 沙箱保护

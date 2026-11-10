@@ -154,6 +154,11 @@ export function scanRepository(repoRoot, options = {}) {
     '.vscode',
     'coverage',
     '.codegraph',
+    '.venv',
+    'venv',
+    'env',
+    '.gradle',
+    '.tox',
   ]);
 
   const targetExtensions = new Set([
