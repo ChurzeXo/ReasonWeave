@@ -46,9 +46,12 @@ lab spec-guard --help
 spec-guard init
 
 # 2. 扫描并对账全仓规约覆盖率与架构漂移
-spec-guard check [--strict] [--overlay <path>]
+spec-guard check [--strict] [--check-callers] [--overlay <path>]
 
-# 3. 针对指定 ADR 产出机器审计证据报告（冻结前的机器背书）
+# 3. 执行变异反向测试敏感度自检（消灭回音壁假测试）
+spec-guard mutate --file <file> --cmd "<test-command>" [--mutator <type>]
+
+# 4. 针对指定 ADR 产出机器审计证据报告（冻结前的机器背书）
 spec-guard audit-adr ADR-060 [--out report.md]
 ```
 

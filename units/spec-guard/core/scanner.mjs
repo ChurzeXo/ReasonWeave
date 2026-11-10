@@ -85,12 +85,35 @@ export function scanFileContent(content, relativePath) {
         const rawId = match[1].trim();
         // 严格检验 ID 格式 (e.g. ADR-060:H-1 or H-1 or Gate1)
         if (/^[A-Za-z0-9_:-]+$/.test(rawId)) {
+          // 提取显式 symbol 或 target 参数（例如 symbol = "acquire_guard"）
+          let targetSymbol = '';
+          const symMatch = line.match(/(?:symbol|target)\s*[:=]\s*["']?([A-Za-z0-9_]+)["']?/i);
+          if (symMatch) {
+            targetSymbol = symMatch[1];
+          }
+
+          // 提取当前行或邻近紧随行的声明符号名 (def func / fun func / class Cls / const sym =)
+          let declaredSymbol = '';
+          for (let offset = 0; offset <= 4 && lineIdx + offset < lines.length; offset++) {
+            const checkLine = lines[lineIdx + offset].trim();
+            if (offset > 0 && (checkLine.startsWith('@') || checkLine.startsWith('//') || checkLine.startsWith('#'))) {
+              continue;
+            }
+            const declM = checkLine.match(/(?:fun|def|func|function|fn|class)\s+(?:[A-Za-z0-9_.]+\.)?([A-Za-z0-9_]+)\b|(?:val|var|const|let)\s+([A-Za-z0-9_]+)\s*[:=]/);
+            if (declM) {
+              declaredSymbol = declM[1] || declM[2];
+              break;
+            }
+          }
+
           invariants.push({
             id: rawId,
             file: relativePath,
             line: lineIdx + 1,
             isTest,
             lineContent: line.trim(),
+            symbolName: declaredSymbol || targetSymbol || '',
+            targetSymbol: targetSymbol || '',
           });
         }
       }
@@ -299,7 +322,12 @@ export function analyzeSymbolWiring(symbolName, repoRoot) {
     symbolName,
     wiringStatus,
     prodCallers,
+    productionCallers: prodCallers,
     testCallers,
+    productionCallerCount: prodCallers.length,
+    testCallerCount: testCallers.length,
+    isWiredInProduction: prodCallers.length > 0,
+    isTestOnly: prodCallers.length === 0 && testCallers.length > 0,
     warnings,
   };
 }

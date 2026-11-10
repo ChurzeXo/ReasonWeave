@@ -1,5 +1,18 @@
 # Changelog — units/orphan
 
+## [v1.1.0] - 2026-11-10
+
+### Added
+- **导出符号引用分类器与生产调用者判定接口**：
+  - `core/classifier.mjs`：
+    - 新增 `CallerKind` 枚举（`PRODUCTION_CALLER`, `TEST_CALLER`, `DOC_CALLER`）；
+    - 新增 `isTestPath(filePath)` 路径测试范围判断；
+    - 新增 `Classifier.isProductionCaller(ref)` 与 `Classifier.isTestCaller(ref)` 精准分类；
+    - 新增 `Classifier.evaluateCallers(references, options)` 聚合判定符号生产接线状态（区分生产接线与单测自测）；
+  - `index.mjs`：
+    - 作为公共导出入口暴露 `InvertedIndex`, `Classifier`, `ReferenceKind`, `CallerKind`, `isTestPath`, `Solver`, `BlobReader`；
+    - 新增 `countProductionCallers(symbolName, options)` 便捷检索接口，供 `spec-guard` 等跨单元直接联动。
+
 ## [v1.0.0] - 2026-11-10
 
 ### Added

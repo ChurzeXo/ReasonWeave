@@ -1,5 +1,18 @@
 # Changelog - spec-guard (drift-gate)
 
+## [1.1.0] - 2026-11-10
+
+### Added
+- **防线 2：变异反向测试契约引擎（Mutation Sensitivity Runner）**：
+  - `core/mutation-runner.mjs`：自动化变异注入引擎（端点篡改、布尔倒置、比较取反、返回值破坏），断言测试套件在变异注入后必须爆红（Exit !== 0）；若依然全绿（Exit === 0），判定为回音壁假测试并阻断（`MUTATION_SURVIVED`）。
+  - 支持 `spec-guard mutate --file <path> --cmd "<cmd>" [--mutator <type>]` 命令行调用与 cleanContext 清洗机制。
+- **防线 3：生产拓扑可达性扫描与孤儿接线门禁 (`--check-callers`)**：
+  - 联动 `units/orphan` 的倒排索引与符号引用分类器（`countProductionCallers` / `Classifier.evaluateCallers`）。
+  - 凡是在 `spec-matrix.overlay.yml` 或源码中标记为架构 Invariant 的方法，必须在非测试生产代码中找到至少 1 处真实调用者（Production Callers >= 1）。
+  - 若只有单测调用、生产调用数为 0，门禁精准阻断并报红：`🚨 架构函数未在生产关键链路接线 (Zero Production Callers)`，强制 Exit 1。
+- **单测全量覆盖与实测验证**：
+  - `tests/spec-guard.test.mjs`：新增孤儿接线阻断与接入复测、变异反向拦截假测试实测、`orphan` 分类器跨单元联动单测，全量纳入 `npm test`。
+
 ## [1.0.0] - 2026-11-10
 
 ### 初始发布 (Initial Release)

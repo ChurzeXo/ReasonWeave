@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildAndCheckMatrix, formatConsoleReport, generateAdrAuditReport } from '../core/matrix-checker.mjs';
+import { runMutationTest } from '../core/mutation-runner.mjs';
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATES_DIR = path.join(PKG_ROOT, 'templates');
@@ -19,17 +20,22 @@ const command = args[0] || 'check';
 
 function printHelp() {
   console.log(`
-🛡️  spec-guard (drift-gate) - 架构规约与漂移守卫 CLI (v1.0.0)
+🛡️  spec-guard (drift-gate) - 架构规约与漂移守卫 CLI (v1.1.0)
 
 用法:
   spec-guard check [options]           对账全仓规约断言覆盖率与架构漂移
   spec-guard audit-adr <ADR-ID>        输出指定 ADR 的机器审计证据报告
+  spec-guard mutate [options]          执行变异反向测试敏感度校验，防御回音壁假测试
   spec-guard init                      在当前项目初始化 spec-guard 规约配置
   spec-guard help                      显示帮助信息
 
 选项:
   --strict                             严格模式：存在漂移或孤儿断言时 Exit 1 (适合 CI)
+  --check-callers                      检查架构函数在非测试生产代码中的接线调用者数 (Production Callers >= 1)
   --overlay <path>                     指定自定义 spec-matrix.overlay.yml 路径
+  --file <path>                        变异测试目标被测文件路径
+  --cmd "<command>"                    变异测试执行命令
+  --mutator <type>                     变异策略 (auto | endpoint | boolean | operator | return)
   --json                               以 JSON 格式输出对账矩阵原始数据
   --out <file>                         将审计报告输出到指定文件
 `);
@@ -70,6 +76,7 @@ function handleInit() {
 function handleCheck() {
   const cwd = process.cwd();
   const isStrict = args.includes('--strict');
+  const isCheckCallers = args.includes('--check-callers');
   const isJson = args.includes('--json');
 
   let overlayPath = '';
@@ -78,12 +85,20 @@ function handleCheck() {
     overlayPath = args[overlayIdx + 1];
   }
 
-  const result = buildAndCheckMatrix(cwd, { overlay: overlayPath });
+  const result = buildAndCheckMatrix(cwd, {
+    overlay: overlayPath,
+    checkCallers: isCheckCallers,
+  });
 
   if (isJson) {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(formatConsoleReport(result));
+  }
+
+  if (isCheckCallers && result.unwiredInvariants && result.unwiredInvariants.length > 0) {
+    console.error(`\x1b[31m❌ [spec-guard --check-callers] 门禁阻断：检测到 ${result.unwiredInvariants.length} 处架构函数未在生产接线 (Zero Production Callers)！\x1b[0m\n`);
+    process.exit(1);
   }
 
   if (isStrict && !result.isHealthy) {
@@ -122,12 +137,53 @@ function handleAuditAdr(adrId) {
   }
 }
 
+function handleMutate() {
+  const cwd = process.cwd();
+  const fileIdx = args.indexOf('--file') !== -1 ? args.indexOf('--file') : args.indexOf('--target');
+  const targetFile = fileIdx !== -1 && args[fileIdx + 1] ? args[fileIdx + 1] : '';
+
+  const cmdIdx = args.indexOf('--cmd');
+  const testCmd = cmdIdx !== -1 && args[cmdIdx + 1] ? args[cmdIdx + 1] : '';
+
+  const mutatorIdx = args.indexOf('--mutator');
+  const mutator = mutatorIdx !== -1 && args[mutatorIdx + 1] ? args[mutatorIdx + 1] : 'auto';
+
+  const isJson = args.includes('--json');
+
+  if (!targetFile || !testCmd) {
+    console.error('用法: spec-guard mutate --file <target-file> --cmd "<test-command>" [--mutator <type>]');
+    process.exit(1);
+  }
+
+  const result = runMutationTest({
+    repoRoot: cwd,
+    targetFile,
+    testCmd,
+    mutator,
+  });
+
+  if (isJson) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    if (result.status === 'MUTATION_KILLED') {
+      console.log(`\n\x1b[32m${result.message}\x1b[0m\n`);
+    } else {
+      console.error(`\n\x1b[31m${result.message}\x1b[0m\n`);
+    }
+  }
+
+  process.exit(result.exitCode);
+}
+
 switch (command) {
   case 'init':
     handleInit();
     break;
   case 'check':
     handleCheck();
+    break;
+  case 'mutate':
+    handleMutate();
     break;
   case 'audit-adr':
     handleAuditAdr(args[1]);

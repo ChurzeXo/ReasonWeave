@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execSync } from 'node:child_process';
 
 import {
   makeStrictBoundaryRegex,
@@ -20,6 +21,17 @@ import {
   buildAndCheckMatrix,
   generateAdrAuditReport,
 } from '../core/matrix-checker.mjs';
+
+import {
+  runMutationTest,
+  generateMutants,
+} from '../core/mutation-runner.mjs';
+
+import {
+  Classifier,
+  CallerKind,
+  countProductionCallers,
+} from '../../orphan/index.mjs';
 
 describe('spec-guard: 严格词界与边界防伪测试 (Constraint 2)', () => {
   it('应正确匹配严格词界的 Invariant ID', () => {
@@ -245,5 +257,230 @@ def test_zero_network():
     } finally {
       fs.rmSync(tmpRepo, { recursive: true, force: true });
     }
+  });
+
+  // [INVARIANT: ADR-0004:INV-3]
+  it('孤儿接线机检拦截实测：构造一个有单测打 @invariant 但生产调用数为 0 的样本，lab spec-guard check --check-callers 必须精准 Exit 1 阻断；在生产分发器接入后复测通过', () => {
+    const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-orphan-wiring-'));
+    try {
+      const adrDir = path.join(tmpRepo, 'group', 'architecture', 'adr');
+      const prodDir = path.join(tmpRepo, 'src', 'device');
+      const testDir = path.join(tmpRepo, 'tests');
+      fs.mkdirSync(adrDir, { recursive: true });
+      fs.mkdirSync(prodDir, { recursive: true });
+      fs.mkdirSync(testDir, { recursive: true });
+
+      // 1. 创建 Frozen ADR-060
+      fs.writeFileSync(
+        path.join(adrDir, 'ADR-060-ota.md'),
+        `# ADR-060: 设备互锁规约
+- **状态（Status）**：🔒 Frozen
+
+## 3. Implementation Status
+| 项 | 状态 | 说明 |
+|---|---|---|
+| Gate1 | ✅ 已实现 | 跨端互锁守护 |
+
+## 5. Consequences / Invariants
+- **Gate1**: 跨端设备排他互斥门禁
+`
+      );
+
+      // 2. 生产代码定义了核心函数 acquire_device_probe_guard，但生产无任何调用
+      const prodFile = path.join(prodDir, 'device_lock.py');
+      fs.writeFileSync(
+        prodFile,
+        `# [INVARIANT: ADR-060:Gate1]
+def acquire_device_probe_guard():
+    """生产核心不变量互锁函数"""
+    return True
+`
+      );
+
+      // 3. 测试文件单测打 @invariant 并且调用了该函数
+      const testFile = path.join(testDir, 'test_device_lock.py');
+      fs.writeFileSync(
+        testFile,
+        `import pytest
+# [INVARIANT: ADR-060:Gate1]
+def test_interlock():
+    from src.device.device_lock import acquire_device_probe_guard
+    assert acquire_device_probe_guard() is True
+`
+      );
+
+      // 4. 运行 matrix check 开启 --check-callers
+      const matrix = buildAndCheckMatrix(tmpRepo, { checkCallers: true });
+      assert.equal(matrix.unwiredInvariants.length, 1);
+      assert.equal(matrix.unwiredInvariants[0].symbolName, 'acquire_device_probe_guard');
+      assert.equal(matrix.isHealthy, false);
+
+      // 5. 校验 CLI (lab spec-guard check --check-callers) 必须 Exit 1 阻断
+      const labBin = path.resolve(process.cwd(), 'bin/lab.mjs');
+      let exitCode = 0;
+      let out = '';
+      try {
+        out = execSync(`node ${labBin} spec-guard check --check-callers`, {
+          cwd: tmpRepo,
+          stdio: 'pipe',
+          encoding: 'utf8',
+        });
+      } catch (err) {
+        exitCode = err.status || 1;
+        out = (err.stdout ? err.stdout.toString() : '') + (err.stderr ? err.stderr.toString() : '');
+      }
+      assert.equal(exitCode, 1, '生产调用数为 0 时必须精准 Exit 1 阻断');
+      assert.match(out, /Zero Production Callers/);
+
+      // 6. 在生产分发器 (Dispatcher) 接入调用
+      const dispatcherFile = path.join(prodDir, 'dispatcher.py');
+      fs.writeFileSync(
+        dispatcherFile,
+        `from src.device.device_lock import acquire_device_probe_guard
+
+def dispatch_task():
+    # 生产关键链路接入排他锁守卫
+    if acquire_device_probe_guard():
+        return "DISPATCHED"
+    return "BLOCKED"
+`
+      );
+
+      // 7. 复测：构建矩阵与 CLI 再次执行
+      const reMatrix = buildAndCheckMatrix(tmpRepo, { checkCallers: true });
+      assert.equal(reMatrix.unwiredInvariants.length, 0);
+      assert.equal(reMatrix.isHealthy, true);
+
+      let reExitCode = 0;
+      let reOut = '';
+      try {
+        reOut = execSync(`node ${labBin} spec-guard check --check-callers`, {
+          cwd: tmpRepo,
+          stdio: 'pipe',
+          encoding: 'utf8',
+        });
+      } catch (err) {
+        reExitCode = err.status || 1;
+      }
+      assert.equal(reExitCode, 0, '生产分发器接入后复测必须通过 Exit 0');
+      assert.match(reOut, /生产接线: 1 处/);
+    } finally {
+      fs.rmSync(tmpRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('变异测试反向拦截实测：构造一个断言为恒真的假测试，变异引擎注入后测试未红则判定为无效测试并阻断', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-mutation-fake-'));
+    try {
+      fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ type: 'module' }));
+      const srcFile = path.join(tmpDir, 'service.mjs');
+      const testFile = path.join(tmpDir, 'service.test.mjs');
+
+      // 被测生产代码：包含关键接口端点 /api/v1/device/interlock
+      fs.writeFileSync(
+        srcFile,
+        `export function getEndpoint() {
+  return "/api/v1/device/interlock";
+}
+`
+      );
+
+      // 假测试（回音壁假测试）：不论 endpoint 变成什么，单测恒真 assert(true)
+      fs.writeFileSync(
+        testFile,
+        `import assert from 'node:assert/strict';
+import { getEndpoint } from './service.mjs';
+
+const ep = getEndpoint();
+// 假测试：没有深度断言 ep 的实际值，恒真断言
+assert.equal(true, true);
+`
+      );
+
+      const fakeCmd = `node ${testFile}`;
+
+      // 变异引擎执行：注入变异后测试依然绿，判定为假测试阻断！
+      const fakeResult = runMutationTest({
+        repoRoot: tmpDir,
+        targetFile: srcFile,
+        testCmd: fakeCmd,
+        mutator: 'endpoint',
+      });
+
+      assert.equal(fakeResult.status, 'MUTATION_SURVIVED', '变异注入后假测试未红，变异体存活！');
+      assert.equal(fakeResult.exitCode, 1);
+      assert.match(fakeResult.message, /回音壁假测试/);
+
+      // CLI 方式执行验证：退出码必须为 1
+      const labBin = path.resolve(process.cwd(), 'bin/lab.mjs');
+      let cliExitCode = 0;
+      try {
+        execSync(`node ${labBin} spec-guard mutate --file ${srcFile} --cmd "${fakeCmd}"`, {
+          cwd: tmpDir,
+          stdio: 'pipe',
+          encoding: 'utf8',
+        });
+      } catch (err) {
+        cliExitCode = err.status || 1;
+      }
+      assert.equal(cliExitCode, 1, 'CLI 变异拦截假测试必须精准 Exit 1');
+
+      // 编写真实敏感测试（对端点有严格断言）
+      fs.writeFileSync(
+        testFile,
+        `import assert from 'node:assert/strict';
+import { getEndpoint } from './service.mjs';
+
+const ep = getEndpoint();
+// 严格断言端点，一旦变异为 /MUTATION_BOGUS_ENDPOINT_MUTANT 测试必爆红
+assert.equal(ep, "/api/v1/device/interlock");
+`
+      );
+
+      const realResult = runMutationTest({
+        repoRoot: tmpDir,
+        targetFile: srcFile,
+        testCmd: fakeCmd,
+        mutator: 'endpoint',
+      });
+
+      assert.equal(realResult.status, 'MUTATION_KILLED', '变异注入后真实测试爆红，变异体被消灭！');
+      assert.equal(realResult.exitCode, 0);
+      assert.match(realResult.message, /变异敏感性自检通过/);
+
+      // CLI 方式执行真实测试验证：退出码必须为 0
+      let realCliExitCode = 0;
+      try {
+        execSync(`node ${labBin} spec-guard mutate --file ${srcFile} --cmd "${fakeCmd}"`, {
+          cwd: tmpDir,
+          stdio: 'pipe',
+          encoding: 'utf8',
+        });
+      } catch (err) {
+        realCliExitCode = err.status || 1;
+      }
+      assert.equal(realCliExitCode, 0, '真实敏感测试在变异自检中必须 Exit 0');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('orphan 单元联动测试：符号引用分类与倒排生产调用者检索', () => {
+    assert.equal(Classifier.isTestPath('src/test/java/Test.kt'), true);
+    assert.equal(Classifier.isTestPath('src/main/java/Main.kt'), false);
+
+    const refProd = { path: 'src/main/Dispatcher.kt', lineNo: 10, lineText: 'mgr.lock()' };
+    const refTest = { path: 'src/test/Test.kt', lineNo: 20, lineText: 'mgr.lock()' };
+    const refDoc = { path: 'docs/README.md', lineNo: 5, lineText: 'mgr.lock()' };
+
+    assert.equal(Classifier.classifyCaller(refProd), CallerKind.PRODUCTION_CALLER);
+    assert.equal(Classifier.classifyCaller(refTest), CallerKind.TEST_CALLER);
+    assert.equal(Classifier.classifyCaller(refDoc), CallerKind.DOC_CALLER);
+
+    const callersEval = Classifier.evaluateCallers([refProd, refTest, refDoc]);
+    assert.equal(callersEval.productionCallerCount, 1);
+    assert.equal(callersEval.testCallerCount, 1);
+    assert.equal(callersEval.docReferenceCount, 1);
+    assert.equal(callersEval.wiringStatus, 'wired');
   });
 });

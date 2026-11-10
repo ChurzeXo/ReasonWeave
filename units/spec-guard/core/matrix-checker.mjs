@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findAdrFiles, parseAdrFile, containsStrictInvariant } from './adr-parser.mjs';
-import { scanRepository } from './scanner.mjs';
+import { scanRepository, analyzeSymbolWiring } from './scanner.mjs';
 
 /**
  * 读取可选的 spec-matrix.overlay.yml 文件
@@ -39,26 +39,43 @@ export function loadOverlayConfig(repoRoot, customPath = '') {
 }
 
 /**
- * 极简 YAML 提取器（提取 id, name, status, cross_repo_contracts 等基础字段）
+ * 极简 YAML 提取器（提取 id, name, status, cross_repo_contracts 与 production.symbols 字段）
  */
 function parseSimpleYamlOverlay(yamlContent) {
   const invariants = [];
   const lines = yamlContent.split('\n');
   let currentInv = null;
+  let inSymbols = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith('- id:')) {
       if (currentInv) invariants.push(currentInv);
       const idMatch = trimmed.match(/- id:\s*["']?([^"']+)["']?/);
-      currentInv = { id: idMatch ? idMatch[1] : '', isOverlay: true };
+      currentInv = { id: idMatch ? idMatch[1] : '', isOverlay: true, productionSymbols: [] };
+      inSymbols = false;
     } else if (currentInv) {
       if (trimmed.startsWith('name:')) {
         const m = trimmed.match(/name:\s*["']?([^"']+)["']?/);
         if (m) currentInv.name = m[1];
+        inSymbols = false;
       } else if (trimmed.startsWith('status:')) {
         const m = trimmed.match(/status:\s*["']?([^"']+)["']?/);
         if (m) currentInv.status = m[1];
+        inSymbols = false;
+      } else if (trimmed.startsWith('symbols:')) {
+        inSymbols = true;
+      } else if (inSymbols && trimmed.startsWith('-')) {
+        const symMatch = trimmed.match(/-\s*["']?([^"'\s]+)["']?/);
+        if (symMatch) {
+          let rawSym = symMatch[1];
+          if (rawSym.includes('#')) {
+            rawSym = rawSym.split('#')[1];
+          }
+          currentInv.productionSymbols.push(rawSym);
+        }
+      } else if (!trimmed.startsWith('-')) {
+        inSymbols = false;
       }
     }
   }
@@ -91,6 +108,7 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
   let sandboxedCount = 0;
   let inProgressCount = 0;
   let driftCount = 0;
+  const unwiredInvariants = [];
 
   for (const adr of parsedAdrs) {
     const adrId = adr.adrId;
@@ -125,11 +143,65 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
       // 检查 Overlay 是否有额外契约状态补充
       const overlayItem = overlay.invariants.find((o) => o.id === inv.canonicalId || o.id === inv.localId);
 
+      // 检查关联的生产符号（来自 Overlay、生产代码中的 @Invariant 声明、或测试显式 targetSymbol）
+      const associatedSymbols = new Set();
+      if (overlayItem && overlayItem.productionSymbols) {
+        for (const s of overlayItem.productionSymbols) associatedSymbols.add(s);
+      }
+      for (const a of matchingAssertions) {
+        if (!a.isTest && a.symbolName) {
+          associatedSymbols.add(a.symbolName);
+        }
+        if (a.targetSymbol) {
+          associatedSymbols.add(a.targetSymbol);
+        }
+      }
+
+      // 如果仅有单测标注且没有显式符号，扫描测试声明或非 test 开头符号
+      if (associatedSymbols.size === 0 && matchingAssertions.some((a) => a.isTest)) {
+        for (const a of matchingAssertions.filter((a) => a.isTest)) {
+          if (a.symbolName && !a.symbolName.startsWith('test')) {
+            associatedSymbols.add(a.symbolName);
+          }
+        }
+      }
+
+      let symbolWiringInfo = null;
+      let hasZeroCallers = false;
+
+      if (associatedSymbols.size > 0) {
+        for (const sym of associatedSymbols) {
+          const wiring = analyzeSymbolWiring(sym, repoRoot);
+          symbolWiringInfo = {
+            symbolName: sym,
+            productionCallerCount: wiring.prodCallers.length,
+            testCallerCount: wiring.testCallers.length,
+            wiringStatus: wiring.wiringStatus,
+            productionCallers: wiring.prodCallers,
+            testCallers: wiring.testCallers,
+          };
+
+          if (wiring.prodCallers.length === 0) {
+            hasZeroCallers = true;
+            unwiredInvariants.push({
+              invariantId: inv.canonicalId,
+              localId: inv.localId,
+              adrId,
+              symbolName: sym,
+              testCallers: wiring.testCallers,
+            });
+          }
+        }
+      }
+
       // 状态裁定
       let finalStatus = 'in_progress';
       let statusReason = '';
 
-      if (matchingAssertions.length > 0) {
+      if (options.checkCallers && hasZeroCallers) {
+        finalStatus = 'unwired';
+        statusReason = `🚨 架构函数未在生产关键链路接线 (Zero Production Callers: ${symbolWiringInfo?.symbolName || 'unknown'})`;
+      } else if (matchingAssertions.length > 0) {
         // 拥有机器断言
         const testAssertions = matchingAssertions.filter((a) => a.isTest);
         if (matchingContracts.length > 0) {
@@ -161,6 +233,9 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
       if (overlayItem && overlayItem.status) {
         statusReason += ` (Overlay 标注: ${overlayItem.status})`;
       }
+      if (symbolWiringInfo && !hasZeroCallers) {
+        statusReason += ` [生产接线: ${symbolWiringInfo.productionCallerCount} 处]`;
+      }
 
       invResults.push({
         invariantId: inv.canonicalId,
@@ -171,6 +246,7 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
         assertionsCount: matchingAssertions.length,
         assertions: matchingAssertions,
         contracts: matchingContracts,
+        symbolWiring: symbolWiringInfo,
       });
     }
 
@@ -211,7 +287,8 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
     driftCount,
     coveragePercent,
     orphanAssertions,
-    isHealthy: driftCount === 0 && orphanAssertions.length === 0,
+    unwiredInvariants,
+    isHealthy: driftCount === 0 && orphanAssertions.length === 0 && (!options.checkCallers || unwiredInvariants.length === 0),
   };
 }
 
@@ -245,7 +322,7 @@ export function formatConsoleReport(matrixResult) {
       } else if (inv.status === 'sandboxed') {
         icon = '📦';
         color = '\x1b[36m';
-      } else if (inv.status === 'drift_detected') {
+      } else if (inv.status === 'drift_detected' || inv.status === 'unwired') {
         icon = '🚨';
         color = '\x1b[31m';
       }
@@ -262,6 +339,14 @@ export function formatConsoleReport(matrixResult) {
     lines.push(`\x1b[33m⚠️  发现 ${matrixResult.orphanAssertions.length} 处孤儿断言（代码标记了 @Invariant 但 ADR 规约中未定义）:\x1b[0m`);
     for (const o of matrixResult.orphanAssertions) {
       lines.push(`  - \x1b[33m${o.id}\x1b[0m at ${o.file}:${o.line}`);
+    }
+    lines.push('');
+  }
+
+  if (matrixResult.unwiredInvariants && matrixResult.unwiredInvariants.length > 0) {
+    lines.push(`\x1b[31m🚨 架构函数未在生产关键链路接线 (Zero Production Callers):\x1b[0m`);
+    for (const u of matrixResult.unwiredInvariants) {
+      lines.push(`  - \x1b[31m${u.invariantId}\x1b[0m -> 符号 \x1b[1m${u.symbolName}\x1b[0m 生产调用数为 0 (单测调用数: ${u.testCallers.length})`);
     }
     lines.push('');
   }
