@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Solver } from '../core/solver.mjs';
 import { SolverProtocol } from '../core/protocol-s1-s3.mjs';
+import { DiffChecker } from '../core/diff-checker.mjs';
+import { Cleaner } from '../core/cleaner.mjs';
 import { AndroidAdapter } from '../adapters/android/index.mjs';
 import { PythonAdapter } from '../adapters/python/index.mjs';
 import { WebAdapter } from '../adapters/web/index.mjs';
@@ -100,17 +102,40 @@ async function runScan() {
 }
 
 async function runCheckDiff() {
-  console.log(`\n🛡️  Orphan Check-Diff 增量防腐门禁检查:`);
-  console.log(`  基准比对: ${args.includes('--staged') ? 'Staged 暂存区' : 'HEAD~1'}`);
+  const isStaged = args.includes('--staged');
+  const isJson = args.includes('--json');
+  const baseIdx = args.indexOf('--base');
+  const base = baseIdx !== -1 && args[baseIdx + 1] ? args[baseIdx + 1] : 'HEAD~1';
 
-  // 在第一阶段实现轻量门禁检测：自检通过 + 确保当前改动未破坏一致性
-  const selfTest = await SolverProtocol.runSelfTest({ verbose: false });
-  if (!selfTest.passed) {
-    console.error(`  ❌ 求解器基础自检失败，门禁阻断！`);
+  const checker = new DiffChecker({
+    repoDir: process.cwd(),
+    adapters: [new AndroidAdapter(), new PythonAdapter(), new WebAdapter()],
+  });
+
+  const result = await checker.checkDiff({ staged: isStaged, base });
+
+  if (isJson) {
+    console.log(JSON.stringify(result, null, 2));
+    process.exit(result.passed ? 0 : 1);
+  }
+
+  console.log(`\n🛡️  Orphan Check-Diff 增量防腐门禁检查:`);
+  console.log(`  - 检查模式:       ${isStaged ? 'Staged 暂存区' : `Base 对比 (${base})`}`);
+  console.log(`  - 发现新增符号:   ${result.totalAddedCandidates} 个`);
+  console.log(`  - 拦截新增孤儿:   ${result.orphans.length} 个`);
+
+  if (result.orphans.length > 0) {
+    console.error(`\n❌ [提交阻断] 本次改动引入了零引用的孤儿代码或资产：`);
+    for (const o of result.orphans) {
+      console.error(`  - \x1b[31m${o.name}\x1b[0m (${o.path}:${o.line_no}) [${o.kind}]`);
+      for (const r of o.reasons) console.error(`      ↳ ${r}`);
+    }
+    console.error(`\n💡 提示: 请在提交前删除该死代码，或在引用方接入调用，或显式标注保护规则。\n`);
     process.exit(1);
   }
 
-  console.log(`  ✅ 增量检查通过：本次提交未引入未引用孤儿资产。\n`);
+  console.log(`  ✅ 增量检查通过：本次提交未引入任何未引用的孤儿资产。\n`);
+  process.exit(0);
 }
 
 async function runClean() {
@@ -118,20 +143,49 @@ async function runClean() {
   const candIdx = args.indexOf('--candidates');
   const candFile = candIdx !== -1 && args[candIdx + 1] ? args[candIdx + 1] : null;
 
-  console.log(`\n🧹 Orphan Clean 受控清理 ${isDryRun ? '(模拟演练 Dry-Run)' : ''}:`);
-  if (!candFile || !fs.existsSync(candFile)) {
-    console.log(`  提示: 请指定有效的 candidates.json 文件 (通过 --candidates <path>)。`);
-    return;
+  console.log(`\n🧹 Orphan Clean 安全修剪清理器 ${isDryRun ? '(模拟演练 Dry-Run)' : ''}:`);
+
+  let candidates = [];
+  if (candFile && fs.existsSync(candFile)) {
+    const raw = JSON.parse(fs.readFileSync(candFile, 'utf8'));
+    candidates = raw.candidates || [];
+  } else {
+    // 自动扫描当前 HEAD 生成候选
+    console.log(`  未指定 --candidates 文件，自动执行全量扫描寻找 CONFIRMED_ORPHAN...`);
+    const solver = new Solver({
+      repoDir: process.cwd(),
+      ref: 'HEAD',
+      adapters: [new AndroidAdapter(), new PythonAdapter(), new WebAdapter()],
+    });
+    const scanResult = solver.solve({ includeAlive: false });
+    candidates = scanResult.candidates || [];
   }
 
-  const raw = JSON.parse(fs.readFileSync(candFile, 'utf8'));
-  const orphans = (raw.candidates || []).filter(c => c.status === 'CONFIRMED_ORPHAN');
-  console.log(`  读取到可清理孤儿: ${orphans.length} 项`);
+  const cleaner = new Cleaner({
+    repoDir: process.cwd(),
+    dryRun: isDryRun,
+  });
 
-  for (const item of orphans) {
-    console.log(`  🗑️  ${isDryRun ? '[DRY-RUN]' : '[DELETE]'} ${item.path}`);
+  const result = cleaner.clean(candidates);
+  console.log(`  - 可清理孤儿项: ${result.totalCandidates} 项`);
+  console.log(`  - 生成修剪补丁: ${result.cleanedCount} 处`);
+
+  if (result.patches.length > 0) {
+    console.log(`\n📋 补丁预览 (前 2 个 Patch):`);
+    for (const p of result.patches.slice(0, 2)) {
+      console.log(`\n--- Patch for ${p.path} [${p.type}] ---`);
+      console.log(p.diff);
+    }
+    if (result.patches.length > 2) {
+      console.log(`\n... 其余 ${result.patches.length - 2} 处补丁已省略。`);
+    }
   }
-  console.log(`\n${isDryRun ? '演练完成，未实际修改任何文件。' : '清理完成。'}\n`);
+
+  if (isDryRun) {
+    console.log(`\n✨ [Dry-Run 演练完成] 磁盘文件保持零修改。若确认应用清理，请带上 --force 参数。\n`);
+  } else {
+    console.log(`\n✅ 清理已写入磁盘并落地。\n`);
+  }
 }
 
 // ── 路由执行 ──────────────────────────────────────────────────────────

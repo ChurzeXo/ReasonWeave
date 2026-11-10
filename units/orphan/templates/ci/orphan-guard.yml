@@ -1,0 +1,36 @@
+name: Orphan Scavenger CI Gate
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+  push:
+    branches: [main, master]
+
+jobs:
+  orphan-guard:
+    name: Check Incremental Orphan Code & Assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '>=18'
+
+      - name: Install Lab Agent Toolkit
+        run: |
+          npm link || npm install -g lab-agent-toolkit || true
+
+      - name: Run Incremental Orphan Check Gate
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_REF="origin/${{ github.base_ref }}"
+          else
+            BASE_REF="HEAD~1"
+          fi
+          echo "Running orphan check against base: $BASE_REF"
+          npx lab orphan check-diff --base "$BASE_REF"

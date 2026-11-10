@@ -12,14 +12,16 @@
     "baton-audit-runner": "./units/review-gate/clean-runner.mjs",
     "handoff": "./units/handoffs/handoff.mjs",
     "lab-orphan": "./units/orphan/bin/lab-orphan.mjs",
-    "adr-init": "./units/adr/scripts/adr-init.sh"
+    "adr-init": "./units/adr/scripts/adr-init.sh",
+    "spec-guard": "./units/spec-guard/bin/spec-guard.mjs",
+    "drift-gate": "./units/spec-guard/bin/spec-guard.mjs"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "scripts": {
-    "test": "node bin/lab.mjs doctor && node units/handoffs/handoff.mjs status && node units/worktree/worktree.mjs --help && node units/review-gate/clean-runner.mjs --help && node units/orphan/bin/lab-orphan.mjs test-solver && node --test units/orphan/tests/adapters.test.mjs",
-    "postinstall": "chmod +x bin/lab.mjs units/handoffs/handoff.mjs units/worktree/worktree.mjs units/review-gate/clean-runner.mjs units/orphan/bin/lab-orphan.mjs units/adr/scripts/adr-init.sh units/preflight/templates/preflight.sh units/preflight/templates/check.sh units/review-gate/templates/scan.sh 2>/dev/null || true"
+    "test": "node bin/lab.mjs doctor && node units/handoffs/handoff.mjs status && node units/worktree/worktree.mjs --help && node units/review-gate/clean-runner.mjs --help && node units/orphan/bin/lab-orphan.mjs test-solver && node --test units/orphan/tests/*.test.mjs && node --test units/spec-guard/tests/*.test.mjs",
+    "postinstall": "chmod +x bin/lab.mjs units/handoffs/handoff.mjs units/worktree/worktree.mjs units/review-gate/clean-runner.mjs units/orphan/bin/lab-orphan.mjs units/spec-guard/bin/spec-guard.mjs units/adr/scripts/adr-init.sh units/preflight/templates/preflight.sh units/preflight/templates/check.sh units/review-gate/templates/scan.sh 2>/dev/null || true"
   },
   "files": [
     "bin/",
@@ -57,7 +59,8 @@
     "units/handoffs/handoff-status.mjs",
     "units/handoffs/handoff.mjs",
     "units/worktree/",
-    "units/orphan/"
+    "units/orphan/",
+    "units/spec-guard/"
   ],
   "keywords": [
     "agent",

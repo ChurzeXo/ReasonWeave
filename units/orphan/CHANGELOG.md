@@ -1,5 +1,16 @@
 # Changelog — units/orphan
 
+## [v1.0.0] - 2026-11-10
+
+### Added
+- **Phase 3 门禁工程化全量闭环**：
+  - `core/diff-checker.mjs`：实现增量差异扫描引擎，遵循 $O(\Delta)$ 复杂度，秒级提取 `git diff` 新增行并在全仓索引中验证引用；
+  - `core/cleaner.mjs`：实现安全修剪清理器，支持 `--dry-run` 统一 patch/diff 结构预览，默认绝对零修改磁盘；
+  - `bin/lab-orphan.mjs`：打通 `check-diff`（增量门禁阻断）与 `clean`（受控清理）；
+  - `templates/pre-commit.d/30-orphan-guard`：Preflight 门禁钩子模板，接入 `.githooks/pre-commit.d/` 自动阻断孤儿代码入库；
+  - `templates/ci/orphan-guard.yml`：GitHub Actions CI 增量检查工作流模板；
+  - `tests/phase3-gates.test.mjs`：新增增量阻断、清理预览与钩子执行单测。
+
 ## [v0.2.0] - 2026-11-10
 
 ### Added

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# orphan-guard 增量死代码防腐门禁（source: units/orphan/）
+# 挂载进 .githooks/pre-commit.d/30-orphan-guard
+# 在 git commit 暂存区检查时自动运行，拦截新增孤儿资产与死代码
+
+set -uo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$REPO_ROOT" || exit 0
+
+# 定位 lab-orphan CLI 执行文件
+ORPHAN_BIN=""
+if command -v lab >/dev/null 2>&1; then
+  ORPHAN_PATH=$(lab path orphan 2>/dev/null || true)
+  if [ -n "$ORPHAN_PATH" ] && [ -f "$ORPHAN_PATH/bin/lab-orphan.mjs" ]; then
+    ORPHAN_BIN="$ORPHAN_PATH/bin/lab-orphan.mjs"
+  fi
+fi
+
+if [ -z "$ORPHAN_BIN" ]; then
+  if [ -f "units/orphan/bin/lab-orphan.mjs" ]; then
+    ORPHAN_BIN="units/orphan/bin/lab-orphan.mjs"
+  elif [ -f "orphan/bin/lab-orphan.mjs" ]; then
+    ORPHAN_BIN="orphan/bin/lab-orphan.mjs"
+  fi
+fi
+
+if [ -z "$ORPHAN_BIN" ]; then
+  # 若未安装 orphan 模块则跳过
+  exit 0
+fi
+
+# 执行增量暂存区孤儿拦截
+node "$ORPHAN_BIN" check-diff --staged
