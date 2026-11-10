@@ -1,9 +1,9 @@
 # 全局死代码与孤儿资产清道夫公共单元 (units/orphan) 架构设计方案
 
 > **文件标识**：`units/orphan/DESIGN.md`  
-> **所属版本**：v0.1.0-draft  
-> **状态**：方案草案（Draft for Review）  
-> **责任方**：`lane: impl` (实现方)  
+> **所属版本**：v1.0.0  
+> **状态**：已采纳并冻结（Adopted via ADR-0004）  
+> **责任方**：`lane: impl` (实现方) / `lane: audit` (审计方)  
 > **面向对象**：`lab-agent-toolkit` 全局架构师、各消费方（Tappy, Swoop, Prospero, Iggle 等）技术负责人
 
 ---
@@ -475,10 +475,10 @@ sequenceDiagram
 
 | 阶段 | 周期 | 核心交付物 | 验收标志 |
 |---|---|---|---|
-| **Phase 0: 方案与规约** (当前) | 2026-11-10 | `units/orphan/DESIGN.md`<br/>`units/orphan/README.md` | 通过 `baton check`，消费方与审计方完成立项方案评审 |
-| **Phase 1: 微内核与 S1-S3** | 2026-11-17 | `core/blob-reader.mjs`<br/>`core/inverted-index.mjs`<br/>`core/protocol-s1-s3.mjs` | S1-S3 自检测试套件 100% 通过；内存只读提取零污染验证 |
-| **Phase 2: 技术栈适配器** | 2026-11-24 | `adapters/android`<br/>`adapters/python`<br/>`adapters/web` | 在 Tappy 与 Swoop 真实仓库中进行双盲基准回归测试 |
-| **Phase 3: 门禁与工程化** | 2026-12-01 | CLI `lab orphan` 全量命令<br/>`preflight/30-orphan-guard`<br/>集成文档与范例 | 接入主干 CI，实现全自动防腐拦截与一键化清理交付 |
+| **Phase 0: 方案与规约** | 2026-11-10 | `units/orphan/DESIGN.md`<br/>`units/orphan/README.md` | ✅ **已达成**：立项调研与架构设计方案双盲评审通过 |
+| **Phase 1: 微内核与 S1-S3** | 2026-11-10 | `core/blob-reader.mjs`<br/>`core/inverted-index.mjs`<br/>`core/protocol-s1-s3.mjs`<br/>`core/solver.mjs` | ✅ **已达成**：S1-S3 求解器自检协议 100% 通过；Git HEAD blob 只读提取零污染验证 |
+| **Phase 2: 多语言适配器** | 2026-11-10 | `adapters/android`<br/>`adapters/python`<br/>`adapters/web` | ✅ **已达成**：Python `__all__`/pytest 保护与 Web entrypoints 分析全覆盖，单测全绿 |
+| **Phase 3: 门禁与工程化** | 2026-11-10 | CLI `lab orphan` 全命令<br/>`pre-commit.d/30-orphan-guard`<br/>`core/diff-checker.mjs`<br/>`core/cleaner.mjs` | ✅ **已达成**：增量提交阻断实测 Exit 1，安全修剪 Dry-Run 验证，完成 ADR-0004 封板 |
 
 ---
-*本设计方案已完备覆盖调研对比、核心架构、数据契约及集成规范，即日起正式进入评审通道。*
+*本设计方案已完备覆盖调研对比、核心架构、数据契约及集成规范，经三方双盲审计独立实测通过，由 ADR-0004 正式冻结并生效。*

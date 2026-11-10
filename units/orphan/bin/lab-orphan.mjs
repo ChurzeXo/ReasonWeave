@@ -19,7 +19,7 @@ const command = args[0] || 'help';
 
 function showHelp() {
   console.log(`
-lab-orphan CLI — 全局死代码与孤儿资产清道夫 (units/orphan v0.1.0)
+lab-orphan CLI — 全局死代码与孤儿资产清道夫 (units/orphan v1.0.0)
 
 用法:
   lab orphan test-solver                运行 S1-S3 求解器自检协议 (注入假死检出/在用保护/逐字节一致)
