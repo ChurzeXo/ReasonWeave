@@ -46,7 +46,9 @@ const INVARIANT_PATTERNS = [
   // // [INVARIANT: ADR-060:H-1]
   // # [INVARIANT: ADR-060:H-1]
   // // @invariant ADR-060:H-1
+  // // [ADR-060:H-1] 快捷方括号形式
   /(?:\/\/|#)\s*(?:@invariant(?:\s+|:\s*)|\[INVARIANT:\s*|Invariant:\s*)([A-Za-z0-9_:-]+)/gi,
+  /(?:\/\/|#)\s*\[(ADR-\d+:[A-Za-z0-9_-]+)\]/gi,
   // Rust: #[doc = "invariant: ADR-060:H-1"]
   /#\[doc\s*=\s*["'].*?invariant:\s*([A-Za-z0-9_:-]+).*?["']\]/gi,
 ];
