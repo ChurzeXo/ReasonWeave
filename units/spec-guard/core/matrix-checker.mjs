@@ -315,12 +315,17 @@ export function generateAdrAuditReport(matrixResult, targetAdrId) {
   const allVerified = rep.invariants.length > 0 && rep.invariants.every((i) => i.status === 'verified');
   const hasDrift = rep.invariants.some((i) => i.status === 'drift_detected');
 
+  // [C5 语义校验] 检查 Implementation Status 表格项是否存在未落地/部分实现项
+  const hasUnfinishedImpl = adr.implementationItems && adr.implementationItems.some(
+    (item) => item.status === 'unwired' || item.status === 'in_progress'
+  );
+
   if (hasDrift) {
     lines.push('> ❌ **阻断判定**：检测到严重架构漂移！该规约声称生效或已 Frozen，但存在零断言覆盖的不变量。**严禁以“已实现”上报，严禁进行 Frozen 冻结签署**。\n');
-  } else if (allVerified && adr.hasImplementationStatus) {
+  } else if (allVerified && adr.hasImplementationStatus && !hasUnfinishedImpl) {
     lines.push('> ✅ **合规建议**：所有声明的不变量均已绑定有效可机判断言，且落地状态节完备。具备由架构师及用户人工签署 `🔒Frozen` 的机器凭据。\n');
   } else {
-    lines.push('> ⏳ **进行中判定**：规约部分能力处于契约沙箱验证或逐步交付中。请在 `## Implementation Status` 中如实登记已接线与未接线清单。\n');
+    lines.push('> ⏳ **进行中判定**：规约部分能力处于逐步交付中（存在 ❌ 未接线 或 ⚠️ 部分实现 项）。请在 `## Implementation Status` 中如实跟踪，待全量落地后方可签署 Frozen 验收。\n');
   }
 
   return lines.join('\n');

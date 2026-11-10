@@ -110,6 +110,16 @@ function handleAuditAdr(adrId) {
   } else {
     console.log('\n' + report);
   }
+
+  // [C5] 退出码严格判定：未找到 ADR、存在架构漂移、或覆盖率为 0% 时 Exit 1
+  const rep = result.adrReports.find((r) => r.adr.adrId.toUpperCase() === adrId.toUpperCase());
+  if (!rep || rep.invariants.length === 0 || rep.invariants.some((i) => i.status === 'drift_detected')) {
+    process.exit(1);
+  }
+  const verifiedCount = rep.invariants.filter((i) => i.status === 'verified').length;
+  if (rep.invariants.length > 0 && verifiedCount === 0) {
+    process.exit(1);
+  }
 }
 
 switch (command) {
