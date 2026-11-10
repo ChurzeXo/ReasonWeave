@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const UNITS_DIR = path.join(PKG_ROOT, 'units');
@@ -20,6 +20,7 @@ Lab Agent Engineering Toolkit (AEF v1.0)
   lab list                    列出所有可用工程能力 Unit
   lab path [unit]             获取某个 Unit (或 lab 根目录) 的安装绝对路径
   lab doctor                  自检本地环境（node, git, opengrep 等前置依赖）
+  lab orphan [cmd]            运行死代码与孤儿资产清道夫
   lab migrate [dir]           将老项目中的硬编码路径 (~/Documents/lab/...) 一键迁移为动态规范
   lab zspec init [name]       按 ZSpec 工业标准为新项目一键初始化架构骨架与规范文档
   lab zspec add-unit <name>   为新项目新增一个自治工程端 (Unit: 如 web, ios, backend)
@@ -30,6 +31,7 @@ Lab Agent Engineering Toolkit (AEF v1.0)
   handoff                     调用工作流跨仓/仓内交接中枢
   baton-worktree              管理多 Agent 物理隔离工作树
   baton-audit-runner          双盲审计独立进程自动重跑器
+  lab-orphan                  死代码与孤儿资产清道夫 CLI
   adr-init                    初始化项目架构决策记录 (ADR)
 `);
 }
@@ -43,6 +45,7 @@ function listUnits() {
     { name: 'adr', desc: '架构决策记录机制 (light/standard/frozen)' },
     { name: 'backlog', desc: '待办捕获制度 (一任务一文件)' },
     { name: 'worktree', desc: '基于 Git Worktree 的物理目录隔离调度引擎' },
+    { name: 'orphan', desc: '全局死代码与孤儿资产清道夫公共单元 (Core + Adapters)' },
     { name: 'playbook', desc: 'Agent Engineering Framework (AEF) 完整方法论' },
   ];
   for (const u of units) {
@@ -363,6 +366,26 @@ switch (command) {
   case 'check':
     doctor();
     break;
+  case 'orphan': {
+    const orphanBin = path.join(UNITS_DIR, 'orphan', 'bin', 'lab-orphan.mjs');
+    if (!fs.existsSync(orphanBin)) {
+      console.error('错误: 未找到 orphan 模块执行文件。');
+      process.exit(1);
+    }
+    const subArgs = args.slice(1);
+    try {
+      const out = execFileSync(process.execPath, [orphanBin, ...subArgs], {
+        encoding: 'utf8',
+        stdio: ['inherit', 'pipe', 'pipe'],
+      });
+      process.stdout.write(out);
+    } catch (err) {
+      if (err.stdout) process.stdout.write(err.stdout);
+      if (err.stderr) process.stderr.write(err.stderr);
+      process.exit(err.status || 1);
+    }
+    break;
+  }
   case 'migrate': {
     const isDry = args.includes('--dry-run');
     const dirArg = args.find((a, idx) => idx > 0 && !a.startsWith('--'));
