@@ -260,6 +260,7 @@ def test_zero_network():
   });
 
   // [INVARIANT: ADR-0004:INV-3]
+  // [INVARIANT: ADR-0006:INV-1]
   it('孤儿接线机检拦截实测：构造一个有单测打 @invariant 但生产调用数为 0 的样本，lab spec-guard check --check-callers 必须精准 Exit 1 阻断；在生产分发器接入后复测通过', () => {
     const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-orphan-wiring-'));
     try {
@@ -369,6 +370,8 @@ def dispatch_task():
     }
   });
 
+  // [INVARIANT: ADR-0006:INV-2]
+  // [INVARIANT: ADR-0006:INV-3]
   it('变异测试反向拦截实测：构造一个断言为恒真的假测试，变异引擎注入后测试未红则判定为无效测试并阻断', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-mutation-fake-'));
     try {
