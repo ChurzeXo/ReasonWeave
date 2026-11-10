@@ -64,7 +64,11 @@ export class Solver {
     }
 
     const headCommit = this.reader.getHeadCommit();
-    const activeAdapters = this.adapters.filter(a => a.detect(this.reader));
+    const targetStack = opts.stack && opts.stack !== 'auto' ? opts.stack : null;
+    const activeAdapters = this.adapters.filter(a => {
+      if (targetStack) return a.id === targetStack;
+      return a.detect(this.reader);
+    });
 
     const rawCandidates = [];
     let hasReflectionRisk = false;
@@ -86,6 +90,9 @@ export class Solver {
       // 收集候选名称和符号的匹配引用
       const refs = [];
       const tokensToSearch = new Set();
+      if (cand.tokens && Array.isArray(cand.tokens)) {
+        for (const t of cand.tokens) tokensToSearch.add(t);
+      }
       if (cand.name) tokensToSearch.add(cand.name);
       if (cand.symbol) tokensToSearch.add(cand.symbol);
       if (cand.resType && cand.name) {
@@ -119,15 +126,19 @@ export class Solver {
       let confidence = 1.0;
       const reasons = [];
 
-      if (evalResult.isAlive) {
+      if (cand.isProtected) {
+        status = 'ALIVE';
+        confidence = 0.0;
+        reasons.push(cand.protectionReason || 'Protected by language/framework invariant');
+      } else if (evalResult.isAlive) {
         status = 'ALIVE';
         confidence = 0.0;
         reasons.push(`Referenced in ${evalResult.strongCount} code lines and ${evalResult.mediumCount} resource lines`);
-      } else if (hasReflectionRisk) {
+      } else if (hasReflectionRisk || cand.isDynamicRisk) {
         // Fail-Closed: 动态反射风险时降级为待证
         status = 'PENDING_VERIFICATION';
         confidence = 0.65;
-        reasons.push('No direct static references found, but dynamic reflection patterns detected in codebase');
+        reasons.push(cand.dynamicRiskReason || 'No direct static references found, but dynamic reflection patterns detected in codebase');
       } else if (evalResult.hasWeakDocOnly) {
         status = 'CONFIRMED_ORPHAN';
         confidence = 0.95;
@@ -149,7 +160,7 @@ export class Solver {
 
       evaluated.push({
         id: cand.id,
-        type: cand.isFamily ? 'asset_resource_family' : 'asset_resource',
+        type: cand.kind || (cand.isFamily ? 'asset_resource_family' : 'asset_resource'),
         stack: cand.adapterId || 'general',
         name: cand.name,
         symbol: cand.symbol || cand.name,

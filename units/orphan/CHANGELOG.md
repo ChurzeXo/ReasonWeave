@@ -1,5 +1,26 @@
 # Changelog — units/orphan
 
+## [v0.2.0] - 2026-11-10
+
+### Added
+- **Phase 2 多语言适配器落地 (Python & Web/TS)**：
+  - `adapters/python/index.mjs`：
+    - 顶层函数、类及常量符号提取；
+    - `__all__` 显式导出列表保护；
+    - pytest 测试发现机制豁免保护（`test_*` 函数、`Test*` 类与 `@pytest.fixture`）；
+    - 魔术方法（`__init__`, `__repr__` 等）与 Web 路由装饰器（`@app.*`, `@router.*`, `@bp.*`, `@click.*`）豁免保护；
+    - `getattr` / `importlib` 动态反射模式 Fail-Closed 降级。
+  - `adapters/web/index.mjs`：
+    - `package.json` entrypoints 保护（`main`, `module`, `exports`, `bin`）；
+    - ESM / CJS 导出符号提取（named exports, default export, types）；
+    - 内部未引用 export 精准判死（`CONFIRMED_ORPHAN`）；
+    - 动态 `import()` / `require()` 表达式 Fail-Closed 降级。
+- **Core 引擎与 CLI 适配多栈路由**：
+  - `core/solver.mjs`：支持 `cand.isProtected` 显式免死保护、`tokens` 多维度查询及 `--stack <android|python|web|auto>` 过滤；
+  - `bin/lab-orphan.mjs`：注册 Python 与 Web 适配器，支持按技术栈扫描。
+- **单测门禁全覆盖**：
+  - `tests/adapters.test.mjs`：新增 7 组独立单测，覆盖 Python 与 Web 适配器保护与降级规则，并纳入 `npm test`。
+
 ## [v0.1.0] - 2026-11-10
 
 ### Added

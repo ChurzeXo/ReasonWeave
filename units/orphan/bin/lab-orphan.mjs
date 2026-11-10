@@ -9,6 +9,8 @@ import path from 'node:path';
 import { Solver } from '../core/solver.mjs';
 import { SolverProtocol } from '../core/protocol-s1-s3.mjs';
 import { AndroidAdapter } from '../adapters/android/index.mjs';
+import { PythonAdapter } from '../adapters/python/index.mjs';
+import { WebAdapter } from '../adapters/web/index.mjs';
 
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
@@ -25,10 +27,10 @@ lab-orphan CLI — 全局死代码与孤儿资产清道夫 (units/orphan v0.1.0)
   lab orphan help                       显示本帮助信息
 
 scan 选项:
-  --out <file>           指定候选结果写入路径 (默认: stdout 打印概要)
-  --json                 以标准 JSON 格式输出 candidates.json 结构
-  --stack <android|auto> 显式指定技术栈适配器 (默认: auto 自动探测)
-  --include-alive        在输出中同时包含仍在使用的活跃符号
+  --out <file>                   指定候选结果写入路径 (默认: stdout 打印概要)
+  --json                         以标准 JSON 格式输出 candidates.json 结构
+  --stack <android|python|web|auto>  显式指定技术栈适配器 (默认: auto 自动探测)
+  --include-alive                在输出中同时包含仍在使用的活跃符号
 
 check-diff 选项:
   --staged               仅检查暂存区改动
@@ -55,15 +57,16 @@ async function runScan() {
   const includeAlive = args.includes('--include-alive');
   const outIdx = args.indexOf('--out');
   const outFile = outIdx !== -1 && args[outIdx + 1] ? args[outIdx + 1] : null;
+  const stackIdx = args.indexOf('--stack');
+  const stack = stackIdx !== -1 && args[stackIdx + 1] ? args[stackIdx + 1] : 'auto';
 
-  const androidAdapter = new AndroidAdapter();
   const solver = new Solver({
     repoDir: process.cwd(),
     ref: 'HEAD',
-    adapters: [androidAdapter],
+    adapters: [new AndroidAdapter(), new PythonAdapter(), new WebAdapter()],
   });
 
-  const result = solver.solve({ includeAlive });
+  const result = solver.solve({ includeAlive, stack });
 
   if (outFile) {
     const absPath = path.resolve(process.cwd(), outFile);
