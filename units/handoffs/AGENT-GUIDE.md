@@ -20,6 +20,7 @@ CLI 已有 60 分钟新鲜度门禁（receipt/accept/reject 时拦）和 check �
 > 待调用：`show`、`receipt`、`accept`、`reject`、`check`
 
 自检清单：
+- [ ] **物理工作区与身份锚定检查（v2.26.0 强制）**：目标工单与待改动代码文件**必须位于当前宿主工作区（Active Workspace）之内**。严禁通过 `cd` 越界代行外部仓角色、修改外部代码或操作外部工单！若检测到指令指向外部仓库任务，**必须第一时间硬性拒单**，输出跨仓交接提示词引导人类在目标仓专属 Agent 会话中派发。
 - [ ] 本轮次我**已执行过** `handoff status`（执行方冷启动用 `handoff status --for <本方 lane|target>`，同样算），且完整输出仍在当前上下文中。
 - [ ] 如果用户指定了 `<ID>`，该 `<ID>` **必须**出现在「待办（`draft`/`forwarded`，见上唯一定义）」清单内。
 - [ ] 落手判定成立：仓内 → `to_lane == 当前 lane` 且为待办（draft/forwarded）；跨仓 → 落在目标收件箱且未闭环。
