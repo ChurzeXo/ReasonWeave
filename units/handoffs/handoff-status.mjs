@@ -137,6 +137,9 @@ for (const f of hFiles) {
     created: fm.created || '',
     closed: fm.closed || '',
     delivered_at: fm.delivered_at || '',
+    rejected_at: fm.rejected_at || '',
+    accepted_at: fm.accepted_at || '',
+    reopened_at: fm.reopened_at || '',
     file: `handoffs/${f}`,
   };
   // 仓内模式：target 位复用为 to_lane，并补 from_lane / needs_change。跨仓 v1 schema 字段保持冻结。
@@ -248,12 +251,31 @@ function isReceivedIdle(r) {
   return (Date.now() - cTime) >= 10 * 60 * 1000;
 }
 
+function getRejectionSummary(r) {
+  if (!r.rejected_at) return '';
+  const rFile = path.join(R_DIR, `${r.id}-resp.md`);
+  if (!fs.existsSync(rFile)) return '';
+  try {
+    const raw = fs.readFileSync(rFile, 'utf8');
+    const m = raw.match(/理由[：:]\s*([^\n]+)/);
+    if (m) return m[1].trim();
+  } catch {}
+  return '';
+}
+
 function formatRowLine(r, isZh) {
   const receiptPart = r.receiptFile ? '  ' + (isZh ? '回执:' : 'Receipt:') + r.receiptFile : '';
   const watch = getWatchInfo(r.id);
   const idle = isReceivedIdle(r);
   const idleAlert = idle ? (isZh ? '  ⚠️ [空转告警: received 超 10m 未 deliver]' : '  ⚠️ [空转告警 / Idle Warning: received >10m without deliver]') : '';
-  return `  - ${r.id}  ${r.file}${receiptPart}  [${watch.text}]${idleAlert}`;
+  let rejPart = '';
+  if (r.rejected_at && (r.status === 'forwarded' || r.status === 'draft')) {
+    const reason = getRejectionSummary(r);
+    rejPart = isZh
+      ? `  ⚠️ [已驳回退回 · 待整改${reason ? '：' + reason.slice(0, 40) : ''}]`
+      : `  ⚠️ [REJECTED · Revision required${reason ? ': ' + reason.slice(0, 40) : ''}]`;
+  }
+  return `  - ${r.id}  ${r.file}${receiptPart}  [${watch.text}]${idleAlert}${rejPart}`;
 }
 
 const rows = Object.values(handoffs).map(h => ({
@@ -307,6 +329,11 @@ function nextStep(r) {
     if (r.status === 'closed') {
       return isZh ? `lane=${lane} · 已闭环` : `lane=${lane} · Closed`;
     }
+    if (r.rejected_at && (r.status === 'forwarded' || r.status === 'draft')) {
+      return isZh
+        ? `lane=${lane} · 【驳回重做】查看回执「驳回记录」完成整改并重新 baton deliver`
+        : `lane=${lane} · 【Rejected/Rework】Revise per rejection record & baton deliver`;
+    }
     return isZh
       ? `lane=${lane} · 待执行：读 ${r.file} 开工 → 写 receipts/${r.id}-resp.md`
       : `lane=${lane} · Pending: read ${r.file} → write receipts/${r.id}-resp.md`;
@@ -359,6 +386,11 @@ function nextStepFor(r) {
         ? '已终态交付，等发起 lane 独立实测后 close'
         : 'Delivered, awaiting initiator verification to close';
     }
+    if (r.rejected_at && (r.status === 'forwarded' || r.status === 'draft')) {
+      return isZh
+        ? `【驳回重做】查看回执 receipts/${r.id}-resp.md 驳回记录完成整改 → 更新回执并 baton deliver`
+        : `【Rejected/Rework】Revise per receipts/${r.id}-resp.md rejection record → update receipt & baton deliver`;
+    }
     return isZh
       ? `读 handoffs/${r.id}.md 开工 → 写 receipts/${r.id}-resp.md`
       : `Read handoffs/${r.id}.md to start → write receipts/${r.id}-resp.md`;
@@ -410,10 +442,13 @@ if (FOR) {
   const todo = mine.filter(r => isPendingFor(FOR, r.status));
   const recv = mine.filter(r => r.status === 'received');
   const deliv = mine.filter(r => r.status === 'delivered');
+  const myRejected = (MODE === 'intra-repo')
+    ? rows.filter(r => r.from_lane === FOR && r.status !== 'closed' && r.rejected_at && (r.status === 'forwarded' || r.status === 'draft'))
+    : [];
   const lines = [];
   if (isZh) {
     lines.push(`[交接追踪 · ${ROOT}] ${FOR} 未闭环 ${mine.length} 项（${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR}）`);
-    if (mine.length === 0) {
+    if (mine.length === 0 && myRejected.length === 0) {
       lines.push(`✅ 没有待 ${FOR} 处理的交接。`);
     } else {
       if (todo.length) {
@@ -422,6 +457,13 @@ if (FOR) {
           lines.push(formatRowLine(r, true));
           const step = nextStepFor(r);
           if (step) lines.push(`      → 下一步：${step}`);
+        }
+      }
+      if (myRejected.length) {
+        lines.push(`- 我方已驳回退回（等待执行方整改并重新交付 · ${myRejected.length}）:`);
+        for (const r of myRejected) {
+          lines.push(formatRowLine(r, true));
+          lines.push(`      → 状态：已驳回退回给 lane=${r.to_lane}，等待其整改并 baton deliver`);
         }
       }
       if (recv.length) {
@@ -449,7 +491,7 @@ if (FOR) {
     }
   } else {
     lines.push(`[Baton Status · ${ROOT}] ${FOR}: ${mine.length} open item(s) (${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR})`);
-    if (mine.length === 0) {
+    if (mine.length === 0 && myRejected.length === 0) {
       lines.push(`✅ No pending handoffs for ${FOR}.`);
     } else {
       if (todo.length) {
@@ -458,6 +500,13 @@ if (FOR) {
           lines.push(formatRowLine(r, false));
           const step = nextStepFor(r);
           if (step) lines.push(`      → Next step: ${step}`);
+        }
+      }
+      if (myRejected.length) {
+        lines.push(`- My rejections awaiting revision (${myRejected.length}):`);
+        for (const r of myRejected) {
+          lines.push(formatRowLine(r, false));
+          lines.push(`      → Status: Rejected back to lane=${r.to_lane}, awaiting revision & deliver`);
         }
       }
       if (recv.length) {

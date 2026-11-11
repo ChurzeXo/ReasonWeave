@@ -76,3 +76,29 @@ baton receipt <ID> \
   --audit-nonce "<nonce-if-audit-lane>" \
   -n "## 结论\nVerified and all invariant tests pass."
 ```
+
+---
+
+## 4. Rejection, Rework & Resubmission Lifecycle (v2.25)
+
+When verification fails, the author/auditor (`from_lane`) issues a rejection:
+
+1. **Rejection by Author**:
+   `baton reject <ID> -n "<Specific failure reasons and missing criteria>"`
+   - State flips back: `received/delivered → forwarded`.
+   - Rejection record is appended to the receipt under `## 驳回记录`.
+   - Content fingerprint is recorded to seal against empty resubmissions.
+2. **Executor Rework**:
+   - The executor MUST address the feedback and update code and tests.
+   - Resubmit receipt: `baton receipt <ID> -n "<Updated body with revised Verdict>" --evidence-paths "..." --evidence-commits "..."`.
+   - The engine automatically backs up previous receipts (`.bak.md`) and preserves `## 驳回记录`.
+3. **Resubmission (baton deliver)**:
+   - Run `baton deliver <ID>`.
+   - The engine checks for content delta (`rejected_receipt_hash`) and ensures Verdict is NOT `REJECTED`. Empty resubmissions are rejected.
+4. **Final Acceptance (baton accept)**:
+   - Initiator verifies independently and runs `baton accept <ID> -n "<Acceptance evidence>"`.
+   - The engine verifies Verdict, resolved rejections, and authority before moving to `closed`.
+5. **Reopening Accidental Closures (baton reopen)**:
+   - If an item was closed erroneously, the author can recover it:
+     `baton reopen <ID> -n "<Reason for reopening>"`
+   - State flips back: `closed → forwarded`, clearing stale acceptance timestamps.

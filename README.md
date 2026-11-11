@@ -149,13 +149,14 @@ lab zspec init "My Project"
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:e39e8e0c -->
-### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.24.0 为准）
+<!-- stub:sha256:a503e7df -->
+### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.25.0 为准）
 
 **早拦 Preflight（强制）**
 - **命令形态**：一律 `baton <op>` 或 `handoff <op>`（PATH shim → 中央引擎；幂等自愈 `baton link`）。若报 command not found：运行 `baton link`（或 `handoff link`）自愈（或通过 lab-agent-toolkit 重新 `npm link`）。
 - 调用 `show/receipt/deliver/accept/reject/check` 前，**必须先跑** `baton status`（或 `handoff status`，执行方冷启动用 `baton status --for <本方 lane|target>` 直取本方待办）且其输出在上下文中。
 - **状态语义（v2.20.0 · 五态生命周期）**：「进行中」= 未闭环（`status ≠ closed`）且归属当前方。**待办 = `draft` + `forwarded`**——落我归属即该我动工；`received` = 回执草稿已登记（待执行方交付）；`delivered` = 执行方已完成终态交付（等待发起方验收）；`closed` = 审计闭环完成。
+- **驳回封印与闭环闸门（v2.25.0 · 严禁空交付洗白）**：工单若曾被驳回（`rejected_at` 存在），执行方必须完成实质整改后方可交付（正文无实质变更的空交付硬拒）；发起方 `accept` 强校验回执结论（Verdict）与调用者身份，结论为 `REJECTED`/`NO-GO`、存在未闭驳回记录或 `needs_change=true` 时硬拒闭环；误闭环可通过 `baton reopen <ID> -n "<理由>"` 安全追回。
 - **终态交付与平息机制（v2.20.0 · 防抢跑竞态与会话平息）**：回执文件落盘不等于会话结束。执行方必须通过 `baton deliver <ID>`（或 `baton receipt <ID> --deliver`）显式标记终态交付；探针检测到交付信号后启动平息缓冲（Settle Window），等待执行方会话彻底收尾退出后方 Exit 0 唤醒发起方。未 deliver 之前发起方 wait 探针不唤醒、accept 硬拒闭环。发起方严禁在收到显式交付信号前提前修改 Backlog 或规划文档。
 - **物理工作树隔离（v2.21.0 · workspace: worktree）**：支持 `workspace: worktree`，自动在 `.worktrees/<id>` 下创建轻量沙箱并软链共享构建缓存（`node_modules`、`target`、`.venv`），主仓库零污染且构建零损耗。工单闭环时使用 `baton close <ID> --prune-worktree` 自动安全回收。
 - **注意力节流管道（v2.21.0 · baton throttle）**：执行方在后台长任务运行时，推荐使用 `baton throttle <ID> -- <cmd>` 包装运行。三级中断过滤机制阻断日志刷屏对人类与主控上下文的注意力劫持（仅致命错误红灯突破，常规流直接静默落盘）。
