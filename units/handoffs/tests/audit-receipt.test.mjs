@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 
 const HANDOFF_BIN = path.resolve('units/handoffs/handoff.mjs');
@@ -164,27 +165,53 @@ describe('Agent Baton: Audit Receipt & Nonce Lifecycle Test Suite', () => {
     assert.match(deliverRes.stderr + deliverRes.stdout, /(?:拒绝交付|禁止交付|未通过|严禁执行 deliver)/);
   });
 
-  it('4. 审计方（to_lane=audit）可直接执行 reject 打回整改并轮转 Nonce', () => {
+  it('4. 审计方（to_lane=audit）可直接对 forwarded 工单执行 reject 打回整改并轮转 Nonce', () => {
     const res = runBaton(tmpDir, 'new audit task "待整改任务" --from impl');
     const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
     const initialNonce = runBaton(tmpDir, `show ${id} --nonce`).stdout.trim();
 
-    // 审计方直接打回整改
+    // 先转递工单，使其确定处于 forwarded 状态
+    const forwardRes = runBaton(tmpDir, `forward ${id} --no-wait`);
+    assert.equal(forwardRes.status, 0);
+
+    const showForwarded = runBaton(tmpDir, `show ${id}`);
+    assert.match(showForwarded.stdout, /status:\s*forwarded/);
+
+    // 审计方直接打回整改（必须成功驳回，严禁静默报已是 forwarded 跳过）
     const rejectRes = runBaton(tmpDir, `reject ${id} -n "缺少真机环境与自动化测试用例" --by audit`);
     assert.equal(rejectRes.status, 0, `reject 应成功: ${rejectRes.stderr}\n${rejectRes.stdout}`);
+    assert.match(rejectRes.stdout, /已驳回退回/);
+    assert.doesNotMatch(rejectRes.stdout, /跳过/);
 
     const showAfterReject = runBaton(tmpDir, `show ${id}`);
     assert.match(showAfterReject.stdout, /rejected_at:/);
+    assert.match(showAfterReject.stdout, /rejected_by:\s*audit/);
     assert.match(showAfterReject.stdout, /reject_count:\s*1/);
     assert.match(showAfterReject.stdout, /needs_change:\s*true/);
 
+    // 驳回后生成的回执文件合规且 check <id> 必须通过
+    const checkAfterReject = runBaton(tmpDir, `check ${id}`);
+    assert.equal(checkAfterReject.status, 0, `check 应通过: ${checkAfterReject.stderr}\n${checkAfterReject.stdout}`);
+
+    // status --for audit 应显示在「我方已驳回退回」，且不得出现在「待 audit 处理」
+    const statusForAudit = runBaton(tmpDir, 'status --for audit');
+    assert.match(statusForAudit.stdout, /(?:我方已驳回退回|My rejections awaiting revision)/i);
+    assert.doesNotMatch(statusForAudit.stdout, /(?:待 audit 处理|Pending for audit)/i);
+
     // 此时 status --for impl 应将工单视作收到驳回待整改
     const statusForImpl = runBaton(tmpDir, 'status --for impl');
-    assert.match(statusForImpl.stdout, /(?:待整改|reopen|revision)/i);
+    assert.match(statusForImpl.stdout, /(?:收到驳回待整改|Rejections received awaiting revision)/i);
 
     // 驳回已自动轮转 Audit Nonce
     const newNonce = runBaton(tmpDir, `show ${id} --nonce`).stdout.trim();
     assert.notEqual(newNonce, initialNonce, 'reject 必须轮转并生成新的 audit_nonce');
+
+    // impl 完成整改后重新 forward，清除 rejected_by 锁并重回 audit 待办
+    const reforwardRes = runBaton(tmpDir, `forward ${id} --no-wait`, { HANDOFF_LANE: 'impl' });
+    assert.equal(reforwardRes.status, 0);
+
+    const statusAfterReforward = runBaton(tmpDir, 'status --for audit');
+    assert.match(statusAfterReforward.stdout, /(?:待 audit 处理|Pending for audit)/i);
   });
 
   it('5. baton check <id> 单工单定向校验与 --fix 历史漂移自愈', () => {
@@ -288,5 +315,270 @@ status: draft
     // 6. 验证 prompt 包含物理双盲提示
     const promptRes = runBaton(tmpDir, `prompt ${id}`);
     assert.match(promptRes.stdout, /(?:物理双盲审计模式已开启|Double-Blind Audit Active)/);
+  });
+
+  it('7. 普通实现执行方（impl 等）越权 reject 必须被严格拦截', () => {
+    const res = runBaton(tmpDir, 'new impl task "实现功能模块" --from audit');
+    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+
+    // 普通执行方（impl）尝试对发给自己的工单执行 reject
+    const illegalReject = runBaton(tmpDir, `reject ${id} -n "我不做，打回" --by impl`);
+    assert.notEqual(illegalReject.status, 0, '执行方不得越权 reject');
+    assert.match(illegalReject.stderr + illegalReject.stdout, /(?:越界驳回|仅允许由发起方或审计方)/);
+  });
+
+  it('8. Audit Nonce 缺失诊断与受控重签 (baton nonce <id> 与 baton show <id> --nonce)', () => {
+    const res = runBaton(tmpDir, 'new audit task "测试 Nonce 完整生命周期" --from impl');
+    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const ticketPath = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
+
+    // 人为模拟工单缺少 audit_nonce
+    let content = fs.readFileSync(ticketPath, 'utf-8');
+    content = content.replace(/audit_nonce:[^\n]+\n/, '');
+    fs.writeFileSync(ticketPath, content, 'utf-8');
+
+    // show --nonce 缺 nonce 时必须 exit 1 报错，严禁 exit 0 输出空行
+    const failShow = runBaton(tmpDir, `show ${id} --nonce`);
+    assert.notEqual(failShow.status, 0, '缺 nonce 时 show --nonce 必须返回非 0');
+    assert.match(failShow.stderr, /(?:缺少 Audit Nonce|reissue)/);
+
+    // status --for audit 应显示 Nonce 缺失告警
+    const statusForAudit = runBaton(tmpDir, 'status --for audit');
+    assert.match(statusForAudit.stdout, /(?:Nonce 缺失|reissue)/);
+
+    // 执行 baton nonce <id> --reissue 受控补发
+    const reissueRes = runBaton(tmpDir, `nonce ${id} --reissue`);
+    assert.equal(reissueRes.status, 0, 'nonce --reissue 必须成功');
+    const newNonce = reissueRes.stdout.trim();
+    assert.ok(newNonce.startsWith('AUDIT-'), '应签发有效格式的 Audit Nonce');
+
+    // 重新运行 show --nonce 必须顺利返回新签发的 nonce
+    const okShow = runBaton(tmpDir, `show ${id} --nonce`);
+    assert.equal(okShow.status, 0);
+    assert.equal(okShow.stdout.trim(), newNonce);
+
+    // 针对非 audit 工单调用 baton nonce 必须拦截
+    const implRes = runBaton(tmpDir, 'new impl task "普通任务" --from audit');
+    const implId = implRes.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const illegalNonce = runBaton(tmpDir, `nonce ${implId}`);
+    assert.notEqual(illegalNonce.status, 0);
+    assert.match(illegalNonce.stderr, /非审计工单/);
+  });
+
+  it('9. baton check --fix 自动补发缺失的 Audit Nonce', () => {
+    const res = runBaton(tmpDir, 'new audit task "测试 check --fix 补发 Nonce" --from impl');
+    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const ticketPath = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
+
+    // 人为抹除 audit_nonce
+    let content = fs.readFileSync(ticketPath, 'utf-8');
+    content = content.replace(/audit_nonce:[^\n]+\n/, '');
+    fs.writeFileSync(ticketPath, content, 'utf-8');
+
+    // 运行 check --fix 自动自愈
+    const fixRes = runBaton(tmpDir, `check ${id} --fix`);
+    assert.equal(fixRes.status, 0);
+    assert.match(fixRes.stdout, /补发缺失的 Audit Nonce/);
+
+    // 验证工单已被注入有效 Nonce
+    const nonceAfterFix = runBaton(tmpDir, `show ${id} --nonce`).stdout.trim();
+    assert.ok(nonceAfterFix.startsWith('AUDIT-'));
+  });
+
+  it('10. [Phase 1] 审计防伪门禁解耦：受阻/NO-GO草稿回执豁免 Nonce 登记，但交付闸门严格拦截', () => {
+    const res = runBaton(tmpDir, 'new audit task "测试受阻草稿回执豁免 Nonce" --from impl');
+    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+
+    // 登记未通过/受阻回执（不带 --audit-nonce 且未带 --deliver）
+    const draftRes = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：INCOMPLETE / NO-GO\\n- **说明**：硬件环境缺失暂不交付" --evidence-note "环境缺失"`);
+    assert.equal(draftRes.status, 0, `负向草稿回执应允许免 Nonce 登记: ${draftRes.stderr}\n${draftRes.stdout}`);
+    assert.match(draftRes.stdout, /已登记仓内回执/);
+
+    // 回执状态已成为 received，needs_change: true
+    const showRes = runBaton(tmpDir, `show ${id}`);
+    assert.match(showRes.stdout, /status:\s*received/);
+    assert.match(showRes.stdout, /needs_change:\s*true/);
+
+    // 尝试直接调用 deliver 进行终态交付，必须被交付闸门拦截
+    const deliverRes = runBaton(tmpDir, `deliver ${id}`);
+    assert.notEqual(deliverRes.status, 0, '受阻或缺 Nonce 的交付必须被拦截');
+    assert.match(deliverRes.stderr + deliverRes.stdout, /(?:拒绝交付|Audit Nonce)/);
+  });
+
+  it('11. [Phase 1] 无条件安全下车通道：reject 与 reopen 永远豁免状态快照门禁', () => {
+    const res = runBaton(tmpDir, 'new audit task "测试下车通道豁免" --from impl');
+    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+
+    // 显式开启 HANDOFF_STATUS_GATE=on，模拟未看 status 视图的全新冷启动环境
+    const rejectRes = runBaton(tmpDir, `reject ${id} -n "发现重大缺陷立即打回" --by audit`, {
+      HANDOFF_STATUS_GATE: 'on'
+    });
+    assert.equal(rejectRes.status, 0, `reject 应当拥有无条件安全下车通道: ${rejectRes.stderr}\n${rejectRes.stdout}`);
+    assert.match(rejectRes.stdout, /已驳回退回/);
+  });
+
+  it('12. [Phase 1] 发起方（from_lane）可主动驳回/撤回已派发工单，严禁静默跳过', () => {
+    const res = runBaton(tmpDir, 'new impl task "实现某模块" --from audit');
+    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+
+    // 发起方（audit）主动打回已转递给 impl 的工单
+    const fromReject = runBaton(tmpDir, `reject ${id} -n "需求变更有重大调整，撤回重新规划" --by audit`);
+    assert.equal(fromReject.status, 0, `发起方驳回应成功: ${fromReject.stderr}\n${fromReject.stdout}`);
+    assert.match(fromReject.stdout, /已驳回退回/);
+
+    const showRes = runBaton(tmpDir, `show ${id}`);
+    assert.match(showRes.stdout, /rejected_by:\s*audit/);
+    assert.match(showRes.stdout, /needs_change:\s*true/);
+  });
+
+  it('13. [Phase 2] --as <lane> 显式身份：脱离 HANDOFF_LANE 环境变量完成回执、交付与闭环', () => {
+    // 创建一个 from=audit, to=impl 的工单
+    const res = runBaton(tmpDir, 'new impl task "实现数据解析器" --from audit');
+    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+
+    // 在完全清空 HANDOFF_LANE 环境变量的环境下，通过 --as impl 登记回执并交付
+    const receiptRes = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS\\n## 交付物\\n- 完成解析器实现" --as impl --deliver --evidence-paths "README.md"`, {
+      HANDOFF_LANE: ''
+    });
+    assert.equal(receiptRes.status, 0, `使用 --as impl 回执与交付应成功: ${receiptRes.stderr}\n${receiptRes.stdout}`);
+    assert.match(receiptRes.stdout, /交付成功/);
+
+    // 验证回执中的 author_lane 与 delivered_by_lane 记录为 impl
+    const receiptContent = fs.readFileSync(path.join(tmpDir, '.handoffs', 'receipts', `${id}-resp.md`), 'utf-8');
+    assert.match(receiptContent, /author_lane:\s*impl/);
+    assert.match(receiptContent, /delivered_by_lane:\s*impl/);
+
+    // 在同一清空环境变量的环境下，通过 --as audit 进行发起方验收闭环
+    const acceptRes = runBaton(tmpDir, `accept ${id} -n "解析器功能完整且测试通过" --as audit`, {
+      HANDOFF_LANE: ''
+    });
+    assert.equal(acceptRes.status, 0, `使用 --as audit 验收闭环应成功: ${acceptRes.stderr}\n${acceptRes.stdout}`);
+    assert.match(acceptRes.stdout, /已审计闭环/);
+
+    const showClosed = runBaton(tmpDir, `show ${id}`);
+    assert.match(showClosed.stdout, /status:\s*closed/);
+  });
+
+  it('14. [Phase 2] 同会话多工单并发流转：同一对话内无缝处理不同角色的多个工单', () => {
+    // 同一环境下创建两个不同方向的工单
+    const resA = runBaton(tmpDir, 'new impl task "工单 A: 待 impl 处理" --from audit');
+    const idA = resA.stdout.match(/(impl-\d+-\d+-task)/)[1];
+
+    const resB = runBaton(tmpDir, 'new audit task "工单 B: 待 audit 审计" --from impl');
+    const idB = resB.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const nonceB = runBaton(tmpDir, `show ${idB} --nonce`).stdout.trim();
+
+    // 在同一个没有任何环境变量切换的环境中：
+    // 1. Agent 以 impl 身份交付工单 A
+    const delivA = runBaton(tmpDir, `receipt ${idA} -n "## 状态 / 结论\\n- **结论**：PASS" --as impl --deliver --evidence-paths "README.md"`, { HANDOFF_LANE: '' });
+    assert.equal(delivA.status, 0);
+
+    // 2. Agent 紧接着以 audit 身份对工单 B 执行驳回打回整改
+    const rejectB = runBaton(tmpDir, `reject ${idB} -n "缺少边界用例，打回" --as audit`, { HANDOFF_LANE: '' });
+    assert.equal(rejectB.status, 0);
+    assert.match(rejectB.stdout, /已驳回退回/);
+
+    // 3. Agent 再次以 audit 身份对刚才交付的工单 A 执行最终验收闭环
+    const acceptA = runBaton(tmpDir, `accept ${idA} -n "审计通过" --as audit`, { HANDOFF_LANE: '' });
+    assert.equal(acceptA.status, 0);
+    assert.match(acceptA.stdout, /已审计闭环/);
+
+    // 4. status --as audit 能够准确查出工单 B 处于「我方已驳回退回」，工单 A 已经闭环
+    const statusAudit = runBaton(tmpDir, 'status --as audit', { HANDOFF_LANE: '' });
+    assert.equal(statusAudit.status, 0);
+    assert.match(statusAudit.stdout, /(?:我方已驳回退回|My rejections awaiting revision)/i);
+  });
+
+  it('15. [Phase 2] --as 越权防护依然生效：冒充或非指定角色操作严密拦截', () => {
+    const res = runBaton(tmpDir, 'new impl task "测试越权拦截" --from audit');
+    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+
+    // 1. 尝试使用 --as audit（发起方）自填回执，必须被拦截
+    const illegalReceipt = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --as audit --evidence-paths "README.md"`, { HANDOFF_LANE: '' });
+    assert.notEqual(illegalReceipt.status, 0, '发起方自填回执必须被拦截');
+    assert.match(illegalReceipt.stderr + illegalReceipt.stdout, /(?:禁止自填回执|不是该交接指定接收方)/);
+
+    // 2. 正常以 --as impl 写回执并交付
+    const okDeliver = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --as impl --deliver --evidence-paths "README.md"`, { HANDOFF_LANE: '' });
+    assert.equal(okDeliver.status, 0);
+
+    // 3. 尝试使用 --as impl（执行方）自我闭环，必须被拦截
+    const illegalAccept = runBaton(tmpDir, `accept ${id} -n "我自己验收通过" --as impl`, { HANDOFF_LANE: '' });
+    assert.notEqual(illegalAccept.status, 0, '执行方禁止自我闭环');
+    assert.match(illegalAccept.stderr + illegalAccept.stdout, /(?:执行方禁止自审自闭环|不是发起方)/);
+  });
+
+  it('16. [Phase 3] 同跨仓数据模型归一化：统一使用 needs_change 并无缝兼容历史 needs_iggle_change', () => {
+    const res = runBaton(tmpDir, 'new impl task "测试数据模型归一化" --from audit');
+    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+
+    // 登记一份正常交付回执
+    const okDeliver = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --as impl --deliver --evidence-paths "README.md"`, { HANDOFF_LANE: '' });
+    assert.equal(okDeliver.status, 0);
+
+    // 人为模拟历史遗留文件：仅含 needs_iggle_change: true，缺失 needs_change
+    const ticketPath = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
+    let content = fs.readFileSync(ticketPath, 'utf-8');
+    content = content.replace(/needs_change:[^\n]+\n/, 'needs_iggle_change: true\n');
+    fs.writeFileSync(ticketPath, content, 'utf-8');
+
+    // baton show <id> 应能正确读取归一化后的 needs_change: true 并兼容展示
+    const showRes = runBaton(tmpDir, `show ${id}`);
+    assert.equal(showRes.status, 0);
+    assert.match(showRes.stdout, /needs_change:\s*true/);
+
+    // 运行 baton check <id>，由于回执为 false，工单通过历史字段解析出 true，应精准检出不一致
+    const checkDrift = runBaton(tmpDir, `check ${id}`);
+    assert.notEqual(checkDrift.status, 0, '应检出 needs_change 与历史 needs_iggle_change 对账漂移');
+    assert.match(checkDrift.stderr + checkDrift.stdout, /needs_change 不一致/);
+
+    // 运行 check --fix，自动自愈对齐为规范的 needs_change
+    const fixRes = runBaton(tmpDir, `check ${id} --fix`);
+    assert.equal(fixRes.status, 0);
+
+    const checkFixed = runBaton(tmpDir, `check ${id}`);
+    assert.equal(checkFixed.status, 0, '自愈后 check 必须顺利通过 exit 0');
+  });
+
+  it('17. [Phase 4] 运行时确定性自愈与轻量韧性接入桩（v2.29.0）', () => {
+    // 1. 验证错误自愈引导：报错中必须包含明确可复制的一键自愈命令
+    const res = runBaton(tmpDir, 'new impl task "测试自愈命令与轻量桩" --from audit');
+    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+
+    // 1.1 内容门禁未过时的自愈引导
+    const badContentReceipt = runBaton(tmpDir, `receipt ${id} -n "缺少锚节与证据" --as impl`, { HANDOFF_LANE: '' });
+    assert.notEqual(badContentReceipt.status, 0);
+    assert.match(badContentReceipt.stderr + badContentReceipt.stdout, /👉 可运行:\s*baton receipt/, '内容门禁未过时必须提供自愈建议');
+
+    // 1.2 状态快照未读/过期时的自愈引导
+    // 清除 os.tmpdir() 中的 status stamp 模拟未查验状态
+    fs.readdirSync(os.tmpdir()).filter(f => f.startsWith('handoff-last-status-')).forEach(f => {
+      try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch {}
+    });
+    const unreadAccept = runBaton(tmpDir, `accept ${id} -n "验收通过" --as audit`, {
+      HANDOFF_STATUS_GATE: 'on',
+      HANDOFF_LANE: '',
+    });
+    assert.notEqual(unreadAccept.status, 0);
+    assert.match(unreadAccept.stderr + unreadAccept.stdout, /👉 可运行:\s*baton status/, '状态门禁未过时必须提供自愈建议');
+
+    // 2. 验证轻量韧性接入桩安装与 doctor 检测
+    const installRes = runBaton(tmpDir, 'install --project');
+    assert.equal(installRes.status, 0);
+
+    const doctorRes = runBaton(tmpDir, 'doctor');
+    assert.equal(doctorRes.status, 0);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.29\.0\)/);
+
+    // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
+    const agentsPath = path.join(tmpDir, 'AGENTS.md');
+    const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
+    assert.match(agentsContent, /handoff-stub:v2\.1/);
+    assert.match(agentsContent, /v2\.29\.0/);
+    assert.match(agentsContent, /--as <lane>/);
+    // 接入桩正文应保持轻量韧性（小于 2500 字符，去恐吓化）
+    const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
+    assert.ok(stubMatch, '必须找到接入桩标记');
+    assert.ok(stubMatch[1].length < 2500, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
   });
 });

@@ -67,8 +67,9 @@ function detectLang() {
 
 let FOR = '';
 for (let i = 0; i < process.argv.length; i++) {
-  if (process.argv[i] === '--for' && process.argv[i + 1]) { FOR = process.argv[i + 1].toLowerCase(); break; }
+  if ((process.argv[i] === '--for' || process.argv[i] === '--as') && process.argv[i + 1]) { FOR = process.argv[i + 1].toLowerCase(); break; }
   if (process.argv[i].startsWith('--for=')) { FOR = process.argv[i].slice('--for='.length).toLowerCase(); break; }
+  if (process.argv[i].startsWith('--as=')) { FOR = process.argv[i].slice('--as='.length).toLowerCase(); break; }
 }
 if (FOR && MODE !== 'intra-repo' && !VALID_TARGETS.has(FOR)) {
   console.error(`--for 必须是 ${[...VALID_TARGETS].join(' / ')}（收到: ${FOR || '(空)'}）`);
@@ -109,6 +110,10 @@ function parseFM(content) {
     if (v === 'true') v = true; else if (v === 'false') v = false;
     obj[k] = v;
   }
+  // ADR-0008 Phase 3: 统一数据模型归一化（将历史分化字段 needs_iggle_change 自动对齐为 needs_change）
+  if (obj.needs_change === undefined && obj.needs_iggle_change !== undefined) {
+    obj.needs_change = obj.needs_iggle_change;
+  }
   return obj;
 }
 
@@ -133,7 +138,7 @@ for (const f of hFiles) {
     target: fm.target || '',
     type: fm.type || '',
     status: fm.status || 'draft',
-    needs: fm.needs_iggle_change,
+    needs: fm && (fm.needs_change !== undefined ? fm.needs_change : fm.needs_iggle_change),
     created: fm.created || '',
     closed: fm.closed || '',
     delivered_at: fm.delivered_at || '',
@@ -347,6 +352,8 @@ function getRejectionSummary(r) {
   return '';
 }
 
+const isZh = detectLang() === 'zh';
+
 function formatRowLine(r, isZh) {
   const receiptPart = r.receiptFile ? '  ' + (isZh ? '回执:' : 'Receipt:') + r.receiptFile : '';
   const watch = getWatchInfo(r.id);
@@ -359,7 +366,14 @@ function formatRowLine(r, isZh) {
       ? `  ⚠️ [已驳回退回 · 待整改${reason ? '：' + reason.slice(0, 40) : ''}]`
       : `  ⚠️ [REJECTED · Revision required${reason ? ': ' + reason.slice(0, 40) : ''}]`;
   }
-  const noncePart = r.audit_nonce ? `  [Nonce: ${r.audit_nonce}]` : '';
+  let noncePart = '';
+  if (r.to_lane === 'audit') {
+    noncePart = r.audit_nonce
+      ? `  [Nonce: ${r.audit_nonce}]`
+      : (isZh ? `  ⚠️ [Nonce 缺失 · 可运行 baton nonce ${r.id} --reissue 补签]` : `  ⚠️ [Missing Nonce · run baton nonce ${r.id} --reissue]`);
+  } else if (r.audit_nonce) {
+    noncePart = `  [Nonce: ${r.audit_nonce}]`;
+  }
   const blindPart = r.blind ? '  [Blind: true]' : '';
   return `  - ${r.id}  ${r.file}${receiptPart}  [${watch.text}]${noncePart}${blindPart}${idleAlert}${rejPart}`;
 }
@@ -376,6 +390,11 @@ for (const r of rows) {
   if (isReceivedIdle(r)) {
     warnings.push(`[空转告警] 交接 ${r.id} 处于 received 状态超过 10 分钟且未 deliver（发起方监听无法唤醒，请尽快运行 baton deliver ${r.id} 确认交付）`);
   }
+  if (r.to_lane === 'audit' && !r.audit_nonce && r.status !== 'closed') {
+    warnings.push(isZh
+      ? `工单 ${r.id}（to_lane=audit）缺少 Audit Nonce，可运行 baton nonce ${r.id} --reissue 补发`
+      : `Ticket ${r.id} (to_lane=audit) missing Audit Nonce, run baton nonce ${r.id} --reissue`);
+  }
 }
 
 const open = rows.filter(r => r.status !== 'closed');
@@ -388,7 +407,6 @@ const receiptButStale = open.filter(r => r.hasReceipt && r.status !== 'received'
 // v2.12.5 · P1-b 标签分区：仓内 draft/forwarded 渲染「待执行」——原「待转递/已转递」是跨仓
 // 口吻（发起方视角的转递进度），放在仓内会被读成「已发出去、有人接手了」，误导执行 lane 不动工
 // （同仓新单天生停在 draft，标签还说「待转递」= 暗示『不该我处理』）。跨仓标签保持不变。
-const isZh = detectLang() === 'zh';
 
 const STATUS_LABEL = isZh
   ? (MODE === 'intra-repo'
@@ -519,11 +537,24 @@ function nextStepFor(r) {
 
 if (FOR) {
   // 依赖方视角：只列 target===FOR（跨仓）或 to_lane===FOR（仓内）且未闭环；pending 按角色语义过滤（isPendingFor）。
-  const laneMatch = (r) => MODE === 'intra-repo' ? (r.to_lane === FOR) : (r.target === FOR);
+  const laneMatch = (r) => {
+    if (MODE === 'intra-repo') {
+      if (r.to_lane === FOR) {
+        // 我已驳回退回给对方的项在等待对方整改，不计入我方待办
+        return r.rejected_by !== FOR;
+      }
+      // 对方驳回给我的项（我是发起方），落入我方整改待办
+      if (r.from_lane === FOR && r.rejected_by && r.rejected_by !== FOR) {
+        return true;
+      }
+      return false;
+    }
+    return r.target === FOR;
+  };
   const mine = rows.filter(r => laneMatch(r) && r.status !== 'closed');
   if (JSON_MODE) {
     if (JSON_V2) {
-      const pending = mine.filter(r => isPendingFor(FOR, r.status)).map(r => ({
+      const pending = mine.filter(r => isPendingFor(FOR, r.status) && r.rejected_by !== FOR).map(r => ({
         handoff_id: r.id,
         status: r.status,
         path: r.file,
@@ -541,7 +572,7 @@ if (FOR) {
     }
     process.exit(0);
   }
-  const todo = mine.filter(r => isPendingFor(FOR, r.status));
+  const todo = mine.filter(r => isPendingFor(FOR, r.status) && r.rejected_by !== FOR);
   const recv = mine.filter(r => r.status === 'received');
   const isRecvBlocked = (r) => (r.needs === true) || (receipts[r.id] && receipts[r.id].needs === true) || isVerdictRejected(getReceiptConclusion(r.id)) || isVerdictBlocked(getReceiptConclusion(r.id));
   const recvBlocked = recv.filter(isRecvBlocked);
@@ -571,7 +602,7 @@ if (FOR) {
         lines.push(`- 收到驳回待整改（由 ${rejectedToMe[0].rejected_by || '对方'} 驳回 · ${rejectedToMe.length}）:`);
         for (const r of rejectedToMe) {
           lines.push(formatRowLine(r, true));
-          lines.push(`      → 下一步：查看回执「驳回记录」完成整改后 baton reopen ${r.id} 或补充条件重新转递`);
+          lines.push(`      → 下一步：查看回执「驳回记录」完成整改后 baton forward ${r.id} 或补充条件重新转递`);
         }
       }
       if (rejectedByMe.length) {
@@ -629,7 +660,7 @@ if (FOR) {
         lines.push(`- Rejections received awaiting revision (${rejectedToMe.length}):`);
         for (const r of rejectedToMe) {
           lines.push(formatRowLine(r, false));
-          lines.push(`      → Next step: Revise per rejection record in receipt → baton reopen ${r.id} or forward`);
+          lines.push(`      → Next step: Revise per rejection record in receipt → baton forward ${r.id}`);
         }
       }
       if (rejectedByMe.length) {

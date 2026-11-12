@@ -14,6 +14,7 @@
 | 0005 | 全局死代码与孤儿资产清道夫架构及只读不变式 | 🔒 Frozen | 2026-11-10 | orphan / global | `0005-global-orphan-scavenger-and-read-only-invariants.md` |
 | 0006 | 跨语言三元工程防线与变异敏感性契约架构决策 | 🔒 Frozen | 2026-11-11 | spec-guard / orphan / global | `0006-triad-engineering-defense-and-mutation-sensitivity.md` |
 | 0007 | Agent Baton 状态机安全防御与工作区物理沙箱规约架构决策 | 🔒 Frozen | 2026-11-12 | handoffs / global | `0007-agent-baton-state-machine-defense-and-workspace-jail-spec.md` |
+| 0008 | Agent Baton 核心收敛与异构并发会话韧性架构决策 | 🔒 Frozen | 2026-11-12 | handoffs / global | `0008-agent-baton-core-convergence-and-heterogeneous-session-resilience.md` |
 
 ## 状态说明
 - **Proposed** — 已起草，等待评审。不入 Agent 上下文。

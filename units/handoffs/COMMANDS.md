@@ -125,9 +125,15 @@ baton accept <id> -n "<acceptance summary>" [--legacy-exempt]
 - Hard-fails if executor has not explicitly marked final delivery.
 
 ### `baton reject`
-Reject the receipt due to failed tests or unmet invariants, returning it to `forwarded` for rework.
+Reject the receipt or audit findings due to failed tests or unmet criteria, returning the ticket to `forwarded` for remediation. Executable by the ticket initiator or by the auditor (`to_lane=audit`).
 ```bash
-baton reject <id> -n "<rejection reason>"
+baton reject <id> -n "<rejection reason>" [--by <lane>]
+```
+
+### `baton nonce`
+Inspect or rotate/reissue the one-time anti-spoofing challenge nonce for audit tickets (`to_lane=audit`).
+```bash
+baton nonce <id> [--reissue]
 ```
 
 ### `baton check`

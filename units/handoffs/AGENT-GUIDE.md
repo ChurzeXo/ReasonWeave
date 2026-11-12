@@ -1,19 +1,19 @@
-# Handoff Agent Guide（早拦 Preflight 权威版）
+# Handoff Agent Guide（早拦 Preflight 权威版 · v2.29.0）
 
 > 本文件是给**执行 handoff 的 Agent**用的思考守卫。不是给人类操作说明，而是强制自检清单。
 
-## 核心原则：早拦 > 晚拦
-CLI 已有 60 分钟新鲜度门禁（receipt/accept/reject 时拦）和 check 硬校验（回执结构拦）。但要根治“忘了先查状态”，必须在**决策前**就强制拦住。
+## 核心原则：早拦 > 晚拦 · 韧性自愈
+CLI 已有 60 分钟新鲜度门禁（receipt/deliver/accept 时拦）和 check 硬校验（回执结构拦）。但要根治“忘了先查状态”，必须在**决策前**就强制拦住。若操作被 CLI 拦截，仔细阅读 stderr 输出末尾附带的 `👉 可运行: ...` 自愈命令，直接执行即可纠偏恢复。
 
-**铁律：在调用任何 handoff 工具前，先确认你刚跑过 `handoff status` 且基于「进行中」清单做判断。**
+**铁律：在调用任何 handoff 工具前，先确认你刚跑过 `baton status` 且基于「进行中」清单做判断。多工单并发流转时，善用 `--as <lane>` 显式声明身份，免受单会话单角色绑定限制。**
 
-> **「进行中 / 待办 / 生命周期」唯一定义（v2.20.0 · README / 接入桩 / 本文件三处同义）**
+> **「进行中 / 待办 / 生命周期」唯一定义（v2.29.0 · README / 接入桩 / 本文件三处同义）**
 > - 「进行中」= 未闭环（`status ≠ closed`）且归属当前方。
 > - **待办 = `draft` + `forwarded`**——落我归属即该我动工，**含驳回退回的返工单**；`forward` 只是发起方可选的事后标记，**严禁**用「`draft`/`forwarded` 不处理」判退。
 > - `received` = 回执草稿已登记（执行方可能仍在自检中，尚未交付）。
 > - `delivered` = 执行方已完成终态交付（`delivered_at` 已烙印，探针进入平息缓冲后唤醒发起方独立验收）。
 > - `closed` 不处理。`accepted`/`rejected` 为废止状态、不存在。
-> - 因此执行方冷启动 = `handoff status --for <本方 lane|target>` 直取本方待办。
+> - 因此执行方冷启动 = `baton status --for <本方 lane|target>` 直取本方待办。
 
 ## Preflight（强制自检）
 每次准备调用以下工具前，都必须先走本自检：
@@ -21,11 +21,12 @@ CLI 已有 60 分钟新鲜度门禁（receipt/accept/reject 时拦）和 check �
 
 自检清单：
 - [ ] **物理工作区与身份锚定检查（v2.26.0 强制）**：目标工单与待改动代码文件**必须位于当前宿主工作区（Active Workspace）之内**。严禁通过 `cd` 越界代行外部仓角色、修改外部代码或操作外部工单！若检测到指令指向外部仓库任务，**必须第一时间硬性拒单**，输出跨仓交接提示词引导人类在目标仓专属 Agent 会话中派发。
-- [ ] 本轮次我**已执行过** `handoff status`（执行方冷启动用 `handoff status --for <本方 lane|target>`，同样算），且完整输出仍在当前上下文中。
+- [ ] **身份透明声明（v2.29.0）**：同一对话处理多个不同 Lane 工单时，推荐在 `receipt`/`deliver`/`accept`/`reject` 操作中带上 `--as <lane>` 显式声明身份，避免环境变量漂移。
+- [ ] 本轮次我**已执行过** `baton status`（执行方冷启动用 `baton status --for <本方 lane|target>`，同样算），且完整输出仍在当前上下文中。
 - [ ] 如果用户指定了 `<ID>`，该 `<ID>` **必须**出现在「待办（`draft`/`forwarded`，见上唯一定义）」清单内。
 - [ ] 落手判定成立：仓内 → `to_lane == 当前 lane` 且为待办（draft/forwarded）；跨仓 → 落在目标收件箱且未闭环。
 - [ ] 当前动作符合强制操作序列（见下）。
-- [ ] 若要 `receipt`，status 快照距今 **< 60 分钟**。超时必须重跑。
+- [ ] 若要 `receipt`，status 快照距今 **< 60 分钟**。超时必须重跑（`reject` 与 `reopen` 操作享有安全下车通道，免受快照超时拦截）。
 - [ ] 若要 `receipt`，预见 `-n` 能满足 check 要求（非空正文 + 含 `##` 节 + 含「状态 / 结论」锚节；仓内必附 `--evidence-paths` / `--evidence-commits` / `--evidence-note`）。
 - [ ] 若本轮有发起交接（出站）：必须挂起后台监听探针（`baton forward <ID> --wait` 或后台 `baton wait <ID>`）。**严禁以「执行方是外部客户端/等不到回执/会空耗超时」为由擅自跳过后台监听**；Baton 基于底层文件系统事件总线（`fs.watch`），任何客户端执行 `deliver` 均可毫秒级感知唤醒。
 - [ ] 若本轮有发起交接（出站）：**回复最末块固定为交接提示词（由本地 AI 根据用户当前语言自适应呈现：中文用 `## 交接提示词`，英文用 `## Baton Pass Prompt`）**。标题、描述说明与具体的接单指令必须严格分离，提示词置于独立代码块（```text）中，方便人类一键复制（其后无任何正文）。执行方提交回执（入站）时，因发起方已挂起后台探针自动唤醒，无需再写回执提示词。
@@ -41,7 +42,10 @@ CLI 已有 60 分钟新鲜度门禁（receipt/accept/reject 时拦）和 check �
    `baton receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"`
    （或原子一步直达：`baton receipt <ID> --deliver -n "..." --evidence-paths "..."`）。
    - **Audit 身份与 Nonce 必填**：`to_lane=audit` 提交回执时必须携带系统签发的防伪挑战令牌 `--audit-nonce "<nonce>"`（或在 frontmatter 写入 `audit_nonce`）；禁止伪造或跨工单复用。
-   - **受阻与未完成处理**：因外部环境（如真机缺席）受阻或验收未通过时，必须如实标记 `INCOMPLETE / NO-GO`，禁止虚假 deliver 或伪造 PASS；此时可保持在受阻状态等待发起方补充条件，或由审计方直接执行 `baton reject <ID> -n "<缺失条件>" --by audit` 退回发起方整改并自动轮转 Nonce。
+   - **受阻与未完成处理（审计 NO-GO 唯一合法操作序列）**：
+     - **直接驳回退回（推荐标准路径）**：因外部环境（如真机缺席）受阻或验收判据未通过时，审计方直接运行 `baton reject <ID> -n "<缺失条件/未通过判据>" --by audit`。系统原子创建/更新驳回记录、标记 `needs_change=true`、自动轮转生成新 Audit Nonce 并将工单打回发起方整改（消除对 `forwarded` 静默跳过）。
+     - **登记受阻回执（两步法路径）**：先提交回执 `baton receipt <ID> -n "## 状态 / 结论\n- **结论**：INCOMPLETE / NO-GO\n..." --audit-nonce "<nonce>" --evidence-note "<说明>"`（工单分流至 `recvBlocked`，严禁 `deliver`），随后运行 `baton reject <ID> -n "..." --by audit` 打回发起方。
+     - **严禁行为**：未通过/受阻时严禁执行 `baton deliver`；严禁伪造 PASS；普通实现方严禁调用 `reject`。
    - 无代码变动用 `--evidence-note "<说明>"`。
 6. `baton check <id>`（精准核验当前工单证据与锚节合规，exit 0；若检测到历史 needs_change 漂移可使用 `baton check <id> --fix` 自动对齐）
 7. **终态交付与会话收尾**：`baton deliver <ID>`（仅在全部判据实测通过且自检合规时执行；烙印 delivered 并触发平息缓冲，发起方探针平息后 Exit 0 唤醒独立验收；INCOMPLETE / NO-GO 严禁 deliver）。
@@ -76,7 +80,7 @@ CLI 已有 60 分钟新鲜度门禁（receipt/accept/reject 时拦）和 check �
 - 用“上次处理的就是它”“用户提过 ID”替代查状态
 - 用 `draft/forwarded` 判定要不要开工
 - 用 mtime 推断归属（仓内用 frontmatter `workspace`）
-- 执行方调用 `accept/reject`
+- 普通实现/执行方（impl、design 等业务方）调用 `accept/reject`（执行方只提交回执与终态交付，严禁越权验收或驳回；仅发起方或审计方 `to_lane=audit` 可裁决 accept/reject）
 - 同仓提示词 / 回执交付行出现**项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」「请收 Tappy 回执」）——一律用自然角色（实现方 / 审计方 / 架构设计方或 `lane_labels`，v2.13）
 - 发起方**自填回执 / 未收到接收方真实回执前预填**（Anti-Self-Closing，v2.13）：窗口声明 `HANDOFF_LANE=<本方 lane>` 后，引擎据身份硬拒越界 / 自填；接收方 `to_lane` 才写得回执，发起方 `from_lane` 只收不写
 - receipt 只写「已处理」「done」「ok」等无要素描述
