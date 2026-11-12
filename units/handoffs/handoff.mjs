@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.26.0';
+const BATON_VERSION = '2.27.0';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -428,8 +428,9 @@ const RECEIPT_PROMPT_SINCE = '2026-10-13';
 /** 取回执中所有名为 <title>（允许后缀）的 ## 节的**正文行数组**（不含标题行）。
  *  逐行切分实现：跨语言可移植，且不受 JS 无 \Z、$ 受 m 标志影响等正则方言差异坑影响。 */
 function receiptSections(raw, title) {
-  const lines = String(raw || '').split('\n');
-  const headRe = new RegExp('^##[ \\t]*' + title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const norm = String(raw || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
+  const lines = norm.split('\n');
+  const headRe = new RegExp('^##[ \\t]*.*(?:' + title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'i');
   const anyHeadRe = /^##[ \t]/;
   const out = [];
   for (let i = 0; i < lines.length; i++) {
@@ -519,10 +520,11 @@ function evidenceFM(ev) {
 // evidence 校验：problems=阻断，warnings=不阻断提示。requireEvidence 仅仓内强制声明。
 function evidenceProblems(ev, date, ctx, problems, warnings) {
   if (exemptBy(date, EVIDENCE_SINCE)) return; // 存量豁免（键由调用方传 gateDate；缺日期 ⇒ 不豁免）
+  const fileSuffix = ctx.file ? `: ${ctx.file}` : '';
   const requireEvidence = ctx.mode === 'intra-repo';
   const hasAny = ev.commits.length || ev.paths.length || ev.note;
   if (!hasAny) {
-    if (requireEvidence) problems.push('缺 evidence：仓内新回执须声明可核验证据（--evidence-paths / --evidence-commits / --evidence-note）');
+    if (requireEvidence) problems.push(`缺 evidence：仓内新回执须声明可核验证据（--evidence-paths / --evidence-commits / --evidence-note）${fileSuffix}`);
     return;
   }
   // 跨仓回执未声明 evidence_repo：cwd=Hub 并非执行方仓库（Hub 常为非 git 仓），拿 Hub 的 git
@@ -540,7 +542,7 @@ function evidenceProblems(ev, date, ctx, problems, warnings) {
   }
   for (const sha of ev.commits) {
     try { execFileSync('git', ['-C', root, 'cat-file', '-e', sha], { stdio: 'ignore' }); }
-    catch { problems.push(`evidence 提交不存在: ${sha}（root=${root}）`); }
+    catch { problems.push(`evidence 提交不存在: ${sha}（root=${root}）${fileSuffix}`); }
   }
   for (const rel of ev.paths) {
     let ok = false;
@@ -549,12 +551,12 @@ function evidenceProblems(ev, date, ctx, problems, warnings) {
       const resolved = path.resolve(rootAbs, rel);
       // AR-F5：path.join 不 confine，足够深的 ../ 可逃逸到仓外存在的文件而蒙混过关
       if (resolved !== rootAbs && !resolved.startsWith(rootAbs + path.sep)) {
-        problems.push(`evidence 路径越出仓根: ${rel}（root=${root}）`);
+        problems.push(`evidence 路径越出仓根: ${rel}（root=${root}）${fileSuffix}`);
         continue;
       }
       ok = fs.existsSync(resolved);
     } catch {}
-    if (!ok) problems.push(`evidence 路径不存在: ${rel}（root=${root}）`);
+    if (!ok) problems.push(`evidence 路径不存在: ${rel}（root=${root}）${fileSuffix}`);
   }
   // 相关性：声称提交是否真的改动了声称路径（防「真实但无关」的凑数证据）。
   // 两个先决修正（否则只会有假阳性、无法硬核）：
@@ -571,7 +573,7 @@ function evidenceProblems(ev, date, ctx, problems, warnings) {
         if (!touched.some(t => t === rel || rel.startsWith(t) || t.startsWith(rel))) {
           const msg = `evidence 提交未触及声称路径: ${ev.commits.join(',')} 均未改动 ${rel}（root=${root}）`;
           if (exemptBy(date, RELEVANCE_SINCE)) warnings.push(msg + '（存量豁免，供人工复核）');
-          else problems.push(msg);
+          else problems.push(msg + fileSuffix);
         }
       }
     } catch { /* git 不可用 / 非 git 仓 → 跳过 best-effort */ }
@@ -784,6 +786,37 @@ function isVerdictRejected(verdict) {
   return false;
 }
 
+/** 判定回执结论是否为受阻/待外部条件/未完成 */
+function isVerdictBlocked(verdict) {
+  if (!verdict) return false;
+  const s = String(verdict).trim();
+  if (/^(?:verified|accepted|passed|pass|通过|合规)\b/i.test(s)) {
+    return false;
+  }
+  if (/\b(?:incomplete|blocked|waiting|hold)\b/i.test(s) || /受阻|待条件|未完成|真机未到位|等待外部/.test(s)) {
+    return true;
+  }
+  return false;
+}
+
+/** 签发一次性高熵 Audit Nonce */
+function generateAuditNonce(id) {
+  const ymd = todayYMD();
+  const rand = crypto.randomBytes(4).toString('hex');
+  const slug = id ? id.split('-')[0] : 'audit';
+  return `AUDIT-${ymd}-${slug}-${rand}`;
+}
+
+/** 物理脱敏清洗：剥离 <thinking> 标签、<thought> 标签以及主观自辩小节 */
+function sanitizeBlindContent(rawBody) {
+  let cleaned = rawBody || '';
+  // 1. 物理清洗 <thinking>...</thinking> 与 <thought>...</thought>（含未闭合的情形）
+  cleaned = cleaned.replace(/<(?:thinking|thought)>[\s\S]*?(?:<\/(?:thinking|thought)>|$)/gi, '');
+  // 2. 物理清洗主观自辩/过程思考小节（如 ## 自辩、## 思考过程、## 辩解 等）
+  cleaned = cleaned.replace(/(?:^|\n)##\s*(?:自辩|思考过程|实现过程自辩|开发心路|心路历程|过程推演|辩解|Excuses?|Thought Process)[^\n]*\n+[\s\S]*?(?=\n##\s+|$)/gi, '\n');
+  return cleaned.trim();
+}
+
 /** 提取剔除驳回记录后的纯净正文，用于判定执行方是否有实质代码/说明整改 */
 function getCleanBody(body) {
   return (body || '')
@@ -887,6 +920,7 @@ function cmdNewIntra(args) {
   const l = lane.toLowerCase();
   const ty = type.toLowerCase();
   let ws = HUB_CONFIG.workspace_default || 'same';
+  let fromLane = process.env.HANDOFF_LANE || '';
   const restClean = [];
   for (let i = 0; i < rest.length; i++) {
     if ((rest[i] === '--workspace' || rest[i] === '-ws') && rest[i + 1]) {
@@ -895,6 +929,11 @@ function cmdNewIntra(args) {
         ws = candidate;
       }
       i++;
+    } else if ((rest[i] === '--from' || rest[i] === '-from') && rest[i + 1]) {
+      fromLane = rest[i + 1].toLowerCase();
+      i++;
+    } else if (rest[i].startsWith('--from=')) {
+      fromLane = rest[i].slice('--from='.length).toLowerCase();
     } else {
       restClean.push(rest[i]);
     }
@@ -910,8 +949,6 @@ function cmdNewIntra(args) {
   const auditNote = (l === 'audit')
     ? '\n**审计动作契约（v2.13 · to_lane=audit）**：你即审计方，**严禁仅静态读码**——必须在终端**独立执行**下方「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明，不采信）。'
     : '';
-  // from_lane = 发起通道；优先取本窗口声明的 HANDOFF_LANE 环境变量（提案 §7.4）
-  const fromLane = process.env.HANDOFF_LANE || '';
   const fm = {
     handoff_id: id,
     mode: 'intra-repo',
@@ -926,6 +963,9 @@ function cmdNewIntra(args) {
     created: todayISO(),
     closed: '',
   };
+  if (l === 'audit') {
+    fm.audit_nonce = generateAuditNonce(id);
+  }
   const body = H_BODY_INTRA.replaceAll('<TITLE>', title).replaceAll('<LANE>', l).replaceAll('<WS>', ws).replaceAll('<AUDIT_NOTE>', auditNote);
   writeFM(file, fm, body);
   const isZh = detectLang() === 'zh';
@@ -1082,12 +1122,28 @@ function cmdAccept(args) {
 
     const rBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
 
-    // 回执结论门禁（P0-1 修复）：回执最新结论为 REJECTED / NO-GO 等不通过字样，硬拒闭环
+    // 回执结论门禁（P0-1 修复）：回执最新结论为 REJECTED / NO-GO / INCOMPLETE 等不通过或受阻字样，硬拒闭环
     const concl = extractConclusion(rBody);
-    if (isVerdictRejected(concl)) {
-      console.error(`❌ 回执结论不通过：回执当前结论为「${concl}」，不可闭环。`);
+    if (isVerdictRejected(concl) || isVerdictBlocked(concl)) {
+      console.error(`❌ 回执结论未通过/受阻：回执当前结论为「${concl}」，不可闭环。`);
       console.error(`   若已完成整改，请执行方更新回执结论并重新交付；若需执行方整改，请执行 baton reject ${id} -n "<驳回理由>"。`);
       process.exit(1);
+    }
+
+    // 审计防伪令牌门禁：to_lane=audit 必须携带签发的一致 Audit Nonce
+    if (MODE === 'intra-repo' && String(fm.to_lane || '').toLowerCase() === 'audit') {
+      if (fm.audit_nonce && (!rFm.audit_nonce || rFm.audit_nonce !== fm.audit_nonce)) {
+        console.error(`❌ 审计防伪门禁：回执记录的 Audit Nonce (${rFm.audit_nonce || '空'}) 与工单签发令牌 (${fm.audit_nonce}) 不一致，拒绝闭环。`);
+        process.exit(1);
+      }
+    }
+
+    // 双盲声明防伪核验：若闭环说明或回执声称双盲，核实是否确已物理脱敏
+    const noteAndVerdict = ((note || '') + ' ' + (concl || '')).toLowerCase();
+    if (noteAndVerdict.includes('双盲') || noteAndVerdict.includes('double-blind') || noteAndVerdict.includes('double blind')) {
+      if (fm.blind !== true && rFm.blind !== true) {
+        console.warn(`⚠️ [双盲声明核验] 验收说明或回执中声称了双盲，但该工单在派发转递时未设置 blind: true（未执行物理脱敏）。请避免将非物理脱敏任务表述为物理双盲。`);
+      }
     }
 
     // 未决变更门禁（P1-4 修复）：工单或回执仍标记 needs_change=true，禁止直接闭环
@@ -1143,9 +1199,11 @@ function cmdAccept(args) {
 function cmdReject(args) {
   const noteIdx = args.indexOf('-n');
   const note = noteIdx !== -1 ? args[noteIdx + 1]?.trim() : undefined;
-  const id = args.find((a, i) => !a.startsWith('-') && (noteIdx === -1 || i !== noteIdx + 1));
+  const byIdx = args.indexOf('--by');
+  const byArg = byIdx !== -1 ? args[byIdx + 1]?.trim() : undefined;
+  const id = args.find((a, i) => !a.startsWith('-') && (noteIdx === -1 || i !== noteIdx + 1) && (byIdx === -1 || i !== byIdx + 1));
   if (!id || !note) {
-    console.error('用法: handoff reject <id> -n "<驳回理由>"');
+    console.error('用法: handoff reject <id> -n "<驳回理由>" [--by <lane>]');
     console.error('驳回门禁：审计不通过必须写清驳回理由（缺什么 / 差在哪），无理由不允许退回。');
     process.exit(2);
   }
@@ -1157,7 +1215,25 @@ function cmdReject(args) {
     const rawH = fs.readFileSync(file, 'utf8');
     const hFm = readFM(rawH);
     const st = hFm?.status;
-    if (st === 'draft') {
+
+    // 身份门禁：允许发起方驳回执行方交付，亦允许审计方（to_lane=audit）对被审工单给出驳回裁决
+    let cur = (byArg || process.env.HANDOFF_LANE || '').toLowerCase();
+    if (MODE === 'intra-repo') {
+      const fromLane = String(hFm?.from_lane || '').toLowerCase();
+      const toLane = String(hFm?.to_lane || '').toLowerCase();
+      if (!cur) {
+        console.error(`❌ 越界驳回：未声明 HANDOFF_LANE。请在窗口声明 export HANDOFF_LANE=${fromLane || toLane} 或使用 --by <lane> 后执行。`);
+        process.exit(1);
+      }
+      const isFromLane = (cur === fromLane);
+      const isAuditor = (cur === toLane && toLane === 'audit');
+      if (!isFromLane && !isAuditor) {
+        console.error(`❌ 越界驳回：当前窗口 lane=${cur} 既非发起方 from_lane=${fromLane}，亦非审计方 to_lane=${toLane}。驳回仅允许由发起方或审计方执行。`);
+        process.exit(1);
+      }
+    }
+
+    if (st === 'draft' && !(hFm?.to_lane === 'audit' && cur === 'audit')) {
       console.error(`❌ 交接 ${id} 当前为 draft，尚无登记回执或交付，不能驳回${fs.existsSync(path.join(R_DIR, `${id}-resp.md`)) ? `；检测到回执文件，请先 baton deliver ${id} 交付后再核验驳回` : ''}。`);
       process.exit(1);
     }
@@ -1168,20 +1244,6 @@ function cmdReject(args) {
     if (st === 'forwarded') {
       console.log(`↩️ ${id} 已是 forwarded（待执行方继续改），跳过。`);
       return;
-    }
-
-    // 身份门禁：只有发起方可以驳回工单
-    if (MODE === 'intra-repo') {
-      const fromLane = String(hFm?.from_lane || '').toLowerCase();
-      const cur = (process.env.HANDOFF_LANE || '').toLowerCase();
-      if (!cur) {
-        console.error(`❌ 越界驳回：未声明 HANDOFF_LANE。驳回是发起方的特权，请在发起方窗口（lane=${fromLane}）声明 HANDOFF_LANE=${fromLane} 后执行。`);
-        process.exit(1);
-      }
-      if (cur !== fromLane) {
-        console.error(`❌ 越界驳回：当前窗口 lane=${cur} 不是发起方 from_lane=${fromLane}。只有发起方有权驳回。`);
-        process.exit(1);
-      }
     }
 
     // P0-a（信息面）：reject 前把回执内容门禁发现的问题打出来，辅助审计判定（不阻断——reject 本身即纠正动作）
@@ -1211,11 +1273,13 @@ function cmdReject(args) {
       }
       // 回执清空交付状态并标记需整改
       setFM(rFile, { delivered_at: '', delivered_by_lane: '', needs_change: true });
+    } else {
+      fs.writeFileSync(rFile, `---\nhandoff_id: ${id}\nmode: ${MODE}\nfrom_lane: ${hFm?.to_lane || 'audit'}\nto_lane: ${hFm?.from_lane || 'impl'}\nneeds_change: true\ndate: ${todayISO()}\n---\n\n## 状态 / 结论\n- **结论**：REJECTED / NO-GO\n- **说明**：工单被审计方直接驳回退回整改。\n\n## 驳回记录\n- 日期：${todayISO()}\n- 理由：${note}\n`, 'utf8');
     }
 
     const rejectTime = new Date().toISOString();
     const curCount = Number(hFm?.reject_count || 0) + 1;
-    setFM(file, {
+    const updateReject = {
       status: 'forwarded',
       delivered_at: '',
       accepted_at: '',
@@ -1223,8 +1287,20 @@ function cmdReject(args) {
       rejected_receipt_hash: rHash,
       reject_count: curCount,
       needs_change: true
+    };
+    if (MODE === 'intra-repo' && String(hFm?.to_lane || '').toLowerCase() === 'audit') {
+      updateReject.audit_nonce = generateAuditNonce(id);
+    }
+    setFM(file, updateReject);
+    logStateJournal(id, 'reject', {
+      from_status: st,
+      to_status: 'forwarded',
+      rejected_at: rejectTime,
+      note,
+      reject_count: curCount,
+      rejected_by: cur,
+      audit_nonce: updateReject.audit_nonce
     });
-    logStateJournal(id, 'reject', { from_status: st, to_status: 'forwarded', rejected_at: rejectTime, note, reject_count: curCount });
     console.log(`✅ 已驳回退回: ${id} → forwarded（驳回理由已写入回执文件）`);
   });
 }
@@ -1262,8 +1338,12 @@ function cmdReopen(args) {
     const now = new Date().toISOString();
     const appended = content.replace(/\n*$/, '\n') + `\n## 重开记录\n- 日期：${todayISO()}\n- 理由：${note}\n`;
     fs.writeFileSync(file, appended, 'utf8');
-    setFM(file, { status: 'forwarded', closed: '', accepted_at: '', delivered_at: '', reopened_at: now, needs_change: true });
-    logStateJournal(id, 'reopen', { from_status: 'closed', to_status: 'forwarded', reopened_at: now, note });
+    const updateReopen = { status: 'forwarded', closed: '', accepted_at: '', delivered_at: '', reopened_at: now, needs_change: true };
+    if (MODE === 'intra-repo' && String(fm.to_lane || '').toLowerCase() === 'audit') {
+      updateReopen.audit_nonce = generateAuditNonce(id);
+    }
+    setFM(file, updateReopen);
+    logStateJournal(id, 'reopen', { from_status: 'closed', to_status: 'forwarded', reopened_at: now, note, audit_nonce: updateReopen.audit_nonce });
     console.log(`✅ 已重开交接: ${id} → forwarded（状态已打回，验收与闭环时间戳已清除，重开理由已记录）`);
   });
 }
@@ -1271,8 +1351,9 @@ function cmdReopen(args) {
 /** 写回执文件（v2.25 · 保护既有回执、备份防丢失、继承驳回记录）。 */
 function writeReceiptFile(rFile, rFm, note, skeleton) {
   if (note !== undefined) {
+    const cleanNote = typeof note === 'string' ? note.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n') : note;
     if (!fs.existsSync(rFile)) {
-      writeFM(rFile, { ...rFm, date: todayISO() }, ensureTrailingNewline(note));
+      writeFM(rFile, { ...rFm, date: todayISO() }, ensureTrailingNewline(cleanNote));
       return;
     }
     const oldRaw = fs.readFileSync(rFile, 'utf8');
@@ -1286,9 +1367,9 @@ function writeReceiptFile(rFile, rFm, note, skeleton) {
     } catch {}
 
     // 保护旧回执中的「## 驳回记录」：若新 note 未包含驳回记录，自动继承保留 (P0-2)
-    let finalBody = ensureTrailingNewline(note);
+    let finalBody = ensureTrailingNewline(cleanNote);
     const rejRecord = extractRejectionRecord(oldBody);
-    if (rejRecord && !extractRejectionRecord(note)) {
+    if (rejRecord && !extractRejectionRecord(cleanNote)) {
       finalBody = finalBody.replace(/\n*$/, '\n\n') + rejRecord + '\n';
     }
 
@@ -1303,12 +1384,32 @@ function writeReceiptFile(rFile, rFm, note, skeleton) {
   setFM(rFile, rFm);
 }
 
-/** 从回执正文抽取一行「结论」摘要（仓内回执交付行用；取「## 结论」节首个非空非标题/列表行）。 */
+/** 从回执正文抽取一行「结论」摘要（仓内回执交付行用；优先提取「- **结论**：...」或首个非空行）。 */
 function extractConclusion(raw) {
   if (!raw) return '';
-  for (const t of ['结论', 'Conclusion', 'Verdict', 'Status', '状态']) for (const body of receiptSections(raw, t)) {
-    const line = body.split('\n').map(s => s.trim()).find(s => s && !s.startsWith('#') && !s.startsWith('>') && !s.startsWith('-'));
-    if (line) return line.length > 40 ? line.slice(0, 40) + '…' : line;
+  for (const t of ['结论', 'Conclusion', 'Verdict', 'Status', '状态']) {
+    for (const body of receiptSections(raw, t)) {
+      const lines = body.split('\n').map(s => s.trim()).filter(Boolean);
+      for (const l of lines) {
+        if (l.startsWith('#')) continue;
+        const match = l.match(/^(?:[-*]\s*)?(?:\*\*)?(?:结论|Conclusion|Verdict|Status|状态)(?:\*\*)?[：:]\s*(.*)$/i);
+        if (match && match[1]) {
+          const val = match[1].trim();
+          return val.length > 50 ? val.slice(0, 50) + '…' : val;
+        }
+      }
+      for (const l of lines) {
+        if (l.startsWith('#') || l.startsWith('>')) continue;
+        const listMatch = l.match(/^[-*]\s+(.*)$/);
+        if (listMatch && listMatch[1] && !listMatch[1].startsWith('**说明**') && !listMatch[1].startsWith('**Note**')) {
+          const val = listMatch[1].trim();
+          return val.length > 50 ? val.slice(0, 50) + '…' : val;
+        }
+        if (!l.startsWith('-') && !l.startsWith('*')) {
+          return l.length > 50 ? l.slice(0, 50) + '…' : l;
+        }
+      }
+    }
   }
   return '';
 }
@@ -1345,7 +1446,10 @@ function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
       console.log(`请【${toRole}】查收【${fromRole}】回执 [${ticketId}]：${display}（已交付 · 需发起方改动：${flag}）`);
       console.log(`\`\`\`\n`);
     } else {
-      console.log(`\n✅ 仓内回执已登记为草稿 [${ticketId}]（status: received）。注意：还需 baton deliver ${ticketId} 才会唤醒发起方。\n`);
+      const waitNotice = needsChange
+        ? `（status: received · 需整改/受阻待处理，严禁 deliver）`
+        : `（status: received）。注意：自检全通后还需 baton deliver ${ticketId} 才会唤醒发起方。`;
+      console.log(`\n✅ 仓内回执已登记为草稿 [${ticketId}]${waitNotice}\n`);
     }
     return;
   }
@@ -1358,7 +1462,9 @@ function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
 
 function cmdReceipt(args) {
   const shouldDeliver = args.includes('--deliver');
-  const needsChange = args.includes('--needs-change');
+  const hasNeedsChange = args.includes('--needs-change');
+  const hasNoNeedsChange = args.includes('--no-needs-change');
+  const auditNonceInput = flagValue(args, '--audit-nonce');
   const noteIdx = args.indexOf('-n');
   const note = noteIdx !== -1 ? args[noteIdx + 1]?.trim() : undefined;
   // evidence flags（P0-c）：CLI 传入可核验证据，落进 frontmatter 供门禁/check 校验
@@ -1369,11 +1475,11 @@ function cmdReceipt(args) {
     note: flagValue(args, '--evidence-note'),
   };
   // 稳健取 id：跳过「带值 flag」的值位（-n 与 evidence 系列），避免把 flag 值误当 id
-  const valFlags = ['-n', '--evidence-commits', '--evidence-paths', '--evidence-repo', '--evidence-note'];
+  const valFlags = ['-n', '--evidence-commits', '--evidence-paths', '--evidence-repo', '--evidence-note', '--audit-nonce'];
   const valueIdx = new Set();
   for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
   const id = args.find((a, i) => !a.startsWith('-') && !valueIdx.has(i));
-  if (!id) { console.error('用法: handoff receipt <id> [-n "<回执正文>"] [--deliver] [--needs-change] [--evidence-paths "a,b"] [--evidence-commits "sha"] [--evidence-repo key] [--evidence-note "..."]'); process.exit(2); }
+  if (!id) { console.error('用法: handoff receipt <id> [-n "<回执正文>"] [--deliver] [--needs-change] [--no-needs-change] [--audit-nonce "<nonce>"] [--evidence-paths "a,b"] [--evidence-commits "sha"] [--evidence-repo key] [--evidence-note "..."]'); process.exit(2); }
   const hFile = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(hFile)) { console.error('找不到交接: ' + hFile); process.exit(1); }
   assertStatusFresh('receipt');
@@ -1421,11 +1527,71 @@ function cmdReceipt(args) {
         process.exit(1);
       }
     }
-    const evFM = evidenceFM(evidenceFlags);
+
     const rFile = path.join(R_DIR, `${id}-resp.md`);
+    let existingRFm = null;
+    let existingRBody = '';
+    if (fs.existsSync(rFile)) {
+      try {
+        const rRaw = fs.readFileSync(rFile, 'utf8');
+        existingRFm = readFM(rRaw) || {};
+        existingRBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
+      } catch {}
+    }
+    const bodyToCheck = note !== undefined ? note : existingRBody;
+    const concl = extractConclusion(bodyToCheck);
+
+    // 严谨计算 needs_change：明确入参 > 显式新正文结论 > 既有回执 frontmatter > 存量正文结论 > 工单继承
+    let needsChange = false;
+    if (hasNeedsChange) {
+      needsChange = true;
+    } else if (hasNoNeedsChange) {
+      needsChange = false;
+    } else if (note !== undefined && concl) {
+      needsChange = (isVerdictRejected(concl) || isVerdictBlocked(concl));
+    } else if (existingRFm && existingRFm.needs_change !== undefined) {
+      needsChange = Boolean(existingRFm.needs_change);
+    } else if (isVerdictRejected(concl) || isVerdictBlocked(concl)) {
+      needsChange = true;
+    } else if (hFm && hFm.needs_change !== undefined) {
+      needsChange = Boolean(hFm.needs_change);
+    }
+
+    // 审计防伪门禁 (Audit Nonce)：针对 to_lane=audit 实施任务绑定与防伪核验
+    let finalAuditNonce = auditNonceInput || (existingRFm && existingRFm.audit_nonce) || '';
+    if (MODE === 'intra-repo' && String(hFm?.to_lane || '').toLowerCase() === 'audit') {
+      let expectedNonce = hFm.audit_nonce;
+      if (!expectedNonce) {
+        // 存量工单或未初始化：补签令牌并写入工单
+        expectedNonce = generateAuditNonce(id);
+        setFM(hFile, { audit_nonce: expectedNonce });
+        console.log(`ℹ️ 补发审计防伪令牌 (Audit Nonce): ${expectedNonce}`);
+      }
+      if (!finalAuditNonce) {
+        console.error(`❌ 审计防伪门禁：工单 to_lane=audit 必须携带系统签发的 Audit Nonce。`);
+        console.error(`   当前工单签发令牌：${expectedNonce}（可通过 baton show ${id} 查看）。`);
+        console.error(`   请使用 --audit-nonce "${expectedNonce}" 提交，或在回执 frontmatter 写入 audit_nonce: ${expectedNonce}。`);
+        process.exit(1);
+      }
+      if (finalAuditNonce !== expectedNonce) {
+        console.error(`❌ 审计防伪门禁：提供的 Audit Nonce「${finalAuditNonce}」与该工单签发的「${expectedNonce}」不匹配，拒绝跨工单复用或伪造令牌。`);
+        process.exit(1);
+      }
+    }
+
+    const evFM = evidenceFM(evidenceFlags);
     if (MODE === 'intra-repo') {
       // 仓内回执：方向由 frontmatter 的 from_lane / to_lane 决定，不写跨仓专属字段；date 补齐（与骨架五字段一致）
-      const rFm = { handoff_id: id, mode: 'intra-repo', from_lane: hFm.to_lane || '', to_lane: hFm.from_lane || '', needs_change: needsChange, ...evFM };
+      const rFm = {
+        handoff_id: id,
+        mode: 'intra-repo',
+        from_lane: hFm.to_lane || '',
+        to_lane: hFm.from_lane || '',
+        needs_change: needsChange,
+        ...evFM
+      };
+      if (finalAuditNonce) rFm.audit_nonce = finalAuditNonce;
+      if (hFm.blind) rFm.blind = true;
       // 记录撰写方 lane（防提前闭环的耐久证据）：闭环/check 侧可据此核验回执确由接收方撰写，非发起方自填。
       if (process.env.HANDOFF_LANE) rFm.author_lane = process.env.HANDOFF_LANE;
       writeReceiptFile(rFile, rFm, note, receiptStubIntra(id, hFm.from_lane || ''));
@@ -1433,15 +1599,24 @@ function cmdReceipt(args) {
         cmdDeliver([id]);
         return;
       }
-      if (st === 'received') {
-        console.log(`↩️ ${id} 已是 received，回执已登记，跳过翻状态。`);
+
+      setFM(hFile, { status: 'received', needs_change: needsChange });
+      logStateJournal(id, 'receipt', {
+        from_status: st,
+        to_status: 'received',
+        needs_change: needsChange,
+        audit_nonce: finalAuditNonce || undefined,
+        verdict: concl || undefined
+      });
+      console.log(`✅ 已登记仓内回执: ${rFile}`);
+      console.log(`   交接 ${id} 状态更新为 received${needsChange ? '（需整改 / 未通过）' : ''}`);
+
+      if (needsChange || isVerdictRejected(concl) || isVerdictBlocked(concl)) {
+        console.log(`\n⚠️ 提示：回执已登记（status: received），结论为未通过/需改动（needs_change: true）。`);
+        console.log(`   工单处于待整改/受阻状态，等待发起方处理或补充外部条件。严禁在未就绪时执行 baton deliver！\n`);
       } else {
-        setFM(hFile, { status: 'received', needs_change: needsChange });
-        logStateJournal(id, 'receipt', { from_status: st, to_status: 'received', needs_change: needsChange });
-        console.log(`✅ 已登记仓内回执: ${rFile}`);
-        console.log(`   交接 ${id} 状态翻为 received${needsChange ? '（需改动）' : ''}`);
+        console.log(`\n💡 提示：回执已就绪（status: received）。注意：还需 baton deliver ${id} 才会唤醒发起方！自检全过并收尾时请运行该命令。\n`);
       }
-      console.log(`\n💡 提示：回执已就绪（status: received）。注意：还需 baton deliver ${id} 才会唤醒发起方！自检全过并收尾时请运行该命令。\n`);
       printReceiptDeliveryLine(rFile, needsChange, false);
       return;
     }
@@ -1454,15 +1629,16 @@ function cmdReceipt(args) {
       cmdDeliver([id]);
       return;
     }
-    if (st === 'received') {
-      console.log(`↩️ ${id} 已是 received，回执已登记，跳过翻状态。`);
+    setFM(hFile, { status: 'received', needs_iggle_change: needsChange });
+    logStateJournal(id, 'receipt', { from_status: st, to_status: 'received', needs_change: needsChange, verdict: concl || undefined });
+    console.log(`✅ 已登记回执: ${rFile}`);
+    console.log(`   交接 ${id} 状态更新为 received${needsChange ? '（需发起方改动）' : ''}`);
+
+    if (needsChange || isVerdictRejected(concl) || isVerdictBlocked(concl)) {
+      console.log(`\n⚠️ 提示：回执已登记（status: received），结论为需发起方改动。严禁在未通过情况下执行 deliver！\n`);
     } else {
-      setFM(hFile, { status: 'received', needs_iggle_change: needsChange });
-      logStateJournal(id, 'receipt', { from_status: st, to_status: 'received', needs_change: needsChange });
-      console.log(`✅ 已登记回执: ${rFile}`);
-      console.log(`   交接 ${id} 状态翻为 received${needsChange ? '（需发起方改动）' : ''}`);
+      console.log(`\n💡 提示：回执已登记（status: received）。注意：还需 baton deliver ${id} 才会唤醒发起方！自检全过并收尾时请运行该命令。\n`);
     }
-    console.log(`\n💡 提示：回执已登记（status: received）。注意：还需 baton deliver ${id} 才会唤醒发起方！自检全过并收尾时请运行该命令。\n`);
     printReceiptDeliveryLine(rFile, needsChange, false);
   });
 }
@@ -1528,19 +1704,29 @@ function cmdDeliver(args) {
     // 内容门禁校验
     const rBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
 
+    // 结论与受阻门禁：结论为未通过/受阻或 needs_change=true 时，硬阻断交付
+    const concl = extractConclusion(rBody);
+    if (isVerdictRejected(concl)) {
+      console.error(`❌ 拒绝交付：回执当前结论为「${concl}」，整改或验收未通过，禁止交付。请整改更新结论后再交付。`);
+      process.exit(1);
+    }
+    if (isVerdictBlocked(concl)) {
+      console.error(`❌ 拒绝交付：回执当前结论为「${concl}」（受阻/外部条件未就绪），禁止作为终态交付。`);
+      console.error(`   请待外部条件就绪后重新复验并更新结论，或由发起方/审计方退回整改。`);
+      process.exit(1);
+    }
+    if (rFm.needs_change === true || hFm?.needs_change === true) {
+      console.error(`❌ 拒绝交付：工单或回执仍标记 needs_change=true，整改未闭环，禁止作为终态交付。`);
+      process.exit(1);
+    }
+
     // 驳回封印门禁（S1 · P0-1 修复）：防空交付洗白
     if (hFm?.rejected_at) {
-      // 1. 检查回执正文自驳回后是否有实质变动（对比纯净正文，排除驳回记录本身）
+      // 检查回执正文自驳回后是否有实质变动（对比纯净正文，排除驳回记录本身）
       const curHash = hashContent(getCleanBody(rBody));
       if (hFm.rejected_receipt_hash && curHash === hFm.rejected_receipt_hash) {
         console.error(`❌ 驳回封印：交接 ${id} 曾于 ${hFm.rejected_at} 被驳回，当前回执正文与驳回时一致，未发生实质整改，禁止空交付。`);
         console.error(`   请针对驳回意见完成整改并更新回执正文后再执行 deliver。`);
-        process.exit(1);
-      }
-      // 2. 检查结论是否仍为不通过字样
-      const concl = extractConclusion(rBody);
-      if (isVerdictRejected(concl)) {
-        console.error(`❌ 驳回封印：回执当前结论仍为「${concl}」，整改未完成，禁止交付。请整改更新结论后再交付。`);
         process.exit(1);
       }
     }
@@ -1650,10 +1836,41 @@ async function cmdForward(args) {
     process.exit(1);
   }
   const fm = readFM(fs.readFileSync(file, 'utf8'));
+  const isBlind = args.includes('--blind') || args.includes('-b');
+  const toLane = String(fm?.to_lane || fm?.target || '').toLowerCase();
+  const isZh = detectLang() === 'zh';
+
   if (fm.status === 'received' || fm.status === 'delivered' || fm.status === 'closed') {
     console.log(`⚠️ 交接 ${id} 当前状态为 ${fm.status}，已是更靠后状态，跳过翻 forwarded。`);
   } else {
-    setFM(file, { status: 'forwarded' });
+    const forwardUpdates = { status: 'forwarded' };
+    if (MODE === 'intra-repo' && toLane === 'audit' && !fm?.audit_nonce) {
+      forwardUpdates.audit_nonce = generateAuditNonce(id);
+    }
+    if (isBlind) {
+      const rawFull = fs.readFileSync(file, 'utf8');
+      const bodyPart = rawFull.replace(/^---\n[\s\S]*?\n---\n/, '');
+      // 双盲 Fail-Closed 门禁：必须声明客观验收判据
+      if (!/(?:##\s*(?:验收判据|Criteria|Acceptance Criteria|判据))/i.test(bodyPart)) {
+        console.error(isZh
+          ? '❌ [双盲脱敏门禁] 缺少验收判据：工单未声明 ## 验收判据（双盲审计必须具备客观机器可判依据）。拒绝以双盲模式转递。'
+          : '❌ [Double-Blind Gate] Missing acceptance criteria: ticket lacks ## Acceptance Criteria. Refusing to forward in blind mode.');
+        process.exit(1);
+      }
+      const sanitizedBody = sanitizeBlindContent(bodyPart);
+      forwardUpdates.blind = true;
+      writeFM(file, { ...fm, ...forwardUpdates }, sanitizedBody);
+      console.log(isZh
+        ? `🔒 [物理双盲已生效] 已脱敏大模型思维链与主观自辩小节，工单已烙印 blind: true。`
+        : `🔒 [Double-Blind Active] Sanitized subjective thinking & excuses; ticket marked blind: true.`);
+    } else {
+      if (toLane === 'audit') {
+        console.warn(isZh
+          ? `⚠️ [双盲警示] 派发至审计方（to_lane=audit）但未指定 --blind：本工单将不会进行物理双盲脱敏（不可声称为物理双盲审计）。如需双盲，请运行: baton forward ${id} --blind [--wait]`
+          : `⚠️ [Double-Blind Notice] Dispatched to audit without --blind: ticket will not be sanitized.`);
+      }
+      setFM(file, forwardUpdates);
+    }
     console.log(`✅ 已标记转递: ${id}`);
   }
 
@@ -1747,20 +1964,24 @@ function cmdOpen(args) {
  * 不必为判断是否相关而吞掉整篇正文（P2 Path 定向：LLM 只读该份的摘要，仍按需 read 全文）。 */
 function cmdShow(args) {
   const [id] = args.filter(a => !a.startsWith('-'));
-  if (!id) { console.error('用法: handoff show <id>'); process.exit(2); }
+  if (!id) { console.error('用法: handoff show <id> [--nonce]'); process.exit(2); }
   const isResp = id.endsWith('-resp');
   const hFile = isResp ? path.join(R_DIR, `${id}.md`) : path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(hFile)) { console.error('找不到: ' + hFile); process.exit(1); }
   const raw = fs.readFileSync(hFile, 'utf8');
   const fm = readFM(raw);
+  if (args.includes('--nonce')) {
+    console.log(fm?.audit_nonce || '');
+    return;
+  }
   const body = raw.replace(/^---\n[\s\S]*?\n---\n/, '');
   console.log(`# ${id}`);
   const keys = isResp
     ? (MODE === 'intra-repo'
-        ? ['handoff_id', 'mode', 'from_lane', 'to_lane', 'needs_change', 'date', 'delivered_at', 'delivered_by_lane']
+        ? ['handoff_id', 'mode', 'from_lane', 'to_lane', 'needs_change', 'audit_nonce', 'blind', 'date', 'delivered_at', 'delivered_by_lane']
         : ['handoff_id', 'needs_iggle_change', 'from_repo', 'to_repo', 'date', 'delivered_at'])
     : (MODE === 'intra-repo'
-        ? ['mode', 'project', 'from_lane', 'to_lane', 'workspace', 'timing', 'type', 'status', 'needs_change', 'reject_count', 'created', 'rejected_at', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']
+        ? ['mode', 'project', 'from_lane', 'to_lane', 'workspace', 'timing', 'type', 'status', 'needs_change', 'audit_nonce', 'blind', 'reject_count', 'created', 'rejected_at', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']
         : ['target', 'type', 'status', 'needs_iggle_change', 'reject_count', 'created', 'rejected_at', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']);
   for (const k of keys) {
     if (fm && fm[k] !== undefined && fm[k] !== '') console.log(`- ${k}: ${fm[k]}`);
@@ -1835,11 +2056,11 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = "### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.26.0 为准）\n\n**早拦 Preflight（强制）**\n- **物理工作区与身份锚定（v2.26.0 · 强制守卫 · 严禁跨仓）**：Agent 会话严格绑定于当前宿主工作区（Active Workspace）。严禁通过 cd 越界代行外部仓角色、修改外部代码或操作外部工单状态机。若收到指向外部仓库工单（如跨仓工单/外部实现方）的指令，**必须第一时间硬性拒单**，输出跨仓交接提示词引导人类在目标仓专属 Agent 会话中派发。\n- **命令形态**：一律 `baton <op>` 或 `handoff <op>`（PATH shim → 中央引擎；幂等自愈 `baton link`）。若报 command not found：运行 `baton link`（或 `handoff link`）自愈（或通过 lab-agent-toolkit 重新 `npm link`）。\n- 调用 `show/receipt/deliver/accept/reject/check` 前，**必须先跑** `baton status`（或 `handoff status`，执行方冷启动用 `baton status --for <本方 lane|target>` 直取本方待办）且其输出在上下文中。\n- **状态语义（v2.20.0 · 五态生命周期）**：「进行中」= 未闭环（`status ≠ closed`）且归属当前方。**待办 = `draft` + `forwarded`**——落我归属即该我动工；`received` = 回执草稿已登记（待执行方交付）；`delivered` = 执行方已完成终态交付（等待发起方验收）；`closed` = 审计闭环完成。\n- **驳回封印与闭环闸门（v2.25.0 · 严禁空交付洗白）**：工单若曾被驳回（`rejected_at` 存在），执行方必须完成实质整改后方可交付（正文无实质变更的空交付硬拒）；发起方 `accept` 强校验回执结论（Verdict）与调用者身份，结论为 `REJECTED`/`NO-GO`、存在未闭驳回记录或 `needs_change=true` 时硬拒闭环；误闭环可通过 `baton reopen <ID> -n \"<理由>\"` 安全追回。\n- **终态交付与平息机制（v2.20.0 · 防抢跑竞态与会话平息）**：回执文件落盘不等于会话结束。执行方必须通过 `baton deliver <ID>`（或 `baton receipt <ID> --deliver`）显式标记终态交付；探针检测到交付信号后启动平息缓冲（Settle Window），等待执行方会话彻底收尾退出后方 Exit 0 唤醒发起方。未 deliver 之前发起方 wait 探针不唤醒、accept 硬拒闭环。发起方严禁在收到显式交付信号前提前修改 Backlog 或规划文档。\n- **物理工作树隔离（v2.21.0 · workspace: worktree）**：支持 `workspace: worktree`，自动在 `.worktrees/<id>` 下创建轻量沙箱并软链共享构建缓存（`node_modules`、`target`、`.venv`），主仓库零污染且构建零损耗。工单闭环时使用 `baton close <ID> --prune-worktree` 自动安全回收。\n- **注意力节流管道（v2.21.0 · baton throttle）**：执行方在后台长任务运行时，推荐使用 `baton throttle <ID> -- <cmd>` 包装运行。三级中断过滤机制阻断日志刷屏对人类与主控上下文的注意力劫持（仅致命错误红灯突破，常规流直接静默落盘）。\n- **无污染双盲重跑（v2.21.0 · clean-runner / baton-audit-runner）**：审计方验收时，推荐使用 `baton-audit-runner <ID>` 在干净上下文独立重跑验收判据命令，自动校验真实 Exit Code 并固化 `--evidence-commits` 与 `--evidence-paths`。\n- **监听必须性与反借口（v2.23.0 · 严禁擅跳监听）**：无论执行方是同窗口子 Agent、外部客户端（Cursor/WorkBuddy/Antigravity 等）、独立终端还是人工，`baton` 是底层文件系统事件总线（`fs.watch`），外部任何终端执行 `baton deliver` 会直接写入工单，探针能瞬间感知并唤醒。**严禁以「执行方是外部客户端/等不到回执/会空耗超时」为由擅自跳过后台监听**；发起方转递后必须挂起 `baton forward <ID> --wait`（或由宿主作为后台任务挂起 `baton wait <ID>`）。\n- 指定 ID 必须在「进行中」且归属当前方（仓内：`to_lane == 当前 lane`；跨仓：落在目标收件箱且未闭环）。找不到→停下并说明。\n- 未指定 ID 却有多条归属当前方的待办（draft/forwarded）→ 列出清单请用户点名，不擅自选。\n- receipt 前确保 status 快照 **< 60 分钟**（超时重跑；长任务收尾时 deliver 自动宽容续期）。\n- 仓内优先读 frontmatter `workspace`（same/separate/worktree），禁用 mtime 推断。\n- 执行方**只写 receipt / deliver**，**不做 accept/reject**。\n- **严禁抢跑/虚假回执**：验收判据**全部实测通过**方可提交回执与交付。执行中途遇阻、环境/多实例冲突或需讨论的中间状态，**仅记录于 reviews/ 或对话说明，严禁提交包含「已通过」的抢跑回执**。\n- 回执正文唯一源 = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`：**照抄其「回执模板（可直接复制）」骨架**（含 evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。\n- **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 `--evidence-paths \"真实文件,...\"` / `--evidence-commits \"<sha>\"`（无文件改动用 `--evidence-note \"<原因>\"`）；声称的路径须真实存在、提交须 `git cat-file -e` 可查，否则 receipt / deliver / accept / check 拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。\n- 收尾必须 `baton check`（或 `handoff check`）exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节」；存量豁免）。\n- **回复收尾（交接提示词规范）**：发起交接（出站）时，回复最末块**必须固定为交接提示词（由本地 AI 根据用户本地语言自适应呈现：中文使用 `## 交接提示词`，英文使用 `## Baton Pass Prompt`）**。标题、描述说明与具体的接单指令必须严格分离，提示词置于独立代码块（```text）中，方便人类一键复制发给接收方 Agent（其后无任何正文）。执行方交付（入站）后，因发起方已挂起后台探针自动唤醒，无需再写回执提示词。\n- **对外话术（v2.24.0 · 简洁通俗 · 强制）**：跟用户交代进度与收尾时，让人只读该段即知「谁在做、我这边还动不动」——**禁止机械罗列三要素题头填空**，精简为两行自然人话：①**我方状态**（完成项 + 我方是否还有待办）；②**后续接手**（接手角色 + 后续动作 + 人类是否需介入，如「系统会自动通知，你不用转告」）。**严禁浮夸邀功修辞与「无需转递/已闭环」纯机制缩写**。机器锚点（`## 转递提示词` 节名、`forward`/`deliver` 子命令）不变，勿改名。\n- **审计动作契约（v2.13 · to_lane=audit 强制）**：审计方（接收方 to_lane=audit）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明，不采信）。其余 lane 亦建议独立实测，但审计 lane 为硬纪律。\n- **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = `请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；`.handoff-hub.json` 的 `lane_labels` 可覆盖）。\n- **防提前闭环与双盲审计防伪（v2.16.0）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执；`to_lane=audit` 派发时自动签发一次性 `Audit Nonce`，审计回执必须携带 `--audit-nonce \"<nonce>\"`，硬性拦截同一会话自签；支持 `baton forward --blind` 物理脱敏主观思维链与自辩借口。\n\n**最小操作序列（出站 = 建/发交接 · 强制闭环）**\n1. `baton new <target|lane> <type> \"<标题>\"`（或 `handoff new ...`）并填写正文\n2. **转递并挂起后台监听（必须执行）**：\n   执行 `baton forward <ID> --wait`（多工单并发聚合监听可执行 `baton wait <id1> [id2 ...] [--any|--all]`；AI 客户端宿主进程树托管；人类终端可用 `--daemon` 脱钩；需双盲脱敏加 `--blind`）\n   ——无论同工作区还是跨工作区、内部还是外部客户端，必须启动监听探针（严禁以等不到为由跳过）；交付完成并平息后探针唤醒进行独立验收闭环。\n3. **输出交接提示词（末块规范）**：本地 AI 根据用户本地语言自适应输出，标题、描述与独立代码块分离（其后无任何正文）：\n   ## 交接提示词\n   > 直接复制下方提示词，发送给接收方 Agent 接单：\n   ```text\n   请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）\n   ```\n\n**最小操作序列（入站 = 接单/回执/交付）**\n1. `baton status --for <本方 lane|target>`（冷启动直取本方待办；全量 `baton status` 供发起方巡检）\n2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 `to_lane == 当前 lane`；跨仓 = 落在目标收件箱）→ 确认目标 ID\n3. `baton show <ID>`\n4. 按边界最小改动（仅该 lane 应改文件）\n5. 实测全过方写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → 运行 `baton receipt <ID> -n \"<正文>\" --evidence-paths \"真实文件,...\" --evidence-commits \"<sha>\"`（或原子复合命令 `baton receipt <ID> --deliver ...` 直达交付）。（若 `to_lane=audit` 须附 `--audit-nonce \"<nonce>\"`；仓内必附 evidence；无文件改动用 `--evidence-note`；中途受阻仅写 reviews/ 严禁提回执）\n6. `baton check`（核验证据与锚节合规，exit 0）\n7. **终态交付与会话收尾**：运行 `baton deliver <ID>`（烙印 delivered 并触发平息缓冲后自动唤醒发起方；会话彻底收工结束）。\n\n详见 `$(lab path handoffs)/AGENT-GUIDE.md` 获取完整版 Preflight。";
+const STUB_BODY_ZH = "### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.27.0 为准）\n\n**早拦 Preflight（强制）**\n- **物理工作区与身份锚定（v2.26.0 · 强制守卫 · 严禁跨仓）**：Agent 会话严格绑定于当前宿主工作区（Active Workspace）。严禁通过 cd 越界代行外部仓角色、修改外部代码或操作外部工单状态机。若收到指向外部仓库工单（如跨仓工单/外部实现方）的指令，**必须第一时间硬性拒单**，输出跨仓交接提示词引导人类在目标仓专属 Agent 会话中派发。\n- **命令形态**：一律 `baton <op>` 或 `handoff <op>`（PATH shim → 中央引擎；幂等自愈 `baton link`）。若报 command not found：运行 `baton link`（或 `handoff link`）自愈（或通过 lab-agent-toolkit 重新 `npm link`）。\n- 调用 `show/receipt/deliver/accept/reject/check` 前，**必须先跑** `baton status`（或 `handoff status`，执行方冷启动用 `baton status --for <本方 lane|target>` 直取本方待办）且其输出在上下文中。\n- **状态语义（v2.20.0 · 五态生命周期）**：「进行中」= 未闭环（`status ≠ closed`）且归属当前方。**待办 = `draft` + `forwarded`**——落我归属即该我动工；`received` = 回执草稿已登记（待执行方交付）；`delivered` = 执行方已完成终态交付（等待发起方验收）；`closed` = 审计闭环完成。\n- **驳回封印与闭环闸门（v2.25.0 · 严禁空交付洗白）**：工单若曾被驳回（`rejected_at` 存在），执行方必须完成实质整改后方可交付（正文无实质变更的空交付硬拒）；发起方 `accept` 强校验回执结论（Verdict）与调用者身份，结论为 `REJECTED`/`NO-GO`、存在未闭驳回记录或 `needs_change=true` 时硬拒闭环；误闭环可通过 `baton reopen <ID> -n \"<理由>\"` 安全追回。\n- **终态交付与平息机制（v2.20.0 · 防抢跑竞态与会话平息）**：回执文件落盘不等于会话结束。执行方必须通过 `baton deliver <ID>`（或 `baton receipt <ID> --deliver`）显式标记终态交付；探针检测到交付信号后启动平息缓冲（Settle Window），等待执行方会话彻底收尾退出后方 Exit 0 唤醒发起方。未 deliver 之前发起方 wait 探针不唤醒、accept 硬拒闭环。发起方严禁在收到显式交付信号前提前修改 Backlog 或规划文档。\n- **物理工作树隔离（v2.21.0 · workspace: worktree）**：支持 `workspace: worktree`，自动在 `.worktrees/<id>` 下创建轻量沙箱并软链共享构建缓存（`node_modules`、`target`、`.venv`），主仓库零污染且构建零损耗。工单闭环时使用 `baton close <ID> --prune-worktree` 自动安全回收。\n- **注意力节流管道（v2.21.0 · baton throttle）**：执行方在后台长任务运行时，推荐使用 `baton throttle <ID> -- <cmd>` 包装运行。三级中断过滤机制阻断日志刷屏对人类与主控上下文的注意力劫持（仅致命错误红灯突破，常规流直接静默落盘）。\n- **无污染双盲重跑（v2.21.0 · clean-runner / baton-audit-runner）**：审计方验收时，推荐使用 `baton-audit-runner <ID>` 在干净上下文独立重跑验收判据命令，自动校验真实 Exit Code 并固化 `--evidence-commits` 与 `--evidence-paths`。\n- **监听必须性与反借口（v2.23.0 · 严禁擅跳监听）**：无论执行方是同窗口子 Agent、外部客户端（Cursor/WorkBuddy/Antigravity 等）、独立终端还是人工，`baton` 是底层文件系统事件总线（`fs.watch`），外部任何终端执行 `baton deliver` 会直接写入工单，探针能瞬间感知并唤醒。**严禁以「执行方是外部客户端/等不到回执/会空耗超时」为由擅自跳过后台监听**；发起方转递后必须挂起 `baton forward <ID> --wait`（或由宿主作为后台任务挂起 `baton wait <ID>`）。\n- 指定 ID 必须在「进行中」且归属当前方（仓内：`to_lane == 当前 lane`；跨仓：落在目标收件箱且未闭环）。找不到→停下并说明。\n- 未指定 ID 却有多条归属当前方的待办（draft/forwarded）→ 列出清单请用户点名，不擅自选。\n- receipt 前确保 status 快照 **< 60 分钟**（超时重跑；长任务收尾时 deliver 自动宽容续期）。\n- 仓内优先读 frontmatter `workspace`（same/separate/worktree），禁用 mtime 推断。\n- 执行方**只写 receipt / deliver**，**不做 accept/reject**。\n- **严禁抢跑/虚假回执与受阻状态处理**：验收判据**全部实测通过**方可提交通过回执与终态交付。若因环境/真机缺失等外部条件受阻或实测不通过，回执必须明确标记 `INCOMPLETE` / `NO-GO` 或 `needs_change: true`，保持 received 态由发起方整改，或由审计方执行 `baton reject` 驳回退回，严禁虚假 deliver。\n- 回执正文唯一源 = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`：**照抄其「回执模板（可直接复制）」骨架**（含 evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。\n- **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 `--evidence-paths \"真实文件,...\"` / `--evidence-commits \"<sha>\"`（无文件改动用 `--evidence-note \"<原因>\"`）；声称的路径须真实存在、提交须 `git cat-file -e` 可查，否则 receipt / deliver / accept / check 拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。\n- 收尾必须 `baton check [id]`（或 `handoff check [id]`）exit 0（支持针对当前工单精准自检，全仓体检自动区分当前活跃工单与存量历史工单；支持 `baton check --fix` 自动修复历史 needs_change 一致性；回执须非空正文 + ## 节 + 结论锚节）。\n- **回复收尾（交接提示词规范）**：发起交接（出站）时，回复最末块**必须固定为交接提示词（由本地 AI 根据用户本地语言自适应呈现：中文使用 `## 交接提示词`，英文使用 `## Baton Pass Prompt`）**。标题、描述说明与具体的接单指令必须严格分离，提示词置于独立代码块（```text）中，方便人类一键复制发给接收方 Agent（其后无任何正文）。执行方交付（入站）后，因发起方已挂起后台探针自动唤醒，无需再写回执提示词。\n- **对外话术（v2.24.0 · 简洁通俗 · 强制）**：跟用户交代进度与收尾时，让人只读该段即知「谁在做、我这边还动不动」——**禁止机械罗列三要素题头填空**，精简为两行自然人话：①**我方状态**（完成项 + 我方是否还有待办）；②**后续接手**（接手角色 + 后续动作 + 人类是否需介入，如「系统会自动通知，你不用转告」）。**严禁浮夸邀功修辞与「无需转递/已闭环」纯机制缩写**。机器锚点（`## 转递提示词` 节名、`forward`/`deliver` 子命令）不变，勿改名。\n- **审计动作契约（v2.13 · to_lane=audit 强制）**：审计方（接收方 to_lane=audit）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明，不采信）。其余 lane 亦建议独立实测，但审计 lane 为硬纪律。\n- **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = `请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；`.handoff-hub.json` 的 `lane_labels` 可覆盖）。\n- **防提前闭环与双盲审计防伪（v2.27.0）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执；`to_lane=audit` 派发/重开/驳回时系统自动签发一次性 `Audit Nonce`（可通过 `baton show <ID>` 或 `baton status --for audit` 获取），审计回执必须携带 `--audit-nonce \"<nonce>\"`（或回执 frontmatter 写入 `audit_nonce`），强校验任务绑定、一次性消费与防自签防伪；支持 `baton forward --blind` 物理脱敏主观思维链与自辩借口。\n\n**最小操作序列（出站 = 建/发交接 · 强制闭环）**\n1. `baton new <target|lane> <type> \"<标题>\"`（或 `handoff new ...`）并填写正文\n2. **转递并挂起后台监听（必须执行）**：\n   执行 `baton forward <ID> --wait`（多工单并发聚合监听可执行 `baton wait <id1> [id2 ...] [--any|--all]`；AI 客户端宿主进程树托管；人类终端可用 `--daemon` 脱钩；需双盲脱敏加 `--blind`）\n   ——无论同工作区还是跨工作区、内部还是外部客户端，必须启动监听探针（严禁以等不到为由跳过）；交付完成并平息后探针唤醒进行独立验收闭环。\n3. **输出交接提示词（末块规范）**：本地 AI 根据用户本地语言自适应输出，标题、描述与独立代码块分离（其后无任何正文）：\n   ## 交接提示词\n   > 直接复制下方提示词，发送给接收方 Agent 接单：\n   ```text\n   请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）\n   ```\n\n**最小操作序列（入站 = 接单/回执/交付）**\n1. `baton status --for <本方 lane|target>`（冷启动直取本方待办；全量 `baton status` 供发起方巡检）\n2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 `to_lane == 当前 lane`；跨仓 = 落在目标收件箱）→ 确认目标 ID\n3. `baton show <ID>`\n4. 按边界最小改动（仅该 lane 应改文件）\n5. 实测全过方写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → 运行 `baton receipt <ID> -n \"<正文>\" --evidence-paths \"真实文件,...\" --evidence-commits \"<sha>\"`（或原子复合命令 `baton receipt <ID> --deliver ...` 直达交付）。（若 `to_lane=audit` 须附 `--audit-nonce \"<nonce>\"`；仓内必附 evidence；无文件改动用 `--evidence-note`；中途受阻或未通过标记 INCOMPLETE / NO-GO，严禁虚假 deliver）\n6. `baton check [id]`（核验证据与锚节合规，exit 0）\n7. **终态交付与会话收尾**：运行 `baton deliver <ID>`（烙印 delivered 并触发平息缓冲后自动唤醒发起方；会话彻底收工结束）。\n\n详见 `$(lab path handoffs)/AGENT-GUIDE.md` 获取完整版 Preflight。";
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = "### Agent Baton (Handoff) Guard Stub (Contract v2.26.0 · Details in $(lab path handoffs)/README.md)\n\n**Mandatory Preflight**\n- **Workspace Jail & Identity Pinning (v2.26.0 · Mandatory · Cross-Repo Forbidden)**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to assume external roles, edit external code, or mutate external handoffs. If an instruction references an external repository, **immediately refuse and intercept**, outputting a Baton Pass Prompt to direct execution to the target repo's dedicated agent.\n- **CLI Form**: Always use `baton <op>` or `handoff <op>`（PATH shim → central engine; self-healing with `baton link`）。If command not found: run `baton link` (or `handoff link`) or reinstall via `npm link`.\n- Before calling `show/receipt/deliver/accept/reject/check`, you **MUST** run `baton status` (or `handoff status`; executor cold start uses `baton status --for <lane|target>`) and have its output in context.\n- **Status Semantics (v2.20.0 · 5-State Lifecycle)**: \"In Progress\" = unclosed (`status ≠ closed`) and assigned to current party. **Pending = `draft` + `forwarded`**—assigned to me means I start work. `received` = receipt drafted (awaiting delivery); `delivered` = final delivery complete (awaiting audit); `closed` = audit closed.\n- **Rejection Seal & Acceptance Gate (v2.25.0 · Anti-Empty Delivery)**: If an item was rejected, the executor MUST make substantive revisions before delivery (empty resubmissions are rejected). Initiator `accept` strictly verifies Verdict—closing is forbidden if Verdict is `REJECTED`/`NO-GO`, if unresolved rejection records exist, or if `needs_change=true`. Erroneously closed items can be reopened via `baton reopen <ID> -n \"<reason>\"`.\n- **Final Delivery & Settle Mechanism (v2.20.0 · Anti-Race & Session Settle)**: Landing a receipt file does NOT equal session completion. The executor MUST explicitly mark delivery via `baton deliver <ID>` (or `baton receipt <ID> --deliver`); the wait probe initiates a settle window upon delivery, waiting for the executor session to fully conclude before waking the initiator with Exit 0. Before deliver, initiator wait probe will NOT wake up, and accept hard-fails. Initiators MUST NOT modify Backlog or specs before final delivery.\n- **Physical Worktree Isolation (v2.21.0 · workspace: worktree)**: Supports `workspace: worktree`, allocating isolated git worktrees under `.worktrees/<id>` with auto-symlinked build caches (`node_modules`, `target`, `.venv`) for zero-pollution and zero-overhead builds. Auto-prune on closure via `baton close <ID> --prune-worktree`.\n- **Attention Throttle Pipeline (v2.21.0 · baton throttle)**: Executors running long background tasks should wrap commands with `baton throttle <ID> -- <cmd>` to filter noise and protect agent/human attention (three-tier interrupt filter; only fatal red interrupts breach).\n- **Clean Double-Blind Audit Runner (v2.21.0 · clean-runner / baton-audit-runner)**: Auditors are encouraged to run `baton-audit-runner <ID>` to execute acceptance criteria in a clean context, evaluating true exit codes and generating solid evidence arguments.\n- **Mandatory Listening & Anti-Excuses (v2.23.0)**: Regardless of whether the executor is an in-session subagent, an external client (Cursor/WorkBuddy/Antigravity, etc.), a standalone terminal, or a human, baton operates on local filesystem events (fs.watch). Any baton deliver immediately wakes the probe. **Never skip background listening claiming \"executor is external client / cannot wait / will timeout\".** Initiators MUST maintain baton forward <ID> --wait (or host background task baton wait <ID>).\n- Target ID must be \"In Progress\" and assigned to current party (intra-repo: `to_lane == current lane`; cross-repo: located in target inbox and unclosed). If not found → halt and report.\n- Unspecified ID with multiple pending tasks → list candidates for human selection, do not guess.\n- Status snapshot before receipt must be **< 60 minutes old** (rerun if stale; deliver auto-refreshes during long task wrap-up).\n- Intra-repo prioritizes frontmatter `workspace` (same/separate/worktree); disable mtime heuristics.\n- Executor **only writes receipt / deliver**, **never calls accept/reject**.\n- **Anti-Premature / Counterfeit Receipts**: Submit receipts ONLY when all acceptance criteria **have actually passed in execution**. Intermediate blockers, runtime/environment conflicts, or ongoing discussions **must be recorded in reviews/ or reported in conversation—never submit a premature receipt claiming \"Verified\"**.\n- Single source of truth for receipt body = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`: copy its skeleton (including evidence fields). Do not improvise.\n- **Evidence Hard Gate (v2.12.3)**: Receipts must include verifiable evidence `--evidence-paths \"file1,...\"` / `--evidence-commits \"<sha>\"` (or `--evidence-note \"<reason>\"` if no code changed). Claimed paths must exist and commits must resolve via `git cat-file -e`. Declaration without modification = counterfeit receipt.\n- Wrap up must pass `baton check` (or `handoff check`) with exit 0 (non-empty body + ## sections + status/verdict anchor).\n- **Reply Ending (Baton Pass Prompt Standard)**: When initiating a handoff (outbound), the last section of your reply **MUST be the Baton Pass Prompt (adapted by local AI to the user's active language: e.g. `## Baton Pass Prompt` in English, `## 交接提示词` in Chinese)**. Title, instructions, and the command MUST be strictly separated, enclosing the command in a standalone code block (```text) for one-click human copying (no text after this block). When submitting a receipt (inbound), initiator wait probe auto-wakes; no receipt prompt needed.\n- **Human-Facing Wording (v2.24.0 · Plain & Concise · Mandatory)**: When reporting progress or wrapping up to the user, state clearly who acts next and whether you still have work left—**never output checklist items as literal headers**. Format as 2 natural sentences: (1) **Our status** (what is done + whether we have pending work); (2) **Next party** (who takes over + their action + whether user needs to intervene). **Never use promotional fluff or mechanism-only abbreviations like \"no handoff needed\" / \"closed\".** Machine anchors (`## 转递提示词` section name, `forward`/`deliver` subcommands) must not be renamed.\n- **Audit Action Contract (v2.13 · to_lane=audit mandatory)**: Auditor **MUST NOT merely read code statically**—must **independently execute** all tests and verification commands in terminal. Self-reports (\"tests passed\") are unverified claims and must not be blindly trusted.\n- **Natural Role Mapping (v2.13)**: Never use repo name or lane slug as conversational role. Outbound = `Please [Role] take handoff [<ID>]: <path> (<topic>)`. Roles map from lane (impl→Implementation / audit→Audit / arch→Architecture; customizable in `.handoff-hub.json`).\n- **Anti-Premature Closure & Double-Blind Audit (v2.16.0)**: Receipts **must be independently authored by to_lane**—from_lane is forbidden from self-authoring. Audit dispatch issues a one-time `Audit Nonce`, required via `--audit-nonce \"<nonce>\"`. Supports `baton forward --blind` for cognitive desensitization.\n\n**Minimal Workflow (Outbound = Create/Forward · Mandatory Closure)**\n1. `baton new <target|lane> <type> \"<Title>\"` (or `handoff new ...`) and fill body\n2. **Forward and listen in background (Mandatory)**:\n   Run `baton forward <ID> --wait` (for concurrent tasks, run `baton wait <id1> [id2 ...] [--any|--all]`; managed by AI host as background task; human terminals can use `--daemon` to detach; add `--blind` for double-blind audit)\n   — Mandatory for all scenarios (never skip claiming external client); auto-wakes upon final delivery and session settle with exit 0 for independent audit.\n3. **Output Baton Pass Prompt (Tail block standard)**: Local AI adapts to the user's active language with title, instructions, and code block separated:\n   ## Baton Pass Prompt\n   > Copy the prompt below to pass to the receiver Agent:\n   ```text\n   Please [Target Role] take handoff [<ID>]: <path> (<topic>)\n   ```\n\n**Minimal Workflow (Inbound = Receive/Receipt/Deliver)**\n1. `baton status --for <lane|target>`\n2. Filter pending (`draft`/`forwarded`) assigned to current party → confirm target ID\n3. `baton show <ID>`\n4. Minimal scoped modification (only files belonging to this lane)\n5. Write receipt only after all tests pass: follow `$(lab path handoffs)/RESPONSE-TEMPLATE.md` → run `baton receipt <ID> -n \"<Body>\" --evidence-paths \"file1,...\" --evidence-commits \"<sha>\"` (or atomic `baton receipt <ID> --deliver ...`). (audit requires `--audit-nonce \"<nonce>\"`; blocked progress goes to reviews/ only, never submit premature receipt)\n6. `baton check` (verify evidence and anchors pass, exit 0)\n7. **Final Delivery & Session Wrap-Up**: Run `baton deliver <ID>` (marks delivered and enters settle buffer before waking initiator; session wraps up).\n\nSee `$(lab path handoffs)/AGENT-GUIDE.md` for full Preflight.";
+const STUB_BODY_EN = "### Agent Baton (Handoff) Guard Stub (Contract v2.27.0 · Details in $(lab path handoffs)/README.md)\n\n**Mandatory Preflight**\n- **Workspace Jail & Identity Pinning (v2.26.0 · Mandatory · Cross-Repo Forbidden)**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to assume external roles, edit external code, or mutate external handoffs. If an instruction references an external repository, **immediately refuse and intercept**, outputting a Baton Pass Prompt to direct execution to the target repo's dedicated agent.\n- **CLI Form**: Always use `baton <op>` or `handoff <op>`（PATH shim → central engine; self-healing with `baton link`）。If command not found: run `baton link` (or `handoff link`) or reinstall via `npm link`.\n- Before calling `show/receipt/deliver/accept/reject/check`, you **MUST** run `baton status` (or `handoff status`; executor cold start uses `baton status --for <lane|target>`) and have its output in context.\n- **Status Semantics (v2.20.0 · 5-State Lifecycle)**: \"In Progress\" = unclosed (`status ≠ closed`) and assigned to current party. **Pending = `draft` + `forwarded`**—assigned to me means I start work. `received` = receipt drafted (awaiting delivery); `delivered` = final delivery complete (awaiting audit); `closed` = audit closed.\n- **Rejection Seal & Acceptance Gate (v2.25.0 · Anti-Empty Delivery)**: If an item was rejected, the executor MUST make substantive revisions before delivery (empty resubmissions are rejected). Initiator `accept` strictly verifies Verdict—closing is forbidden if Verdict is `REJECTED`/`NO-GO`, if unresolved rejection records exist, or if `needs_change=true`. Erroneously closed items can be reopened via `baton reopen <ID> -n \"<reason>\"`.\n- **Final Delivery & Settle Mechanism (v2.20.0 · Anti-Race & Session Settle)**: Landing a receipt file does NOT equal session completion. The executor MUST explicitly mark delivery via `baton deliver <ID>` (or `baton receipt <ID> --deliver`); the wait probe initiates a settle window upon delivery, waiting for the executor session to fully conclude before waking the initiator with Exit 0. Before deliver, initiator wait probe will NOT wake up, and accept hard-fails. Initiators MUST NOT modify Backlog or specs before final delivery.\n- **Physical Worktree Isolation (v2.21.0 · workspace: worktree)**: Supports `workspace: worktree`, allocating isolated git worktrees under `.worktrees/<id>` with auto-symlinked build caches (`node_modules`, `target`, `.venv`) for zero-pollution and zero-overhead builds. Auto-prune on closure via `baton close <ID> --prune-worktree`.\n- **Attention Throttle Pipeline (v2.21.0 · baton throttle)**: Executors running long background tasks should wrap commands with `baton throttle <ID> -- <cmd>` to filter noise and protect agent/human attention (three-tier interrupt filter; only fatal red interrupts breach).\n- **Clean Double-Blind Audit Runner (v2.21.0 · clean-runner / baton-audit-runner)**: Auditors are encouraged to run `baton-audit-runner <ID>` to execute acceptance criteria in a clean context, evaluating true exit codes and generating solid evidence arguments.\n- **Mandatory Listening & Anti-Excuses (v2.23.0)**: Regardless of whether the executor is an in-session subagent, an external client (Cursor/WorkBuddy/Antigravity, etc.), a standalone terminal, or a human, baton operates on local filesystem events (fs.watch). Any baton deliver immediately wakes the probe. **Never skip background listening claiming \"executor is external client / cannot wait / will timeout\".** Initiators MUST maintain baton forward <ID> --wait (or host background task baton wait <ID>).\n- Target ID must be \"In Progress\" and assigned to current party (intra-repo: `to_lane == current lane`; cross-repo: located in target inbox and unclosed). If not found → halt and report.\n- Unspecified ID with multiple pending tasks → list candidates for human selection, do not guess.\n- Status snapshot before receipt must be **< 60 minutes old** (rerun if stale; deliver auto-refreshes during long task wrap-up).\n- Intra-repo prioritizes frontmatter `workspace` (same/separate/worktree); disable mtime heuristics.\n- Executor **only writes receipt / deliver**, **never calls accept/reject**.\n- **Anti-Premature / Counterfeit Receipts & Blocked State**: Submit passing receipts and final delivery ONLY when all criteria pass. If blocked by missing hardware or tests fail, receipt must be explicitly marked `INCOMPLETE` / `NO-GO` or `needs_change: true`, held in received state for initiator resolution or rejected back via `baton reject`; false delivery is strictly forbidden.\n- Single source of truth for receipt body = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`: copy its skeleton (including evidence fields). Do not improvise.\n- **Evidence Hard Gate (v2.12.3)**: Receipts must include verifiable evidence `--evidence-paths \"file1,...\"` / `--evidence-commits \"<sha>\"` (or `--evidence-note \"<reason>\"` if no code changed). Claimed paths must exist and commits must resolve via `git cat-file -e`. Declaration without modification = counterfeit receipt.\n- Wrap up must pass `baton check [id]` (or `handoff check [id]`) with exit 0 (supports scoped single-ticket checks; repository checks separate active from legacy tickets; `--fix` safely repairs historical consistency; requires non-empty body + ## sections + verdict anchor).\n- **Reply Ending (Baton Pass Prompt Standard)**: When initiating a handoff (outbound), the last section of your reply **MUST be the Baton Pass Prompt (adapted by local AI to the user's active language: e.g. `## Baton Pass Prompt` in English, `## 交接提示词` in Chinese)**. Title, instructions, and the command MUST be strictly separated, enclosing the command in a standalone code block (```text) for one-click human copying (no text after this block). When submitting a receipt (inbound), initiator wait probe auto-wakes; no receipt prompt needed.\n- **Human-Facing Wording (v2.24.0 · Plain & Concise · Mandatory)**: When reporting progress or wrapping up to the user, state clearly who acts next and whether you still have work left—**never output checklist items as literal headers**. Format as 2 natural sentences: (1) **Our status** (what is done + whether we have pending work); (2) **Next party** (who takes over + their action + whether user needs to intervene). **Never use promotional fluff or mechanism-only abbreviations like \"no handoff needed\" / \"closed\".** Machine anchors (`## 转递提示词` section name, `forward`/`deliver` subcommands) must not be renamed.\n- **Audit Action Contract (v2.13 · to_lane=audit mandatory)**: Auditor **MUST NOT merely read code statically**—must **independently execute** all tests and verification commands in terminal. Self-reports (\"tests passed\") are unverified claims and must not be blindly trusted.\n- **Natural Role Mapping (v2.13)**: Never use repo name or lane slug as conversational role. Outbound = `Please [Role] take handoff [<ID>]: <path> (<topic>)`. Roles map from lane (impl→Implementation / audit→Audit / arch→Architecture; customizable in `.handoff-hub.json`).\n- **Anti-Premature Closure & Double-Blind Audit (v2.27.0)**: Receipts **must be independently authored by to_lane**—from_lane is forbidden from self-authoring. Audit dispatch/reopen/reject auto-issues a one-time `Audit Nonce` (viewable via `baton show <ID>` or `baton status --for audit`), strictly verified upon receipt via `--audit-nonce \"<nonce>\"` or frontmatter `audit_nonce`. Supports `baton forward --blind` for cognitive desensitization.\n\n**Minimal Workflow (Outbound = Create/Forward · Mandatory Closure)**\n1. `baton new <target|lane> <type> \"<Title>\"` (or `handoff new ...`) and fill body\n2. **Forward and listen in background (Mandatory)**:\n   Run `baton forward <ID> --wait` (for concurrent tasks, run `baton wait <id1> [id2 ...] [--any|--all]`; managed by AI host as background task; human terminals can use `--daemon` to detach; add `--blind` for double-blind audit)\n   — Mandatory for all scenarios (never skip claiming external client); auto-wakes upon final delivery and session settle with exit 0 for independent audit.\n3. **Output Baton Pass Prompt (Tail block standard)**: Local AI adapts to the user's active language with title, instructions, and code block separated:\n   ## Baton Pass Prompt\n   > Copy the prompt below to pass to the receiver Agent:\n   ```text\n   Please [Target Role] take handoff [<ID>]: <path> (<topic>)\n   ```\n\n**Minimal Workflow (Inbound = Receive/Receipt/Deliver)**\n1. `baton status --for <lane|target>`\n2. Filter pending (`draft`/`forwarded`) assigned to current party → confirm target ID\n3. `baton show <ID>`\n4. Minimal scoped modification (only files belonging to this lane)\n5. Write receipt only after all tests pass: follow `$(lab path handoffs)/RESPONSE-TEMPLATE.md` → run `baton receipt <ID> -n \"<Body>\" --evidence-paths \"file1,...\" --evidence-commits \"<sha>\"` (or atomic `baton receipt <ID> --deliver ...`). (audit requires `--audit-nonce \"<nonce>\"`; blocked or failed progress marked INCOMPLETE / NO-GO, never deliver premature)\n6. `baton check [id]` (verify evidence and anchors pass, exit 0)\n7. **Final Delivery & Session Wrap-Up**: Run `baton deliver <ID>` (marks delivered and enters settle buffer before waking initiator; session wraps up).\n\nSee `$(lab path handoffs)/AGENT-GUIDE.md` for full Preflight.";
 const STUB_SHA_EN = crypto.createHash('sha256').update(STUB_BODY_EN).digest('hex').slice(0, 8);
 const STUB_BLOCK_EN = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_EN} -->\n${STUB_BODY_EN}\n${STUB_END}`;
 
@@ -1905,8 +2126,11 @@ function extractTitle(body) {
   return m ? m[1].trim() : '(无标题)';
 }
 
-function cmdCheck() {
-  checkStubCarrier();
+function cmdCheck(args = []) {
+  const targetId = args.find(a => !a.startsWith('-'));
+  if (!targetId) {
+    checkStubCarrier();
+  }
   // CLI 可达性（热修批次八）：先于模式分支，跨仓/仓内都门禁
   const cliProblems = [];
   const cliWarnings = [];
@@ -1917,10 +2141,25 @@ function cmdCheck() {
     for (const p of cliProblems) console.error('  - ' + p);
     process.exit(1);
   }
-  if (MODE === 'intra-repo') return cmdCheckIntra();
-  // ── 跨仓模式（逐字保留旧逻辑）──
+  if (MODE === 'intra-repo') return cmdCheckIntra(args);
+  return cmdCheckCross(args);
+}
+
+// 跨仓模式门禁
+function cmdCheckCross(args = []) {
   const problems = [];
-  const hAll = fs.existsSync(H_DIR) ? fs.readdirSync(H_DIR).filter(f => f.endsWith('.md')) : [];
+  const isFix = args.includes('--fix');
+  const targetId = args.find(a => !a.startsWith('-'));
+  let hAll = fs.existsSync(H_DIR) ? fs.readdirSync(H_DIR).filter(f => f.endsWith('.md')) : [];
+  if (targetId) {
+    const cleanId = targetId.replace(/\.md$/, '').replace(/-resp$/, '');
+    const targetFile = `${cleanId}.md`;
+    if (!fs.existsSync(path.join(H_DIR, targetFile))) {
+      console.error(`找不到交接文件: ${targetFile}`);
+      process.exit(1);
+    }
+    hAll = [targetFile];
+  }
   for (const f of hAll.sort()) {
     const p = path.join(H_DIR, f);
     if (!H_RE.test(f)) { problems.push(`[交接] 文件名不符合命名规范: ${f}`); continue; }
@@ -1957,7 +2196,7 @@ function cmdCheck() {
         const rFm = readFM(rRaw) || {};
         const rBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
         const concl = extractConclusion(rBody);
-        const isLegacyTicket = fm.created && fm.created < '2026-11-08';
+        const isLegacyTicket = fm.created && fm.created < '2026-11-11';
         if (!isLegacyTicket && isVerdictRejected(concl)) {
           problems.push(`[交接] 语义矛盾：status=closed 但回执最新结论为「${concl}」（未通过）: ${f}`);
         }
@@ -1980,7 +2219,12 @@ function cmdCheck() {
       problems.push(`[交接] 悬空字段：有 delivered_by_lane(${fm.delivered_by_lane}) 但缺 delivered_at: ${f}`);
     }
   }
-  const rAll = fs.existsSync(R_DIR) ? fs.readdirSync(R_DIR).filter(f => f.endsWith('.md') && !f.endsWith('.bak.md')) : [];
+  let rAll = fs.existsSync(R_DIR) ? fs.readdirSync(R_DIR).filter(f => f.endsWith('.md') && !f.endsWith('.bak.md')) : [];
+  if (targetId) {
+    const cleanId = targetId.replace(/\.md$/, '').replace(/-resp$/, '');
+    const respFile = `${cleanId}-resp.md`;
+    rAll = fs.existsSync(path.join(R_DIR, respFile)) ? [respFile] : [];
+  }
   for (const f of rAll.sort()) {
     if (!R_RE.test(f)) { problems.push(`[回执] 文件名不符合命名规范: ${f}`); continue; }
     const raw = fs.readFileSync(path.join(R_DIR, f), 'utf8');
@@ -2005,13 +2249,24 @@ function cmdCheck() {
 }
 
 // 仓内模式门禁：按 ROOT 模式（配置）分支；per-file `mode` 仅作一致性校验，不替代根模式判定
-function cmdCheckIntra() {
+function cmdCheckIntra(args = []) {
   const problems = [];
+  const isFix = args.includes('--fix');
+  const targetId = args.find(a => !a.startsWith('-'));
   const lanes = new Set((HUB_CONFIG.lanes || []).map(s => String(s).toLowerCase()));
   const targets = new Set((HUB_CONFIG.targets || []).map(s => String(s).toLowerCase()));
   const types = new Set([...(HUB_CONFIG.types || []), ...INTRA_TYPES].map(s => String(s).toLowerCase()));
   if (!lanes.size) problems.push(`[配置] .handoff-hub.json 缺 lanes（仓内交接靠 lane 路由）`);
-  const hAll = fs.existsSync(H_DIR) ? fs.readdirSync(H_DIR).filter(f => f.endsWith('.md')) : [];
+  let hAll = fs.existsSync(H_DIR) ? fs.readdirSync(H_DIR).filter(f => f.endsWith('.md')) : [];
+  if (targetId) {
+    const cleanId = targetId.replace(/\.md$/, '').replace(/-resp$/, '');
+    const targetFile = `${cleanId}.md`;
+    if (!fs.existsSync(path.join(H_DIR, targetFile))) {
+      console.error(`找不到交接文件: ${targetFile}`);
+      process.exit(1);
+    }
+    hAll = [targetFile];
+  }
   for (const f of hAll.sort()) {
     const p = path.join(H_DIR, f);
     if (!INTRA_ID_RE.test(f)) { problems.push(`[交接] 文件名不符合仓内命名规范（<LANE>-<YYYYMMDD>-<NN>-<TYPE>）: ${f}`); continue; }
@@ -2035,6 +2290,29 @@ function cmdCheckIntra() {
     if (fm.status === 'closed' && !/^## (验收记录|Audit Record|Acceptance Record)/im.test(raw))
       problems.push(`[交接] status=closed 但缺「验收记录」节（须经 handoff accept <id> -n "<结论>" 闭环）: ${f}`);
 
+    // needs_change 一致性校验与安全修复
+    const rPath = path.join(R_DIR, `${id}-resp.md`);
+    if (fs.existsSync(rPath)) {
+      const rRaw = fs.readFileSync(rPath, 'utf8');
+      const rFm = readFM(rRaw) || {};
+      if (rFm.needs_change !== undefined && fm.needs_change !== undefined && Boolean(rFm.needs_change) !== Boolean(fm.needs_change)) {
+        if (isFix) {
+          setFM(p, { needs_change: Boolean(rFm.needs_change) });
+          logStateJournal(id, 'repair', { note: 'Align needs_change with receipt', needs_change: Boolean(rFm.needs_change) });
+          console.log(`🔧 已安全修复 needs_change 一致性: ${id} (工单 ${fm.needs_change} → 依照回执对齐为 ${rFm.needs_change})`);
+        } else {
+          problems.push(`[交接] needs_change 不一致：工单标记 needs_change=${fm.needs_change}，但回执标记 needs_change=${rFm.needs_change}: ${f}`);
+        }
+      }
+
+      // audit_nonce 一致性核验
+      if (String(fm.to_lane || '').toLowerCase() === 'audit') {
+        if (fm.audit_nonce && rFm.audit_nonce && rFm.audit_nonce !== fm.audit_nonce) {
+          problems.push(`[交接] audit_nonce 不一致：工单签发(${fm.audit_nonce}) ≠ 回执记录(${rFm.audit_nonce}): ${f}`);
+        }
+      }
+    }
+
     // 状态机语义不变量校验（v2.25 · P1-1 修复）
     if (fm.status === 'closed') {
       if (fm.rejected_at) {
@@ -2045,13 +2323,12 @@ function cmdCheckIntra() {
           problems.push(`[交接] 状态机倒挂：status=closed 但 delivered_at(${fm.delivered_at || '空'}) <= rejected_at(${fm.rejected_at}): ${f}`);
         }
       }
-      const rPath = path.join(R_DIR, `${id}-resp.md`);
       if (fs.existsSync(rPath)) {
         const rRaw = fs.readFileSync(rPath, 'utf8');
         const rFm = readFM(rRaw) || {};
         const rBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
         const concl = extractConclusion(rBody);
-        const isLegacyTicket = fm.created && fm.created < '2026-11-08';
+        const isLegacyTicket = fm.created && fm.created < '2026-11-11';
         if (!isLegacyTicket && isVerdictRejected(concl)) {
           problems.push(`[交接] 语义矛盾：status=closed 但回执最新结论为「${concl}」（未通过）: ${f}`);
         }
@@ -2074,7 +2351,12 @@ function cmdCheckIntra() {
       problems.push(`[交接] 悬空字段：有 delivered_by_lane(${fm.delivered_by_lane}) 但缺 delivered_at: ${f}`);
     }
   }
-  const rAll = fs.existsSync(R_DIR) ? fs.readdirSync(R_DIR).filter(f => f.endsWith('.md') && !f.endsWith('.bak.md')) : [];
+  let rAll = fs.existsSync(R_DIR) ? fs.readdirSync(R_DIR).filter(f => f.endsWith('.md') && !f.endsWith('.bak.md')) : [];
+  if (targetId) {
+    const cleanId = targetId.replace(/\.md$/, '').replace(/-resp$/, '');
+    const respFile = `${cleanId}-resp.md`;
+    rAll = fs.existsSync(path.join(R_DIR, respFile)) ? [respFile] : [];
+  }
   for (const f of rAll.sort()) {
     if (!INTRA_RESP_RE.test(f)) { problems.push(`[回执] 文件名不符合命名规范: ${f}`); continue; }
     const raw = fs.readFileSync(path.join(R_DIR, f), 'utf8');
@@ -2095,14 +2377,56 @@ function cmdCheckIntra() {
     let ws;
     try { ws = readFM(fs.readFileSync(path.join(H_DIR, `${fm.handoff_id}.md`), 'utf8'))?.workspace; } catch {}
     checkReceiptPrompt(f, fm, raw, problems);
-    { const w = []; evidenceProblems(normalizeEvidence(fm), gateDate(fm), { mode: 'intra-repo', workspace: ws }, problems, w); for (const x of w) console.log('⚠️ ' + x); }
+    { const w = []; evidenceProblems(normalizeEvidence(fm), gateDate(fm), { mode: 'intra-repo', workspace: ws, file: f }, problems, w); for (const x of w) console.log('⚠️ ' + x); }
   }
-  if (problems.length) {
-    console.error(`❌ check 未通过（仓内模式 · ${problems.length} 个问题）:`);
-    for (const p of problems) console.error('  - ' + p);
+
+  // 分组呈现：当前工单问题 vs 历史存量工单问题
+  if (targetId) {
+    if (problems.length) {
+      console.error(`❌ 工单 ${targetId} check 未通过（${problems.length} 个问题）:`);
+      for (const p of problems) console.error('  - ' + p);
+      process.exit(1);
+    }
+    console.log(`✅ 工单 ${targetId} check 通过，全部合规`);
+    return;
+  }
+
+  // 全仓体检：分离活跃工单与存量历史工单
+  const activeProblems = [];
+  const legacyProblems = [];
+  for (const prob of problems) {
+    // 提取关联的交接文件名
+    const m = prob.match(/: ([^:\s]+\.md)/);
+    const fileName = m ? m[1] : '';
+    let isLegacy = false;
+    if (fileName) {
+      try {
+        const tFm = readFM(fs.readFileSync(path.join(H_DIR, fileName.replace(/-resp\.md$/, '.md')), 'utf8'));
+        if (tFm && (tFm.status === 'closed' || (tFm.created && tFm.created < '2026-11-11'))) {
+          isLegacy = true;
+        }
+      } catch {}
+    }
+    if (isLegacy) legacyProblems.push(prob);
+    else activeProblems.push(prob);
+  }
+
+  if (activeProblems.length) {
+    console.error(`❌ check 未通过（当前活跃工单发现 ${activeProblems.length} 个问题）:`);
+    for (const p of activeProblems) console.error('  - ' + p);
+    if (legacyProblems.length) {
+      console.warn(`\n⚠️ 另发现存量历史工单问题 ${legacyProblems.length} 项（不阻断当前活跃工单，可用 baton check --fix 修复）:`);
+      for (const p of legacyProblems) console.warn('  - ' + p);
+    }
     process.exit(1);
   }
-  console.log(`✅ check 通过（仓内模式）: ${hAll.length} 份交接 / ${rAll.length} 份回执，全部合规`);
+
+  if (legacyProblems.length) {
+    console.log(`✅ check 通过（仓内模式）: 活跃工单全部合规（存量历史工单存在 ${legacyProblems.length} 项告警，不阻断当前流程；可用 baton check --fix 修复）`);
+    for (const p of legacyProblems) console.warn('  - ' + p);
+  } else {
+    console.log(`✅ check 通过（仓内模式）: ${hAll.length} 份交接 / ${rAll.length} 份回执，全部合规`);
+  }
   reportSize();
   reportStalePending();
   reportUnwatchedPending();
@@ -2292,6 +2616,12 @@ function cmdPrompt(args) {
       } else {
         console.log(`（若已挂起后台监听，回执登记后状态机会自动感知唤醒发起方闭环。）\n`);
       }
+      if (fm.audit_nonce) {
+        console.log(`（一次性 Audit Nonce: ${fm.audit_nonce} · 提交回执请附带 --audit-nonce "${fm.audit_nonce}"）\n`);
+      }
+      if (fm.blind) {
+        console.log(`（🔒 物理双盲审计模式已开启：思维链与自辩内容已脱敏，请严格基于客观契约与终端实测出具回执）\n`);
+      }
       if (auditContract) console.log(auditContract);
     } else {
       console.log(`📋 Intra-Repo Baton (${id}) · workspace=${ws}:`);
@@ -2313,6 +2643,12 @@ function cmdPrompt(args) {
         console.log(`(Sender note: separate workspace detected, please sync git tree first.)\n`);
       } else {
         console.log(`(If background listener is running, the state machine will automatically wake up upon receipt.)\n`);
+      }
+      if (fm.audit_nonce) {
+        console.log(`(One-time Audit Nonce: ${fm.audit_nonce} · include --audit-nonce "${fm.audit_nonce}" in receipt)\n`);
+      }
+      if (fm.blind) {
+        console.log(`(🔒 Double-Blind Audit Active: thinking & excuses sanitized; rely strictly on objective criteria and terminal tests)\n`);
       }
       if (auditContract) console.log(auditContract);
     }
@@ -3464,7 +3800,7 @@ switch (cmd) {
   case 'forward': await cmdForward(rest); break;
   case 'open': cmdOpen(rest); break;
   case 'show': cmdShow(rest); break;
-  case 'check': cmdCheck(); break;
+  case 'check': cmdCheck(rest); break;
   case 'prompt': cmdPrompt(rest); break;
   case 'import': cmdImport(rest); break;
   case 'install': cmdInstall(rest); break;

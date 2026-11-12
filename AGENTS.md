@@ -42,8 +42,8 @@ docs/                辅助文档与待办 (docs/backlogs/)
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:ce8ba716 -->
-### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.26.0 为准）
+<!-- stub:sha256:071ddcf8 -->
+### Agent Baton (Handoff) 接入桩（强制守卫 · 细则以 $(lab path handoffs)/README.md 契约 v2.27.0 为准）
 
 **早拦 Preflight（强制）**
 - **物理工作区与身份锚定（v2.26.0 · 强制守卫 · 严禁跨仓）**：Agent 会话严格绑定于当前宿主工作区（Active Workspace）。严禁通过 cd 越界代行外部仓角色、修改外部代码或操作外部工单状态机。若收到指向外部仓库工单（如跨仓工单/外部实现方）的指令，**必须第一时间硬性拒单**，输出跨仓交接提示词引导人类在目标仓专属 Agent 会话中派发。
@@ -61,15 +61,15 @@ docs/                辅助文档与待办 (docs/backlogs/)
 - receipt 前确保 status 快照 **< 60 分钟**（超时重跑；长任务收尾时 deliver 自动宽容续期）。
 - 仓内优先读 frontmatter `workspace`（same/separate/worktree），禁用 mtime 推断。
 - 执行方**只写 receipt / deliver**，**不做 accept/reject**。
-- **严禁抢跑/虚假回执**：验收判据**全部实测通过**方可提交回执与交付。执行中途遇阻、环境/多实例冲突或需讨论的中间状态，**仅记录于 reviews/ 或对话说明，严禁提交包含「已通过」的抢跑回执**。
+- **严禁抢跑/虚假回执与受阻状态处理**：验收判据**全部实测通过**方可提交通过回执与终态交付。若因环境/真机缺失等外部条件受阻或实测不通过，回执必须明确标记 `INCOMPLETE` / `NO-GO` 或 `needs_change: true`，保持 received 态由发起方整改，或由审计方执行 `baton reject` 驳回退回，严禁虚假 deliver。
 - 回执正文唯一源 = `$(lab path handoffs)/RESPONSE-TEMPLATE.md`：**照抄其「回执模板（可直接复制）」骨架**（含 evidence 字段），勿另起格式、勿凭记忆重建（骨架外 = 没有）。
 - **evidence 硬门禁（v2.12.3）**：仓内新回执（2026-10-14 起）**必须**附可核验证据 `--evidence-paths "真实文件,..."` / `--evidence-commits "<sha>"`（无文件改动用 `--evidence-note "<原因>"`）；声称的路径须真实存在、提交须 `git cat-file -e` 可查，否则 receipt / deliver / accept / check 拒收。**只声明不改 = 伪回执**（2026-10-13 goods-stores 事故教训）。
-- 收尾必须 `baton check`（或 `handoff check`）exit 0（2026-10-13 起回执须「非空正文 + 含 ## 节 + 含『状态 / 结论』锚节」；存量豁免）。
+- 收尾必须 `baton check [id]`（或 `handoff check [id]`）exit 0（支持针对当前工单精准自检，全仓体检自动区分当前活跃工单与存量历史工单；支持 `baton check --fix` 自动修复历史 needs_change 一致性；回执须非空正文 + ## 节 + 结论锚节）。
 - **回复收尾（交接提示词规范）**：发起交接（出站）时，回复最末块**必须固定为交接提示词（由本地 AI 根据用户本地语言自适应呈现：中文使用 `## 交接提示词`，英文使用 `## Baton Pass Prompt`）**。标题、描述说明与具体的接单指令必须严格分离，提示词置于独立代码块（```text）中，方便人类一键复制发给接收方 Agent（其后无任何正文）。执行方交付（入站）后，因发起方已挂起后台探针自动唤醒，无需再写回执提示词。
 - **对外话术（v2.24.0 · 简洁通俗 · 强制）**：跟用户交代进度与收尾时，让人只读该段即知「谁在做、我这边还动不动」——**禁止机械罗列三要素题头填空**，精简为两行自然人话：①**我方状态**（完成项 + 我方是否还有待办）；②**后续接手**（接手角色 + 后续动作 + 人类是否需介入，如「系统会自动通知，你不用转告」）。**严禁浮夸邀功修辞与「无需转递/已闭环」纯机制缩写**。机器锚点（`## 转递提示词` 节名、`forward`/`deliver` 子命令）不变，勿改名。
 - **审计动作契约（v2.13 · to_lane=audit 强制）**：审计方（接收方 to_lane=audit）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明，不采信）。其余 lane 亦建议独立实测，但审计 lane 为硬纪律。
 - **仓内提示词用自然角色（v2.13）**：同仓提示词**严禁出现项目名 / lane slug 当角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。出站 = `请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）`。角色由 lane 映射（impl→实现方 / audit→审计方 / arch·design→架构设计方；`.handoff-hub.json` 的 `lane_labels` 可覆盖）。
-- **防提前闭环与双盲审计防伪（v2.16.0）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执；`to_lane=audit` 派发时自动签发一次性 `Audit Nonce`，审计回执必须携带 `--audit-nonce "<nonce>"`，硬性拦截同一会话自签；支持 `baton forward --blind` 物理脱敏主观思维链与自辩借口。
+- **防提前闭环与双盲审计防伪（v2.27.0）**：回执**必须由接收方 to_lane 独立撰写**——发起方（from_lane）禁止自填回执；`to_lane=audit` 派发/重开/驳回时系统自动签发一次性 `Audit Nonce`（可通过 `baton show <ID>` 或 `baton status --for audit` 获取），审计回执必须携带 `--audit-nonce "<nonce>"`（或回执 frontmatter 写入 `audit_nonce`），强校验任务绑定、一次性消费与防自签防伪；支持 `baton forward --blind` 物理脱敏主观思维链与自辩借口。
 
 **最小操作序列（出站 = 建/发交接 · 强制闭环）**
 1. `baton new <target|lane> <type> "<标题>"`（或 `handoff new ...`）并填写正文
@@ -88,8 +88,8 @@ docs/                辅助文档与待办 (docs/backlogs/)
 2. 从「待办」（draft/forwarded）筛选归属当前方（仓内 `to_lane == 当前 lane`；跨仓 = 落在目标收件箱）→ 确认目标 ID
 3. `baton show <ID>`
 4. 按边界最小改动（仅该 lane 应改文件）
-5. 实测全过方写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → 运行 `baton receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"`（或原子复合命令 `baton receipt <ID> --deliver ...` 直达交付）。（若 `to_lane=audit` 须附 `--audit-nonce "<nonce>"`；仓内必附 evidence；无文件改动用 `--evidence-note`；中途受阻仅写 reviews/ 严禁提回执）
-6. `baton check`（核验证据与锚节合规，exit 0）
+5. 实测全过方写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架** → 运行 `baton receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"`（或原子复合命令 `baton receipt <ID> --deliver ...` 直达交付）。（若 `to_lane=audit` 须附 `--audit-nonce "<nonce>"`；仓内必附 evidence；无文件改动用 `--evidence-note`；中途受阻或未通过标记 INCOMPLETE / NO-GO，严禁虚假 deliver）
+6. `baton check [id]`（核验证据与锚节合规，exit 0）
 7. **终态交付与会话收尾**：运行 `baton deliver <ID>`（烙印 delivered 并触发平息缓冲后自动唤醒发起方；会话彻底收工结束）。
 
 详见 `$(lab path handoffs)/AGENT-GUIDE.md` 获取完整版 Preflight。

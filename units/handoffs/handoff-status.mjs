@@ -140,6 +140,9 @@ for (const f of hFiles) {
     rejected_at: fm.rejected_at || '',
     accepted_at: fm.accepted_at || '',
     reopened_at: fm.reopened_at || '',
+    audit_nonce: fm.audit_nonce || '',
+    blind: Boolean(fm.blind),
+    rejected_by: fm.rejected_by || '',
     file: `handoffs/${f}`,
   };
   // 仓内模式：target 位复用为 to_lane，并补 from_lane / needs_change。跨仓 v1 schema 字段保持冻结。
@@ -158,7 +161,13 @@ for (const f of rFiles) {
   try { fm = parseFM(fs.readFileSync(path.join(R_DIR, f), 'utf8')); } catch {}
   rFmMap.set(f, fm);
   const id = (fm && fm.handoff_id) || f.replace(/-resp\.md$/i, '').replace(/\.md$/i, '');
-  receipts[id] = { file: `receipts/${f}`, needs: fm && fm.needs_iggle_change, delivered_at: fm && fm.delivered_at };
+  receipts[id] = {
+    file: `receipts/${f}`,
+    needs: fm && (fm.needs_change !== undefined ? fm.needs_change : fm.needs_iggle_change),
+    delivered_at: fm && fm.delivered_at,
+    audit_nonce: fm && fm.audit_nonce,
+    blind: fm && Boolean(fm.blind)
+  };
 }
 
 // ── 规范性校验（直接利用内存缓存，0 重复磁盘 I/O）──
@@ -239,6 +248,74 @@ function getCreatedTime(r) {
   }
 }
 
+function extractConclusion(raw) {
+  if (!raw) return '';
+  const m = raw.match(/^##\s*(?:结论|Conclusion|Verdict|Status|状态)[^\n]*\n+([\s\S]*?)(?=\n##|$)/im);
+  if (m) {
+    const lines = m[1].split('\n').map(s => s.trim()).filter(Boolean);
+    for (const l of lines) {
+      if (l.startsWith('#')) continue;
+      const match = l.match(/^(?:[-*]\s*)?(?:\*\*)?(?:结论|Conclusion|Verdict|Status|状态)(?:\*\*)?[：:]\s*(.*)$/i);
+      if (match && match[1]) {
+        const val = match[1].trim();
+        return val.length > 50 ? val.slice(0, 50) + '…' : val;
+      }
+    }
+    for (const l of lines) {
+      if (l.startsWith('#') || l.startsWith('>')) continue;
+      const listMatch = l.match(/^[-*]\s+(.*)$/);
+      if (listMatch && listMatch[1] && !listMatch[1].startsWith('**说明**') && !listMatch[1].startsWith('**Note**')) {
+        const val = listMatch[1].trim();
+        return val.length > 50 ? val.slice(0, 50) + '…' : val;
+      }
+      if (!l.startsWith('-') && !l.startsWith('*')) {
+        return l.length > 50 ? l.slice(0, 50) + '…' : l;
+      }
+    }
+  }
+  return '';
+}
+
+function getReceiptConclusion(id) {
+  const rFile = path.join(R_DIR, `${id}-resp.md`);
+  if (!fs.existsSync(rFile)) return '';
+  try {
+    return extractConclusion(fs.readFileSync(rFile, 'utf8'));
+  } catch {
+    return '';
+  }
+}
+
+function isVerdictRejected(verdict) {
+  if (!verdict) return false;
+  const s = String(verdict).trim();
+  if (/^(?:verified|accepted|passed|pass|通过|合规)\b/i.test(s)) return false;
+  if (/\b(?:rejected|no-go)\b/i.test(s) || /^(?:reject|fail|failed)\b/i.test(s) || /驳回|不通过|未通过/.test(s)) return true;
+  if (/\bfail(?:ed|ure)?s?\b/i.test(s)) {
+    if (/(?:fail-open|fail-closed|0\s*fail|no\s*fail|zero\s*fail)/i.test(s)) return false;
+    return true;
+  }
+  return false;
+}
+
+function isVerdictBlocked(verdict) {
+  if (!verdict) return false;
+  const s = String(verdict).trim();
+  if (/^(?:verified|accepted|passed|pass|通过|合规)\b/i.test(s)) return false;
+  if (/\b(?:incomplete|blocked|waiting|hold)\b/i.test(s) || /受阻|待条件|未完成|真机未到位|等待外部/.test(s)) return true;
+  return false;
+}
+
+function getReceiptMtime(id) {
+  const rFile = path.join(R_DIR, `${id}-resp.md`);
+  if (!fs.existsSync(rFile)) return 0;
+  try {
+    return fs.statSync(rFile).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 function isReceivedIdle(r) {
   if (r.status !== 'received') return false;
   if (r.delivered_at) return false;
@@ -246,9 +323,16 @@ function isReceivedIdle(r) {
   if (hFm && hFm.delivered_at) return false;
   const rObj = receipts[r.id];
   if (rObj && rObj.delivered_at) return false;
-  const cTime = getCreatedTime(r);
-  if (!cTime) return false;
-  return (Date.now() - cTime) >= 10 * 60 * 1000;
+
+  // 若回执标记 needs_change=true 或 结论为受阻/驳回，绝非等待 deliver 的空转！
+  const concl = getReceiptConclusion(r.id);
+  if (r.needs === true || (rObj && rObj.needs === true)) return false;
+  if (isVerdictRejected(concl) || isVerdictBlocked(concl)) return false;
+
+  // 依据回执修改时间判定回执草稿停滞，而非工单创建时间
+  const rMtime = getReceiptMtime(r.id);
+  if (!rMtime) return false;
+  return (Date.now() - rMtime) >= 10 * 60 * 1000;
 }
 
 function getRejectionSummary(r) {
@@ -275,13 +359,17 @@ function formatRowLine(r, isZh) {
       ? `  ⚠️ [已驳回退回 · 待整改${reason ? '：' + reason.slice(0, 40) : ''}]`
       : `  ⚠️ [REJECTED · Revision required${reason ? ': ' + reason.slice(0, 40) : ''}]`;
   }
-  return `  - ${r.id}  ${r.file}${receiptPart}  [${watch.text}]${idleAlert}${rejPart}`;
+  const noncePart = r.audit_nonce ? `  [Nonce: ${r.audit_nonce}]` : '';
+  const blindPart = r.blind ? '  [Blind: true]' : '';
+  return `  - ${r.id}  ${r.file}${receiptPart}  [${watch.text}]${noncePart}${blindPart}${idleAlert}${rejPart}`;
 }
 
 const rows = Object.values(handoffs).map(h => ({
   ...h,
   hasReceipt: !!receipts[h.id],
   receiptFile: receipts[h.id] ? receipts[h.id].file : '',
+  audit_nonce: h.audit_nonce || (receipts[h.id] && receipts[h.id].audit_nonce) || '',
+  blind: h.blind || (receipts[h.id] && receipts[h.id].blind) || false,
 }));
 
 for (const r of rows) {
@@ -317,6 +405,13 @@ function nextStep(r) {
     // 对齐 --for 视图的 nextStepFor，让中央视图每项自带「读→写」动作。
     const lane = r.to_lane || '?';
     if (r.status === 'received') {
+      const concl = getReceiptConclusion(r.id);
+      const isBlocked = (r.needs === true) || (receipts[r.id] && receipts[r.id].needs === true) || isVerdictRejected(concl) || isVerdictBlocked(concl);
+      if (isBlocked) {
+        return isZh
+          ? `lane=${lane} · 审计未通过/受阻待整改（${concl ? concl.slice(0, 30) : 'needs_change=true'}）：等待发起方（${r.from_lane || '发起方'}）整改或补齐条件，严禁执行 deliver`
+          : `lane=${lane} · Receipt incomplete/blocked (${concl ? concl.slice(0, 30) : 'needs_change=true'}): awaiting initiator (${r.from_lane || 'initiator'}), do not deliver`;
+      }
       return isZh
         ? `lane=${lane} · 已写回执草稿（等执行方 baton deliver 交付）`
         : `lane=${lane} · Receipt drafted (awaiting executor baton deliver)`;
@@ -377,6 +472,13 @@ function isPendingFor(_target, status) {
 function nextStepFor(r) {
   if (MODE === 'intra-repo') {
     if (r.status === 'received') {
+      const concl = getReceiptConclusion(r.id);
+      const isBlocked = (r.needs === true) || (receipts[r.id] && receipts[r.id].needs === true) || isVerdictRejected(concl) || isVerdictBlocked(concl);
+      if (isBlocked) {
+        return isZh
+          ? `审计未通过/受阻待整改（${concl ? concl.slice(0, 30) : 'needs_change=true'}）：等待发起方（${r.from_lane || '发起方'}）处理，严禁执行 deliver`
+          : `Receipt incomplete/blocked (${concl ? concl.slice(0, 30) : 'needs_change=true'}): awaiting initiator (${r.from_lane || 'initiator'}), do not deliver`;
+      }
       return isZh
         ? '已写回执草稿，请在会话收尾时运行 baton deliver 交付'
         : 'Receipt drafted, run baton deliver when wrapping up';
@@ -441,14 +543,20 @@ if (FOR) {
   }
   const todo = mine.filter(r => isPendingFor(FOR, r.status));
   const recv = mine.filter(r => r.status === 'received');
+  const isRecvBlocked = (r) => (r.needs === true) || (receipts[r.id] && receipts[r.id].needs === true) || isVerdictRejected(getReceiptConclusion(r.id)) || isVerdictBlocked(getReceiptConclusion(r.id));
+  const recvBlocked = recv.filter(isRecvBlocked);
+  const recvReady = recv.filter(r => !isRecvBlocked(r));
   const deliv = mine.filter(r => r.status === 'delivered');
-  const myRejected = (MODE === 'intra-repo')
-    ? rows.filter(r => r.from_lane === FOR && r.status !== 'closed' && r.rejected_at && (r.status === 'forwarded' || r.status === 'draft'))
+  const rejectedByMe = (MODE === 'intra-repo')
+    ? rows.filter(r => (r.rejected_by ? r.rejected_by === FOR : r.from_lane === FOR) && r.status !== 'closed' && r.rejected_at && (r.status === 'forwarded' || r.status === 'draft'))
+    : [];
+  const rejectedToMe = (MODE === 'intra-repo')
+    ? rows.filter(r => r.rejected_by && r.rejected_by !== FOR && r.from_lane === FOR && r.status !== 'closed' && r.rejected_at && (r.status === 'forwarded' || r.status === 'draft'))
     : [];
   const lines = [];
   if (isZh) {
     lines.push(`[交接追踪 · ${ROOT}] ${FOR} 未闭环 ${mine.length} 项（${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR}）`);
-    if (mine.length === 0 && myRejected.length === 0) {
+    if (mine.length === 0 && rejectedByMe.length === 0 && rejectedToMe.length === 0) {
       lines.push(`✅ 没有待 ${FOR} 处理的交接。`);
     } else {
       if (todo.length) {
@@ -459,16 +567,31 @@ if (FOR) {
           if (step) lines.push(`      → 下一步：${step}`);
         }
       }
-      if (myRejected.length) {
-        lines.push(`- 我方已驳回退回（等待执行方整改并重新交付 · ${myRejected.length}）:`);
-        for (const r of myRejected) {
+      if (rejectedToMe.length) {
+        lines.push(`- 收到驳回待整改（由 ${rejectedToMe[0].rejected_by || '对方'} 驳回 · ${rejectedToMe.length}）:`);
+        for (const r of rejectedToMe) {
           lines.push(formatRowLine(r, true));
-          lines.push(`      → 状态：已驳回退回给 lane=${r.to_lane}，等待其整改并 baton deliver`);
+          lines.push(`      → 下一步：查看回执「驳回记录」完成整改后 baton reopen ${r.id} 或补充条件重新转递`);
         }
       }
-      if (recv.length) {
-        lines.push(`- 已写回执待终态交付（${recv.length}）:`);
-        for (const r of recv) {
+      if (rejectedByMe.length) {
+        lines.push(`- 我方已驳回退回（等待执行方整改并重新交付 · ${rejectedByMe.length}）:`);
+        for (const r of rejectedByMe) {
+          lines.push(formatRowLine(r, true));
+          lines.push(`      → 状态：已驳回退回给 lane=${r.to_lane === FOR ? r.from_lane : r.to_lane}，等待其整改并重新交付`);
+        }
+      }
+      if (recvBlocked.length) {
+        lines.push(`- 审计未通过/受阻待处理（${recvBlocked.length}）:`);
+        for (const r of recvBlocked) {
+          lines.push(formatRowLine(r, true));
+          const step = nextStepFor(r);
+          if (step) lines.push(`      → 下一步：${step}`);
+        }
+      }
+      if (recvReady.length) {
+        lines.push(`- 已写回执待终态交付（${recvReady.length}）:`);
+        for (const r of recvReady) {
           lines.push(formatRowLine(r, true));
           const step = nextStepFor(r);
           if (step) lines.push(`      → 下一步：${step}`);
@@ -491,7 +614,7 @@ if (FOR) {
     }
   } else {
     lines.push(`[Baton Status · ${ROOT}] ${FOR}: ${mine.length} open item(s) (${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR})`);
-    if (mine.length === 0 && myRejected.length === 0) {
+    if (mine.length === 0 && rejectedByMe.length === 0 && rejectedToMe.length === 0) {
       lines.push(`✅ No pending handoffs for ${FOR}.`);
     } else {
       if (todo.length) {
@@ -502,16 +625,31 @@ if (FOR) {
           if (step) lines.push(`      → Next step: ${step}`);
         }
       }
-      if (myRejected.length) {
-        lines.push(`- My rejections awaiting revision (${myRejected.length}):`);
-        for (const r of myRejected) {
+      if (rejectedToMe.length) {
+        lines.push(`- Rejections received awaiting revision (${rejectedToMe.length}):`);
+        for (const r of rejectedToMe) {
           lines.push(formatRowLine(r, false));
-          lines.push(`      → Status: Rejected back to lane=${r.to_lane}, awaiting revision & deliver`);
+          lines.push(`      → Next step: Revise per rejection record in receipt → baton reopen ${r.id} or forward`);
         }
       }
-      if (recv.length) {
-        lines.push(`- Draft receipts awaiting final delivery (${recv.length}):`);
-        for (const r of recv) {
+      if (rejectedByMe.length) {
+        lines.push(`- My rejections awaiting revision (${rejectedByMe.length}):`);
+        for (const r of rejectedByMe) {
+          lines.push(formatRowLine(r, false));
+          lines.push(`      → Status: Rejected back to lane=${r.to_lane === FOR ? r.from_lane : r.to_lane}, awaiting revision & deliver`);
+        }
+      }
+      if (recvBlocked.length) {
+        lines.push(`- Incomplete / Blocked / Revision Needed (${recvBlocked.length}):`);
+        for (const r of recvBlocked) {
+          lines.push(formatRowLine(r, false));
+          const step = nextStepFor(r);
+          if (step) lines.push(`      → Next step: ${step}`);
+        }
+      }
+      if (recvReady.length) {
+        lines.push(`- Draft receipts awaiting final delivery (${recvReady.length}):`);
+        for (const r of recvReady) {
           lines.push(formatRowLine(r, false));
           const step = nextStepFor(r);
           if (step) lines.push(`      → Next step: ${step}`);

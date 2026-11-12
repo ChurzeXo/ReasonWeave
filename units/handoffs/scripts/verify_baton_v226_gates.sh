@@ -26,7 +26,8 @@ TID="audit-$(date +%Y%m%d)-01-task"
 
 # 审计方草拟初始回执并交付
 HANDOFF_LANE=audit "$BATON_BIN" status > /dev/null
-HANDOFF_LANE=audit "$BATON_BIN" receipt "$TID" -n $'## 结论\n待整改初始回执\n## 修复状态\n进行中\n## 验收证据\n- paths: none' --evidence-note "init" > /dev/null
+NONCE=$("$BATON_BIN" show "$TID" --nonce)
+HANDOFF_LANE=audit "$BATON_BIN" receipt "$TID" -n $'## 结论\n待整改初始回执\n## 修复状态\n进行中\n## 验收证据\n- paths: none' --evidence-note "init" --audit-nonce "$NONCE" > /dev/null
 HANDOFF_LANE=audit "$BATON_BIN" deliver "$TID" > /dev/null
 
 # 发起方驳回
@@ -43,12 +44,13 @@ if [ "$RC_EMPTY" -eq 0 ]; then
   cat /tmp/empty_deliver.log
   exit 1
 fi
-grep -q "驳回封印" /tmp/empty_deliver.log || { echo "❌ 缺少驳回封印错误提示"; exit 1; }
+grep -q -E "(驳回封印|拒绝交付|未完成整改)" /tmp/empty_deliver.log || { echo "❌ 缺少驳回封印错误提示"; exit 1; }
 
 # 审计方尝试结论仍为 REJECTED 的交付，必须硬拦截 Exit 1
+NONCE=$("$BATON_BIN" show "$TID" --nonce)
 touch real_fix.js
 set +e
-HANDOFF_LANE=audit "$BATON_BIN" receipt "$TID" -n $'## 结论\nREJECTED / NO-GO 存在技术风险\n## 修复状态\n已补充测试与证据\n## 验收证据\n- paths: real_fix.js' --evidence-paths "real_fix.js" > /dev/null
+HANDOFF_LANE=audit "$BATON_BIN" receipt "$TID" -n $'## 结论\nREJECTED / NO-GO 存在技术风险\n## 修复状态\n已补充测试与证据\n## 验收证据\n- paths: real_fix.js' --evidence-paths "real_fix.js" --audit-nonce "$NONCE" > /dev/null
 HANDOFF_LANE=audit "$BATON_BIN" deliver "$TID" > /tmp/rejected_deliver.log 2>&1
 RC_REJ_DELIVER=$?
 set -e
@@ -56,10 +58,10 @@ if [ "$RC_REJ_DELIVER" -eq 0 ]; then
   echo "❌ 失败：REJECTED 结论交付未被拦截！"
   exit 1
 fi
-grep -q "驳回封印" /tmp/rejected_deliver.log || { echo "❌ 缺少驳回封印未完成整改错误提示"; exit 1; }
+grep -q -E "(驳回封印|拒绝交付|未完成整改)" /tmp/rejected_deliver.log || { echo "❌ 缺少驳回封印未完成整改错误提示"; exit 1; }
 
 # 审计方做实质整改且结论改为通过后再交付，必须成功
-HANDOFF_LANE=audit "$BATON_BIN" receipt "$TID" -n $'## 结论\nVerified / PASSED 终审合格\n## 修复状态\n已补充测试与证据，全量通过\n## 验收证据\n- paths: real_fix.js' --evidence-paths "real_fix.js" > /dev/null
+HANDOFF_LANE=audit "$BATON_BIN" receipt "$TID" -n $'## 结论\nVerified / PASSED 终审合格\n## 修复状态\n已补充测试与证据，全量通过\n## 验收证据\n- paths: real_fix.js' --evidence-paths "real_fix.js" --audit-nonce "$NONCE" > /dev/null
 HANDOFF_LANE=audit "$BATON_BIN" deliver "$TID" > /dev/null
 echo "✅ PASS (空交付硬拦截 + REJECTED交付拦截 + 实质整改通过放行)"
 

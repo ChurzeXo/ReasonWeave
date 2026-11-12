@@ -33,15 +33,18 @@ CLI 已有 60 分钟新鲜度门禁（receipt/accept/reject 时拦）和 check �
 **任意否定 → 禁止调用工具。先跑 `baton status`（或 `handoff status`），再按结果决定下一步。**
 
 ## 强制操作序列（入站 = 接单/回执/交付 · 仓内）
-1. `baton status --for <本方 lane>`（冷启动直取本方待办；全量 `baton status` 供发起方巡检）
+1. `baton status --for <本方 lane>`（冷启动直取本方待办；全量 `baton status` 供发起方巡检；若为 audit lane 会直接显示签发的 Audit Nonce）
 2. 从「待办」（`draft`/`forwarded`）筛选 `to_lane == 当前 lane`。确认目标 ID（如多条且未指定 → 列出并请用户点名，不擅自选）
-3. `baton show <ID>`
+3. `baton show <ID>`（若为 audit lane，可直接运行 `baton show <ID> --nonce` 提取防伪令牌）
 4. 按边界最小改动（仅该 lane 应改文件）
 5. 写回执：**照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md`「回执模板（可直接复制）」骨架** →
    `baton receipt <ID> -n "<正文>" --evidence-paths "真实文件,..." --evidence-commits "<sha>"`
-   （或原子一步直达：`baton receipt <ID> --deliver -n "..." --evidence-paths "..."`）。（若 `to_lane=audit` 须附 `--audit-nonce "<nonce>"`；无改动用 `--evidence-note`；严禁提前抢跑）
-6. `baton check`（核验证据与锚节合规，exit 0）
-7. **终态交付与会话收尾**：`baton deliver <ID>`（烙印 delivered 并触发平息缓冲，发起方探针平息后 Exit 0 唤醒独立验收；会话收工）。
+   （或原子一步直达：`baton receipt <ID> --deliver -n "..." --evidence-paths "..."`）。
+   - **Audit 身份与 Nonce 必填**：`to_lane=audit` 提交回执时必须携带系统签发的防伪挑战令牌 `--audit-nonce "<nonce>"`（或在 frontmatter 写入 `audit_nonce`）；禁止伪造或跨工单复用。
+   - **受阻与未完成处理**：因外部环境（如真机缺席）受阻或验收未通过时，必须如实标记 `INCOMPLETE / NO-GO`，禁止虚假 deliver 或伪造 PASS；此时可保持在受阻状态等待发起方补充条件，或由审计方直接执行 `baton reject <ID> -n "<缺失条件>" --by audit` 退回发起方整改并自动轮转 Nonce。
+   - 无代码变动用 `--evidence-note "<说明>"`。
+6. `baton check <id>`（精准核验当前工单证据与锚节合规，exit 0；若检测到历史 needs_change 漂移可使用 `baton check <id> --fix` 自动对齐）
+7. **终态交付与会话收尾**：`baton deliver <ID>`（仅在全部判据实测通过且自检合规时执行；烙印 delivered 并触发平息缓冲，发起方探针平息后 Exit 0 唤醒独立验收；INCOMPLETE / NO-GO 严禁 deliver）。
 
 ## 防抢跑与终态交付平息纪律（v2.20.0 强制）
 - **落盘不等于交付**：回执文件物理落盘不代表执行方会话结束。执行方必须通过 `baton deliver <ID>`（或 `baton receipt --deliver`）显式标记终态交付；
