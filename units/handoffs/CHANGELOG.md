@@ -6,6 +6,21 @@
 
 ---
 
+> **v2.29.3 补丁（2026-11-14 · ADR-0009 联动 · 回执规范强化接线证明 · Anti-Orphan & Wiring Proof）**：
+> 1. **回执规范强化反未接线证据（Wiring Proof）**：遵循 ADR-0009 决议，更新 `RESPONSE-TEMPLATE.md` 黄金法则第 3 条，明确“任何新增原语、工具、Schema、路由或 UI 组件必须完成上层调用树接线闭环”，仅有孤立单元测试不得视为完成，审计方享有基于未接线事实的无条件驳回权；
+> 2. **生态规约对齐**：与 `units/playbook/docs/19-anti-orphan-vertical-slicing.md` 形成闭环联动。
+
+---
+
+> **v2.29.2 变更（2026-11-14 · 后台监听与守护脚本深度排查 · Mac / Windows 双平台能效加固 · 孤儿守护抑制与防多实例堆叠 · 平息缓冲硬上限熔断 · 跨平台文件名大小写与路径斜杠鲁棒化）**：动因——深度排查仓库所有后台常驻脚本（`baton wait`、`baton wait --daemon`、`baton forward --wait`、`baton throttle`），消除 Mac 与 Windows 长期运行过程中的发烫、卡顿、CPU 频繁被打断与孤儿进程堆叠隐患。
+> 1. **孤儿守护抑制与防多实例堆叠（Prevent Stale Watcher Accumulation）**：在 `cmdWait` 启动监听前，强行检索 `.handoffs/.watch/<id>.json`，若发现存活的旧 watcher 进程，自动发送 `SIGTERM`（Windows 平台安全 `process.kill`）接管并清理旧实例，杜绝同一工单多次监听累积导致的 CPU 唤醒风暴与内存泄漏；
+> 2. **平息缓冲防死循环硬上限（Settle Hard Cap Circuit Breaker）**：为防抢跑平息缓冲引入最大安全硬上限 `settleHardCapMs = Math.max(settleDelayMs * 3, 30_000)`；当外部频繁写入或持续触碰导致平息计时器不断被重置时，到达硬上限后自动触发安全熔断，强制结束平息并唤醒，根除长时间每秒轮询导致的 CPU 持续发热；
+> 3. **跨平台（Windows / macOS）路径与大小写鲁棒化**：`onFsEvent` 文件名提取统一使用 `path.basename`，对比统一进行小写转换，彻底解决 Windows NTFS 大小写不敏感及反斜杠导致 `fs.watch` 事件漏判并退化为高频定时器的问题；精确过滤 `.tmp`、`.swp`、`.log`、`.json`、`.lock` 等噪音文件；
+> 4. **绿色能效退避轮询（Green Energy Efficient Polling）**：拉长极端环境下的兜底轮询周期（3s→6s→12s→20s），利用 `fs.watch` 事件毫秒级即时驱动，消除不必要的频繁 CPU C-state 唤醒，保护笔记本电池与能效；
+> 5. **Windows 平台控制台与脱钩加固**：Windows 环境补充 `SIGBREAK` 控制台关闭信号监听；`spawnDaemonWait` 增加 `windowsHide: true` 并显式关闭父进程端日志句柄，消除控制台弹框与文件锁冲突；工单原文件被删除或切换分支时主动退出监听。
+
+---
+
 > **v2.29.1 补丁（2026-11-14 · 跨仓目标注册 lab · CLI 英文帮助版本漂移根治 · CLI 可达性门禁韧性分层）**：
 > 1. **生态跨仓一等 target 扩容 lab**：正式打通外部消费方（如 iggle / Tappy 等）向 lab 能力库派发跨仓工单 (`LAB-YYYYMMDD-NN-TYPE`) 及回执闭环通道；
 > 2. **英文帮助版本漂移根治**：修复英文 help 文本中残留硬编码 `v2.20.0` 的历史缺陷，对齐为 `${BATON_VERSION}`（v2.29.0）；补齐英文帮助缺失的 `reopen` / `throttle` / `nonce` / `--workspace worktree` / `--prune-worktree` 等新命令及参数；增加 `--version` / `-v` / `version` 与 `--help` / `-h` 规范化退出码；

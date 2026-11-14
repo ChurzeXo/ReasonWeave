@@ -1,0 +1,100 @@
+"""
+Python 栈反未接线（Anti-Orphan）对等性测试模板
+适用场景：AI Agent 框架、Planner-Executor 架构、CLI 原语系统、API 路由系统
+设计原则：
+  1. 单一事实源（SSOT）：通过装饰器反射生成元数据，避免维护多份 Schema。
+  2. 纯内存集合比对：执行时间 < 50ms，非常适合挂入本地 pytest 必跑项（Fast Gate）。
+  3. 确定性报错提示：断言失败时清晰输出修复指引，赋能 Agent 一键自愈。
+  4. 双运行器兼容：同时兼容 pytest 与 Python 原生 unittest。
+"""
+
+import inspect
+import unittest
+from typing import Callable, Dict, Any, Set
+
+# ==============================================================================
+# 1. 业务框架模拟（请根据业务项目的真实注册机制进行替换）
+# ==============================================================================
+
+class PrimitiveRegistry:
+    """单一事实源：底层原语注册中心"""
+    _primitives: Dict[str, Callable] = {}
+
+    @classmethod
+    def register(cls, name: str | None = None):
+        """装饰器：标记函数为可用原语"""
+        def decorator(func: Callable):
+            fn_name = name or func.__name__
+            cls._primitives[fn_name] = func
+            return func
+        return decorator
+
+    @classmethod
+    def list_all(cls) -> Dict[str, Callable]:
+        return dict(cls._primitives)
+
+
+class PlannerActionSpace:
+    """上层规划器：LLM 或系统可调用的动作空间"""
+    _actions: Set[str] = set()
+
+    @classmethod
+    def get_available_actions(cls) -> Set[str]:
+        # 实际项目中应返回向 LLM Prompt/Schema 实际暴露的动作空间
+        return set(cls._actions)
+
+
+# ==============================================================================
+# 2. 对等性测试与断言（兼容 pytest 与 unittest）
+# ==============================================================================
+
+class TestWiringParity(unittest.TestCase):
+    """接线对等性与防孤儿断言套件"""
+
+    def test_planner_executor_wiring_parity(self):
+        """
+        【对等断言】：确保所有通过 @register 声明的底层原语，
+        均已被上层 Planner 动作空间识别并暴露给调度系统。
+        """
+        implemented = set(PrimitiveRegistry.list_all().keys())
+        planner_visible = PlannerActionSpace.get_available_actions()
+
+        # 1. 检查是否存在“已实现但未接线”的孤儿原语
+        orphaned_primitives = implemented - planner_visible
+        self.assertFalse(
+            orphaned_primitives,
+            f"❌ 发现未接线底层原语（已实现但上层 Planner 不可见）：{sorted(orphaned_primitives)}\n"
+            f"👉 修复指引：请在上层规划器的注册列表或路由表中引入并注册该原语。"
+        )
+
+        # 2. 检查是否存在“已声明但未实现”的虚幻原语
+        hallucinated_actions = planner_visible - implemented
+        self.assertFalse(
+            hallucinated_actions,
+            f"❌ 发现幻觉原语（上层 Planner 已暴露但底层未找到实现）：{sorted(hallucinated_actions)}\n"
+            f"👉 修复指引：请在执行器层挂载 @register 补齐底层实现。"
+        )
+
+    def test_primitive_metadata_completeness(self):
+        """
+        【语义完整性断言】：防止 AI 虽然接入了原语，但漏写了 Docstring 或类型注解，
+        导致 LLM 无法理解或无法正确提取 JSON Schema。
+        """
+        for name, func in PrimitiveRegistry.list_all().items():
+            doc = inspect.getdoc(func)
+            self.assertTrue(
+                doc and len(doc.strip()) > 10,
+                f"❌ 原语 '{name}' 缺失有效的 Docstring 描述。\n"
+                f"👉 修复指引：为函数补充功能说明、输入参数与返回值说明，以便自动生成 Tool Schema。"
+            )
+            sig = inspect.signature(func)
+            self.assertIsNot(
+                sig.return_annotation,
+                inspect.Signature.empty,
+                f"❌ 原语 '{name}' 缺失返回类型注解。\n"
+                f"👉 修复指引：请显式声明返回值类型（如 `-> str`、`-> bool` 或 Pydantic 模型）。"
+            )
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -763,4 +763,23 @@ status: draft
     assert.equal(checkRes.status, 0, `check 应当成功通过（不被外部 handoff 别名阻断）: ${checkRes.stderr}\n${checkRes.stdout}`);
     assert.ok(/⚠️.*\[CLI\] handoff 别名/i.test(checkRes.stdout), '应当以 warning 提示 handoff 别名异常，而非作为阻塞性 problem');
   });
+
+  it('22. 后台监听守护防堆叠与平息熔断（Mac / Windows 防卡顿发烫安全防护）', () => {
+    const tmpDir = createTestRepo();
+    const res = runBaton(tmpDir, 'new impl task "测试后台节能与防堆叠" --from audit');
+    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+
+    // 1. 模拟旧的 watcher 僵死残留于 .watch/<id>.json
+    const watchDir = path.join(tmpDir, '.handoffs', '.watch');
+    fs.mkdirSync(watchDir, { recursive: true });
+    const watchFile = path.join(watchDir, `${id}.json`);
+    const fakePid = 999999; // 不存在的假 PID
+    fs.writeFileSync(watchFile, JSON.stringify({ id, pid: fakePid, started_at: new Date().toISOString() }), 'utf8');
+
+    // 2. 派发回执交付并运行 wait，应自愈接管/清除陈旧注册表并秒级交付就绪 Exit 0
+    runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --evidence-note "测试通过" --deliver --as impl`);
+    const waitRes = runBaton(tmpDir, `wait ${id} --settle 100ms`);
+    assert.equal(waitRes.status, 0, `wait 应成功退出: ${waitRes.stderr}\n${waitRes.stdout}`);
+    assert.ok(/交付已就绪|处于终态/i.test(waitRes.stdout), '回执到达后应秒级唤醒');
+  });
 });

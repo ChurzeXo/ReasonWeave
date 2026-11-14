@@ -16,7 +16,9 @@
    The receipt MUST be written by the receiving party (`to_lane`), NOT the author (`from_lane`).
    If the task targets `to_lane: audit`, the receipt command MUST include the cryptographic challenge token:
    `baton receipt <id> --audit-nonce "<nonce>"`.
-3. **Copy the Skeleton Verbatim**:
+3. **Anti-Orphan & Wiring Proof**:
+   Any new primitives, tools, schemas, routes, or UI components MUST be wired into their respective caller trees or registries. Unit tests alone are insufficient for closure without wiring verification evidence.
+4. **Copy the Skeleton Verbatim**:
    Do not invent custom markdown structures. Missing required anchors or sections will cause `baton check` and `baton receipt` to fail closed.
 
 ---

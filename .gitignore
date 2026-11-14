@@ -41,6 +41,10 @@ package-lock.json
 *.tgz
 *.zip
 
+# Python 缓存（模板目录验证时产生）
+__pycache__/
+*.pyc
+
 # 临时证据与测试运行日志
 units/preflight/evidence/2026-10-*/run*.txt
 units/preflight/evidence/2026-10-*/verify*.txt

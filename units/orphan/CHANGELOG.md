@@ -1,5 +1,26 @@
 # Changelog — units/orphan
 
+## [v1.2.1] - 2026-11-14
+
+### Added
+- **Node.js / ESM 栈 Fast Gate 配方与本仓自举挂载 (ADR-0009 D2/D3)**：
+  - 新增 `templates/wiring/pre-commit-node.sh.template`（唯一事实源）：L1 `node --check` 暂存区语法硬校验 → L2 `lab-orphan check-diff --staged` 增量接线对账 → L3 新增导出符号垂直切片提示，支持 `SKIP_WIRING_GATE=1` 紧急豁免；
+  - `templates/wiring/README.md`：索引表补充 Node.js/ESM 行，新增「本仓自举挂载」章节（软链命令、SSOT 单向同步约定、实测 1.5s 耗时）；
+  - 本仓 `.git/hooks/pre-commit` 已由手写脚本改为软链 `$HOME/dev-templates/hooks/pre-commit-node`，门禁配置不再游离于版本管理之外。
+
+### Fixed
+- 清理 `templates/wiring/` 下遗留的验证副本（`miniprogram-route-guard.mjs`、`test_wiring_example.py` 与 `__pycache__/`），恢复模板目录纯净。
+
+## [v1.2.0] - 2026-11-14
+
+### Added
+- **联邦分栈反未接线（Anti-Orphan Wiring）模板库与指南 (ADR-0009)**：
+  - 新增 `templates/wiring/README.md`：确立联邦门禁分级设计（Fast Local Gate vs Heavy CI Gate）与拒绝高假阳性工具准则；
+  - 新增 `templates/wiring/python-parity-test.py.template`：SSOT 装饰器反射 + 内存级集合对等测试（Parity Test）；
+  - 新增 `templates/wiring/rust-exhaustive-match.md`：编译器级 `#![deny(dead_code)]` 与穷尽模式匹配策略；
+  - 新增 `templates/wiring/swift-periphery.md`：SwiftUI 引用图谱扫描与分级执行策略；
+  - 新增 `templates/wiring/miniprogram-route-guard.js.template`：微信小程序 `app.json` 路由闭环轻量探针。
+
 ## [v1.1.0] - 2026-11-10
 
 ### Added

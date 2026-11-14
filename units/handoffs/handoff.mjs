@@ -1936,10 +1936,12 @@ function spawnDaemonWait(idOrIds, extraArgs = []) {
 
   let outFd = 'ignore';
   let errFd = 'ignore';
+  let openedFd = null;
   try {
     const fd = fs.openSync(logFile, 'a');
     outFd = fd;
     errFd = fd;
+    openedFd = fd;
   } catch {}
 
   const cliPath = fs.realpathSync(process.argv[1]);
@@ -1953,8 +1955,13 @@ function spawnDaemonWait(idOrIds, extraArgs = []) {
     detached: true,
     stdio: ['ignore', outFd, errFd],
     cwd: ROOT,
+    windowsHide: true,
     env: { ...process.env, BATON_DAEMON: '1' }
   });
+
+  if (openedFd !== null) {
+    try { fs.closeSync(openedFd); } catch {}
+  }
 
   child.unref();
 
@@ -4018,17 +4025,25 @@ async function cmdWait(args) {
   const watchers = [];
 
   const onFsEvent = (filename) => {
-    // 1. 精准文件名过滤：严禁无脑放行 !filename 触发虚假事件风暴
+    // 1. 精准文件名过滤：兼容 macOS (Darwin FSEvents) 与 Windows (NTFS 大小写不敏感及路径斜杠)
     let isRelevant = false;
     if (filename) {
-      const cleanName = String(filename);
-      // 过滤常见噪音文件（.DS_Store、临时文件、锁文件、备份文件等）
-      if (cleanName.startsWith('.') || cleanName.endsWith('.tmp') || cleanName.endsWith('.swp') || cleanName.endsWith('.bak.md')) {
+      const baseName = path.basename(String(filename)).toLowerCase();
+      // 过滤常见噪音文件（.DS_Store、临时文件、锁文件、日志文件、备份文件、注册表文件等）
+      if (
+        baseName.startsWith('.') ||
+        baseName.endsWith('.tmp') ||
+        baseName.endsWith('.swp') ||
+        baseName.endsWith('.log') ||
+        baseName.endsWith('.bak.md') ||
+        baseName.endsWith('.json') ||
+        baseName.endsWith('.lock')
+      ) {
         return;
       }
-      isRelevant = ids.some(id => cleanName.includes(id));
-      if (!isRelevant && !cleanName.endsWith('.md')) {
-        return;
+      // 必须是 .md 结尾并且包含某个工单 ID（小写对齐）
+      if (baseName.endsWith('.md')) {
+        isRelevant = ids.some(id => baseName.includes(id.toLowerCase()));
       }
     } else {
       // 在 macOS (Darwin FSEvents) 上 filename 为 null 时，做一次极轻量的快速 mtime 检查，若目标文件没有任何变动则直接丢弃
@@ -4042,7 +4057,7 @@ async function cmdWait(args) {
 
     if (!isRelevant) return;
 
-    // 2. 智能防抖（Debounce · 300ms）：避免连续写入引发事件循环风暴吃满 CPU
+    // 2. 智能防抖（Debounce · 300ms）：避免编辑器连续写入引发事件循环风暴吃满 CPU
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       debounceTimer = null;
@@ -4061,6 +4076,7 @@ async function cmdWait(args) {
           onFsEvent(filename);
         });
         w.on('error', () => { /* 忽略底层 watcher 瞬时错误，保底靠轮询退避 */ });
+        w._targetDir = targetDir;
         watchers.push(w);
       }
     } catch {}
@@ -4080,9 +4096,27 @@ async function cmdWait(args) {
     watchers.length = 0;
   };
 
-  // ── 监听注册表（D2 · .handoffs/.watch/<id>.json）──────────────────────────────
+  // ── 监听注册表与孤儿守护抑制（防止同一工单多实例累积导致 CPU 唤醒风暴）─────────
   const WATCH_DIR = path.join(ROOT, '.watch');
   try { fs.mkdirSync(WATCH_DIR, { recursive: true }); } catch {}
+
+  // 启动前检查并清理针对当前工单的旧 watcher 进程，确保全系统全局单一实例
+  for (const id of ids) {
+    const watchFile = path.join(WATCH_DIR, `${id}.json`);
+    if (fs.existsSync(watchFile)) {
+      try {
+        const raw = fs.readFileSync(watchFile, 'utf8');
+        const prev = JSON.parse(raw);
+        if (prev && prev.pid && prev.pid !== process.pid) {
+          try {
+            process.kill(prev.pid, 0); // 探测进程存活
+            process.kill(prev.pid, 'SIGTERM'); // 终止旧的孤儿守护
+          } catch {}
+          try { fs.unlinkSync(watchFile); } catch {}
+        }
+      } catch {}
+    }
+  }
 
   const writeWatchRegistry = () => {
     const startedAt = new Date().toISOString();
@@ -4126,16 +4160,20 @@ async function cmdWait(args) {
   process.on('SIGINT', () => { cleanupAll(); process.exit(130); });
   process.on('SIGTERM', () => { cleanupAll(); process.exit(143); });
   process.on('SIGHUP', () => { cleanupAll(); process.exit(129); });
+  if (process.platform === 'win32') {
+    // Windows 控制台关闭信号监听
+    process.on('SIGBREAK', () => { cleanupAll(); process.exit(130); });
+  }
 
   writeWatchRegistry();
 
-  // 自适应动态退避（未显式指定间隔时根据等待时长智能拉长兜底轮询）
+  // 自适应动态退避（兼顾极低 CPU 占用与极端环境事件兜底，保护 Mac/Win 设备不发烫）
   const getNextInterval = (elapsed) => {
     if (explicitIntervalMs) return explicitIntervalMs;
-    if (elapsed < 30_000) return 2_000;       // 前 30 秒：2s
-    if (elapsed < 120_000) return 4_000;      // 30s ~ 2min：4s
-    if (elapsed < 300_000) return 8_000;      // 2min ~ 5min：8s
-    return 15_000;                            // 5min 以上长稳态：15s 保底
+    if (elapsed < 30_000) return 3_000;       // 前 30 秒：3s（fs.watch 300ms 内即时响应，轮询仅做保底）
+    if (elapsed < 120_000) return 6_000;      // 30s ~ 2min：6s
+    if (elapsed < 300_000) return 12_000;     // 2min ~ 5min：12s
+    return 20_000;                            // 5min 以上长稳态：20s 极低功耗保底
   };
 
   while (true) {
@@ -4170,7 +4208,20 @@ async function cmdWait(args) {
     }
 
     try {
+      // 动态补挂尚未创建的目标目录（如初始阶段尚未生成 receipts/ 目录）
+      if (watchers.length < 2) {
+        if (!watchers.some(w => w._targetDir === H_DIR)) safeWatch(H_DIR);
+        if (!watchers.some(w => w._targetDir === R_DIR)) safeWatch(R_DIR);
+      }
+
       for (const [id, t] of ticketMap.entries()) {
+        // 若工单原文件被物理删除（例如分支切换或误删），则退出监听避免无限空耗电量
+        if (!fs.existsSync(t.hFile)) {
+          console.warn(`\n⚠️ [工单文件缺失] 工单文件已不存在: ${t.hFile}，停止监听退出。`);
+          cleanupAll();
+          process.exit(1);
+        }
+
         // 1. 检查 hFile 的 mtime 是否变动（mtime 守卫）
         let hMtime = 0;
         try { if (fs.existsSync(t.hFile)) hMtime = fs.statSync(t.hFile).mtimeMs; } catch {}
@@ -4224,8 +4275,15 @@ async function cmdWait(args) {
         if (settleDelayMs > 0 && readyTickets.some(t => t.status === 'delivered')) {
           console.log(`\n⏳ [交付平息缓冲] 检测到交付信号（就绪 ${readyTickets.length}/${ids.length} 项），等待执行方会话彻底结束（平息缓冲 ${formatDuration(settleDelayMs)}）...`);
           let settleStart = Date.now();
+          const settleHardCapMs = Math.max(settleDelayMs * 3, 30_000); // 最大平息硬上限，杜绝后置持续扰动导致的无限等待与 CPU 空转
+          const settleGlobalStart = settleStart;
+
           while (Date.now() - settleStart < settleDelayMs) {
-            const remain = settleDelayMs - (Date.now() - settleStart);
+            if (Date.now() - settleGlobalStart >= settleHardCapMs) {
+              console.log(`⏱️ [平息硬上限熔断] 已达到最大平息缓冲安全上限 (${formatDuration(settleHardCapMs)})，强制结束平息并唤醒！`);
+              break;
+            }
+            const remain = Math.max(100, settleDelayMs - (Date.now() - settleStart));
             await new Promise((r) => setTimeout(r, Math.min(remain, 1000)));
             let hasActiveWrite = false;
             for (const [id, t] of ticketMap.entries()) {

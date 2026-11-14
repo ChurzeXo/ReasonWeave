@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Pre-commit Hook: Node.js / ESM 栈反未接线快速门禁 (Fast Gate)
+# 架构规范：遵循 ADR-0009 联邦门禁哲学，执行耗时预算 < 2s
+#   - L1 语法硬校验：node --check 逐个校验暂存区 JS/ESM 文件
+#   - L2 接线对账：调用 lab-orphan check-diff --staged（增量 O(Δ)）
+# ==============================================================================
+set -euo pipefail
+
+# 允许通过环境变量紧急豁免（用于紧急 hotfix，事后必须补接线审计）
+if [[ "${SKIP_WIRING_GATE:-0}" == "1" ]]; then
+  echo "⚠️ [Anti-Orphan] 检测到 SKIP_WIRING_GATE=1，跳过 Node.js 接线门禁。"
+  echo "   提示：豁免提交需要在 PR/回执中补交 Wiring Proof。"
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+echo "🔍 [Anti-Orphan] 正在执行 Node.js/ESM 增量接线门禁..."
+
+# ---------- L1: 暂存区语法硬校验（毫秒级） ----------
+SYNTAX_FAIL=0
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+  case "$file" in */node_modules/*|node_modules/*) continue ;; esac
+  [[ -f "$file" ]] || continue
+  if ! node --check "$file" >/tmp/.precommit-node-check.$$ 2>&1; then
+    echo "❌ [Anti-Orphan] 语法校验失败: $file"
+    sed 's/^/   /' /tmp/.precommit-node-check.$$ || true
+    SYNTAX_FAIL=1
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACM -- '*.mjs' '*.js' '*.cjs' 2>/dev/null || true)
+rm -f /tmp/.precommit-node-check.$$
+
+if [[ "$SYNTAX_FAIL" -ne 0 ]]; then
+  echo "👉 修复指引：先修正上述语法错误，再重新 git add 并提交。"
+  exit 1
+fi
+
+# ---------- L2: 反未接线增量对账（Orphan Check-Diff） ----------
+ORPHAN_ENGINE=""
+if [[ -f "units/orphan/bin/lab-orphan.mjs" ]]; then
+  ORPHAN_ENGINE="node units/orphan/bin/lab-orphan.mjs"
+elif [[ -f "node_modules/lab-agent-toolkit/units/orphan/bin/lab-orphan.mjs" ]]; then
+  ORPHAN_ENGINE="node node_modules/lab-agent-toolkit/units/orphan/bin/lab-orphan.mjs"
+elif command -v lab-orphan >/dev/null 2>&1; then
+  ORPHAN_ENGINE="lab-orphan"
+fi
+
+if [[ -n "$ORPHAN_ENGINE" ]]; then
+  $ORPHAN_ENGINE check-diff --staged
+else
+  echo "ℹ️ [Anti-Orphan] 未检测到 lab-orphan 引擎，已跳过接线对账（仅做语法校验）。"
+  echo "   挂载引擎：npm i -g lab-agent-toolkit  或 npm i -D lab-agent-toolkit"
+  echo "   参考配方：\$(lab path orphan)/templates/wiring/"
+fi
+
+# ---------- L3: 垂直切片自检提示（新增导出即需接线证明） ----------
+NEW_EXPORTS="$(git diff --cached -U0 -- '*.mjs' '*.js' '*.ts' 2>/dev/null \
+  | grep -E '^\+.*export[[:space:]]+(async[[:space:]]+)?(function|const|class|default)' || true)"
+if [[ -n "$NEW_EXPORTS" ]]; then
+  echo "🧭 [Vertical Slicing] 本次提交新增了导出符号，请确认调用链已闭环："
+  echo "$NEW_EXPORTS" | sed 's/^+//' | sed 's/^/   /' | head -10
+  echo "   闭环要求：实现 -> 注册/声明 -> 主入口可见（详见 ADR-0009 / playbook 19）"
+fi
+
+echo "✅ [Anti-Orphan] Node.js 接线门禁检查通过。"
+exit 0

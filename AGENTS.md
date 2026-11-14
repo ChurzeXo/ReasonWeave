@@ -41,6 +41,15 @@ docs/                辅助文档与待办 (docs/backlogs/)
 - 未经请求不得随意引入重量级第三方依赖。
 - **改源不改造实例（SSOT 核心铁律）**：动任何“种子/默认值/派生镜像/配置”前，必须先确认单一事实源（SSOT）；严禁绕过源直接在库中敲裸 UPDATE 或就地 patch 物化副本，任何源的修改必须与迁移同步脚本/重物化在同一 commit 提交。
 
+## 反未接线宪章（Anti-Orphan · 强制）
+
+> 权威出处：[ADR-0009](group/architecture/adr/0009-anti-orphan-deterministic-wiring-governance-and-federated-guardrails.md) → `units/playbook/docs/19-anti-orphan-vertical-slicing.md`。与 `CLAUDE.md` 同名章节等价，改一处须同步另一处。
+
+1. **垂直切片铁律**：严禁水平单层交付。任何新增原语、CLI 子命令、`export` 符号或路由，必须在**同一次提交**内完成 `底层实现 → 注册表/Schema 声明 → 主入口可见（bin/lab.mjs、index.mjs、package.json bin）` 闭环。
+2. **DoD 接线判据**：单元测试通过**不等于**完成，必须附接线证据（“系统的哪个主入口现在能实际触发它”）。
+3. **物理门禁**：本仓 Fast Gate 挂载于 `.git/hooks/pre-commit`（软链至 `$HOME/dev-templates/hooks/pre-commit-node`，SSOT 为 `units/orphan/templates/wiring/pre-commit-node.sh.template`），提交时自动执行 `node --check` + `lab-orphan check-diff --staged`；被拦截时按输出的「缺失清单 + 修复动作」自愈，**禁止用 `--no-verify` 绕过**（紧急豁免仅限 `SKIP_WIRING_GATE=1`，且需在回执/PR 补交 Wiring Proof）。
+4. **交割审计**：审计方（`to_lane: audit`）第一道防线为孤儿与接线检查，新增导出无生产调用者一律驳回。
+
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
 <!-- stub:sha256:ca438a6f -->
