@@ -12,7 +12,7 @@
 # 每仓校准：复制本文件到项目 scripts/（或根），改顶部默认值，或提供 preflight.conf 覆盖
 # （默认读仓根 preflight.conf；用 PREFLIGHT_CONF 指定其它路径）。
 # 覆盖层级：env > preflight.conf > 内置默认（env 显式设置即压过 conf，并留痕不静默）。
-# 可覆盖变量：RUNTIME_PATHS / DOC_BUDGETS / BACKLOG_DIR / BACKLOG_HEAD / BACKLOG_TYPE
+# 可覆盖变量：RUNTIME_PATHS / DOC_BUDGETS / BACKLOG_DIR / BACKLOG_HEAD / BACKLOG_TYPE / RECONCILE_PAIRS / RECONCILE_CMD
 set -uo pipefail
 
 # 先归位仓库根：conf 解析与相对路径检查都以仓根为准（从子目录调用也能命中仓根 conf）
@@ -34,19 +34,23 @@ env_DOC_BUDGETS="${DOC_BUDGETS:-}"
 env_BACKLOG_DIR="${BACKLOG_DIR:-}"
 env_BACKLOG_HEAD="${BACKLOG_HEAD:-}"
 env_BACKLOG_TYPE="${BACKLOG_TYPE:-}"
+env_RECONCILE_PAIRS="${RECONCILE_PAIRS:-}"
+env_RECONCILE_CMD="${RECONCILE_CMD:-}"
 
 RUNTIME_PATHS="${RUNTIME_PATHS:-.codegraph/}"   # 空格分隔：应被 .gitignore 覆盖、且不得被跟踪的运行产物
 DOC_BUDGETS="${DOC_BUDGETS:-AGENTS.md:150}"     # 空格分隔：file:maxLines
 BACKLOG_DIR="${BACKLOG_DIR:-docs/backlogs}"     # backlog 目录
 BACKLOG_HEAD="${BACKLOG_HEAD:-^## B-}"          # backlog 条目标题格式（grep -E）
 BACKLOG_TYPE="${BACKLOG_TYPE:-类型}"             # backlog 条目必须含的类型标记（grep -F）
+RECONCILE_PAIRS="${RECONCILE_PAIRS:-}"           # 空格分隔：source:target 镜像对（断言派生副本与单一事实源无漂移）
+RECONCILE_CMD="${RECONCILE_CMD:-}"               # 自定义对账命令（如 makemigrations --check 或 node check-seeds.js）
 
 CONF="${PREFLIGHT_CONF:-$REPO_ROOT/preflight.conf}"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 
 # env 回压：显式设置过的变量压过 conf 值；与 conf/默认不同则留痕（不静默 no-op）
-for _v in RUNTIME_PATHS DOC_BUDGETS BACKLOG_DIR BACKLOG_HEAD BACKLOG_TYPE; do
+for _v in RUNTIME_PATHS DOC_BUDGETS BACKLOG_DIR BACKLOG_HEAD BACKLOG_TYPE RECONCILE_PAIRS RECONCILE_CMD; do
   _env="env_${_v}"
   [ -n "${!_env}" ] || continue
   [ "${!_env}" != "${!_v}" ] && note "$_v: env 显式设置，压过 conf/默认（值: ${!_env}）"
@@ -129,6 +133,55 @@ if git status --porcelain 2>/dev/null | grep -q .; then
   git status --porcelain 2>/dev/null | sed 's/^/  · /'
 else
   note "clean"
+fi
+
+# A5 事实源对账与派生状态防漂移
+echo "[A5] 单一事实源对账与派生状态防漂移"
+a5_checked=no
+
+# 1) 文件/目录镜像对账 (RECONCILE_PAIRS: 空格分隔 source:target)
+if [ -n "$RECONCILE_PAIRS" ]; then
+  for pair in $RECONCILE_PAIRS; do
+    a5_checked=yes
+    case "$pair" in
+      *:*) ;;
+      *) bad "RECONCILE_PAIRS 格式应为 source:target，得到: '$pair'"; continue;;
+    esac
+    src="${pair%%:*}"
+    dest="${pair##*:}"
+    if [ ! -e "${src}" ]; then
+      bad "单一事实源不存在: ${src}"
+    elif [ ! -e "${dest}" ]; then
+      bad "物化副本目标不存在: ${dest}"
+    elif [ -d "${src}" ] && [ -d "${dest}" ]; then
+      if diff -r -q "${src}" "${dest}" >/dev/null 2>&1; then
+        ok "${src} ↔ ${dest} (目录一致)"
+      else
+        bad "单一事实源与物化副本漂移: ${src} != ${dest} (目录内容不一致)"
+      fi
+    else
+      if cmp -s "${src}" "${dest}" 2>/dev/null; then
+        ok "${src} ↔ ${dest} (内容一致)"
+      else
+        bad "单一事实源与物化副本漂移: ${src} != ${dest}，请从源重新派生物化"
+      fi
+    fi
+  done
+fi
+
+# 2) 自定义对账命令 (RECONCILE_CMD: 退出码 0 为通过)
+if [ -n "$RECONCILE_CMD" ]; then
+  a5_checked=yes
+  if cmd_out=$(eval "$RECONCILE_CMD" 2>&1); then
+    ok "对账命令通过: $RECONCILE_CMD"
+  else
+    bad "对账命令失败: $RECONCILE_CMD
+$cmd_out"
+  fi
+fi
+
+if [ "$a5_checked" = no ]; then
+  note "RECONCILE_PAIRS / RECONCILE_CMD 未配置，跳过（可选对账项）"
 fi
 
 echo

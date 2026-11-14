@@ -39,6 +39,7 @@ docs/                辅助文档与待办 (docs/backlogs/)
 - 对任一 Unit 的改动，必须在该 Unit 内完成更新、测试并更新对应的 `VERSION.md` 与 `CHANGELOG.md`。
 - 修改脚本文件（`*.sh` / `*.mjs`）必须保持 POSIX 兼容性或纯 Node 原生模块依赖。
 - 未经请求不得随意引入重量级第三方依赖。
+- **改源不改造实例（SSOT 核心铁律）**：动任何“种子/默认值/派生镜像/配置”前，必须先确认单一事实源（SSOT）；严禁绕过源直接在库中敲裸 UPDATE 或就地 patch 物化副本，任何源的修改必须与迁移同步脚本/重物化在同一 commit 提交。
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->

@@ -1,0 +1,21 @@
+# preflight.conf.example — 项目级不变量探针配置示例
+# 复制为项目根目录的 preflight.conf 并根据项目校准。
+# 覆盖层级：env > preflight.conf > 脚本内置默认
+
+# A1 运行产物忽略状态（空格分隔：应被 .gitignore 覆盖、且不得被跟踪的运行产物）
+# RUNTIME_PATHS=".codegraph/ build/ dist/"
+
+# A2 根文档行数预算（空格分隔：file:maxLines）
+# DOC_BUDGETS="AGENTS.md:150 README.md:400"
+
+# A3 backlog 条目格式
+# BACKLOG_DIR="docs/backlogs"
+# BACKLOG_HEAD="^## B-"
+# BACKLOG_TYPE="类型"
+
+# A5 单一事实源对账与派生状态防漂移（可选，阻断项）
+# 1) 文件/目录对账对（空格分隔，source:target）：断言派生副本与单一事实源严格一致
+# RECONCILE_PAIRS="src/config/categories.js:dist/categories.js roleDefaults.js:_shared/roleDefaults.js"
+
+# 2) 自定义对账命令：退出码 0 为通过（如种子对账、架构漂移检查、makemigrations 等）
+# RECONCILE_CMD="node scripts/check-seeds.mjs"

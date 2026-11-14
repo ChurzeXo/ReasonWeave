@@ -27,7 +27,7 @@ Done 定义错位、结论未验就上报、不变量无单一事实源、发现
 
 ## 2. 检查项（按仓校准）
 
-`preflight.sh` 默认四项，全部变量化，按各仓不变量替换：
+`preflight.sh` 默认五项，全部变量化，按各仓不变量替换：
 
 | 项 | 断言 | 阻断 |
 |---|---|---|
@@ -35,13 +35,14 @@ Done 定义错位、结论未验就上报、不变量无单一事实源、发现
 | **A2 文档预算** | 常驻根文档不超行数预算（如 `AGENTS.md:150`）| 是 |
 | **A3 backlog 格式** | 每条 backlog 有既定标题与类型标记（如 `## B-` + `类型`）| 是 |
 | **A4 工作树** | `git status --porcelain` 逐行列出（供人工分类路由）| 否（信息项）|
+| **A5 事实源对账** | 派生副本与单一事实源严格一致（`RECONCILE_PAIRS`）、或自定义对账命令退出码为 0（`RECONCILE_CMD`，如种子/DB对账）| 是（配置时）|
 
 每个新仓按自己的不变量加断言；只有**机械可判定 + 静默违反代价高**两条同时满足的才进脚本，语义判断留给回报形状与人工。
 
 ## 3. 安装（per-repo）
 
 1. 复制 `templates/preflight.sh` → 项目 `scripts/preflight.sh`（或根）。
-2. 改顶部默认值，或新建 `preflight.conf` 覆盖（`RUNTIME_PATHS=".codegraph/ build/"` 等）；临时调试也可用 env 覆盖（层级：**env > conf > 内置默认**，env 与 conf 冲突时探针会留痕，不再静默吞掉）。
+2. 改顶部默认值，或新建 `preflight.conf` 覆盖（可参考 `templates/preflight.conf.example`，支持 `RUNTIME_PATHS`、`DOC_BUDGETS`、`RECONCILE_PAIRS`、`RECONCILE_CMD` 等）；临时调试也可用 env 覆盖（层级：**env > conf > 内置默认**，env 与 conf 冲突时探针会留痕，不再静默吞掉）。
 3. 装门禁（`mkdir -p .githooks/pre-commit.d`）：复制 `templates/pre-commit` → `.githooks/pre-commit`（分发器，**唯一形态**）；复制 `templates/pre-commit.d/20-preflight` → `.githooks/pre-commit.d/20-preflight`。已有 review-gate 等钩子时，把它们的子检查放进同一 `pre-commit.d/`（数字前缀定序，如 `10-review-gate`）——**不要**把逻辑焊成一份脚本。
 4. `git config core.hooksPath .githooks`（per-repo local，不污染全局；新克隆需重跑）。
 5. 复制 `templates/wrap-up.md` → 项目 `docs/templates/wrap-up.md`，收尾报告照此三节填；复制 `templates/check.sh` → 项目 `scripts/check-wrapup.sh`（收尾自检形状），可挂到宿主 Stop hook（见 §5）。
@@ -82,6 +83,7 @@ Prompt 里写"记得验证"是**请求**；hook 里跑 preflight 才是**法律*
 - **只覆盖机械可判定项**：语义判断（分类对不对、"算不算真问题"）脚本做不了——由回报形状 + 独立上下文/跨模型复核补，不指望本模块。
 - **门禁是回归篱笆不是零违规墙**：它保证"当前不变量态不退化"，不保证"没有新问题"。
 - **自纠盲区**：同模型自审有约 64.5% 盲区（对外部错误能纠、对自己同样的错看不见），故语义复核**必须独立上下文 / 跨模型**，不能"同一个 Agent 再看一遍"。
+- **改源不改造实例（SSOT 核心铁律）**：动任何“种子/默认值/派生镜像/配置”前，必须先确认单一事实源（SSOT）。严禁在数据库敲裸 UPDATE 或就地 patch 物化副本，任何源的修改必须与迁移同步脚本/重物化在同一 commit 提交；A5 探针负责在本地提交与启动前阻断源与副本的脱节。
 - **缺件即放行（fail-open）是既定立场**（与 review-gate 一致）：脚本/hook/配置缺失时告警**不阻断**，绝不因"没装好"卡住开发。代价是"看起来装了、其实没生效"——故装完**必跑验收**（制造一次违规，确认被点名且 exit 1）。
 - **门禁层自身要受审**：改 `preflight.sh` / `pre-commit` 时按核心代码对待（曾有人把门禁改得比被保护代码更随意）。
 - **维护成本**：断言需随仓演化；只保留"对应过真实事故"的检查项，其余第一次 review 就删。

@@ -1,5 +1,13 @@
 # Changelog — preflight
 
+## v1.1.0 (2026-11-13) — A5 事实源对账与派生状态防漂移探针 (SSOT Reconcile)
+- **新增 A5 单一事实源对账探针**：`templates/preflight.sh` 新增 A5 检查项，解决 Vibe Coding 下“改了物化实例/DB、忘了改源代码”，或者“改了源、派生副本未同步”导致的静默漂移。
+  - **RECONCILE_PAIRS 支持**：空格分隔 `source:target` 镜像对，自动对文件或目录执行严格无差异检查（`cmp -s` / `diff -r -q`），一旦发现副本与事实源脱节立即阻断（exit 1）。
+  - **RECONCILE_CMD 支持**：支持执行自定义对账命令（如种子同步检查 `makemigrations --check`、`node scripts/check-seeds.js` 或 `spec-guard check`），退出码非 0 立即阻断并打印错误日志。
+  - **Fail-open 哲学**：未配置 `RECONCILE_PAIRS` 与 `RECONCILE_CMD` 时平滑跳过（`· 未配置，跳过`），完全向后兼容已有项目。
+- **新增 `templates/preflight.conf.example`**：提供规范的项目级配置示例，完整覆盖 A1~A5 探针配置。
+- **强化 SSOT 铁律与 Agent 纪律**：README §2/§3/§7 与接入文档补充“改源不改造实例”核心原则。
+
 ## v1.0.6 (2026-10-17) — prospero 清单余项：A1 忽略源核对 + SELFCHECK 口径 + prospero 写死版
 - **A1 增加忽略源核对**（PROBLEM-2026-10-16 #4 / P3）：忽略断言改取 `git check-ignore -v --no-index` 的匹配规则来源，源落在产物目录内部（如 `.codegraph/.gitignore` 的 `*`）即 ✗「忽略规则来自产物目录内部——仓根规则可能已缺失」。实测：仓根规则被注掉后，产物目录自带的 `*` 会悄悄顶上（-v 源变为 `.codegraph/.gitignore`、exit 0）→ 旧断言假绿；根规则在时 -v 报仓根（无锚 `.codegraph/` 与有锚 `/.codegraph/` 两形态均如此）→ 合法「根规则 + 产物自带 .gitignore」双保险形态不受影响（prospero/swoop 现况即此形态，保持绿）。
 - **CONSUMER-SELFCHECK 口径修正**（#3 / P2）：§A 硬编码 `10-review-gate` 改通配描述（`10-<现有>`，如 `10-prospero-gates`；纯 preflight 单门禁无 `10-*` 亦正常）；§C 他仓 specifics（「4 个跟踪产物 / codegraph-index-consolidate」）显式标注「示例，以各仓 `<repo>.md` 写死版为准」。
