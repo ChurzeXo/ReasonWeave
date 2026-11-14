@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # pre-commit.d/15-spec-guard
-# 轻量规约与架构漂移防护门禁（< 0.05s）
+# 轻量规约与架构漂移防护门禁（增量无改动时 < 0.05s）
 # ==============================================================================
 set -euo pipefail
 
@@ -20,7 +20,47 @@ if [ -z "$SPEC_GUARD_BIN" ]; then
   exit 0
 fi
 
-# 2. 全景三元对账门禁拦截（检查断言脱节、实测数据伪造与孤儿冻结决策）
+# 2. 增量感知：获取当前 commit 暂存区改动文件
+# 若暂存区未涉及任何架构规约、不变量或凭据资产，门禁快速放行（< 0.05s）
+# 杜绝日常普通业务代码、样式或文档提交被全仓历史架构负债误杀
+FORCE_CHECK="${SPEC_GUARD_FORCE_CHECK:-0}"
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
+
+if [ "$FORCE_CHECK" != "1" ]; then
+  if [ -z "$STAGED_FILES" ]; then
+    # 暂存区无任何改动文件，直接快速放行
+    exit 0
+  fi
+
+  TOUCHES_SPEC=0
+
+  # 检查是否命中常规 ADR 目录、Overlay 配置或 Evidence 凭据
+  if echo "$STAGED_FILES" | grep -Eq '(^|/)(adr|ADR|decisions|proposals|architecture)/.*\.md$|spec-matrix\.overlay\.ya?ml$|(^|/)evidence/.*\.json$'; then
+    TOUCHES_SPEC=1
+  fi
+
+  # 检查是否命中 overlay 中自定义配置的 adr_dirs
+  if [ "$TOUCHES_SPEC" -eq 0 ] && ([ -f "spec-matrix.overlay.yml" ] || [ -f "spec-matrix.overlay.yaml" ]); then
+    CUSTOM_DIRS=$(grep -A 15 '^adr_dirs:' spec-matrix.overlay.y*ml 2>/dev/null | grep '^  *-' | sed 's/^  *- *//' | tr '\n' '|' | sed 's/|$//' || true)
+    if [ -n "$CUSTOM_DIRS" ] && echo "$STAGED_FILES" | grep -Eq "(^|/)($CUSTOM_DIRS)/.*\.md$"; then
+      TOUCHES_SPEC=1
+    fi
+  fi
+
+  # 检查暂存代码中是否有 @Invariant / @invariant 注解变动
+  if [ "$TOUCHES_SPEC" -eq 0 ]; then
+    if git diff --cached -G'@(i|I)nvariant' --name-only 2>/dev/null | grep -q .; then
+      TOUCHES_SPEC=1
+    fi
+  fi
+
+  # 若暂存区未触及任何规约、不变量或机器凭据，快速放行
+  if [ "$TOUCHES_SPEC" -eq 0 ]; then
+    exit 0
+  fi
+fi
+
+# 3. 当且仅当本次提交涉及架构规约/不变量改动时，执行全景三元对账严格门禁拦截
 $SPEC_GUARD_BIN check --full --strict || {
   echo ""
   echo "❌ [spec-guard] 架构规约门禁检查未通过！"

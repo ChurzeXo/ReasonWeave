@@ -3,6 +3,10 @@
 ## [2.2.0] - 2026-11-14
 
 ### Added
+- **门禁增量感知与快速放行 (`templates/pre-commit.d/15-spec-guard`, `bin/spec-guard.mjs`)**：
+  - **根除无条件 `--full --strict` 的 footgun 误杀**：在预提交门禁中加入暂存区（Staged）改动感知，当提交仅包含普通业务代码、样式或非架构文档时，门禁于 `< 0.05s` 内极速放行，彻底杜绝全仓历史技术债与长耗时全景扫描阻断日常提交。
+  - **按需触发严格对账**：当且仅当暂存区涉及 ADR 架构规约、`spec-matrix.overlay.yml`、`evidence/*.json` 或包含 `@Invariant` 注解的代码时，才激活 `--full --strict` 强对账拦截。
+  - **CLI 原生增量检查**：`spec-guard check` 原生支持 `--incremental` / `--staged` 参数，自动根据暂存区差异完成轻量增量评估。
 - **性能实测自述与架构约定阈值解耦 (`core/telemetry_authenticator.mjs`, `core/adr-parser.mjs`)**：
   - **Overlay 规则支持**：`spec-matrix.overlay.yml` 支持配置 `telemetry_ignore_patterns`（字符串/正则）与 `telemetry_exempt_adrs`（ADR 编号列表），支持顶层或 `telemetry:` 嵌套语法。
   - **行级内联标记**：支持在 ADR Markdown 行中通过 `<!-- telemetry: ignore -->`（或 `skip`/`convention`/`exempt`）将轮询周期上限、配置参数、超时门限等约定阈值声明为非基准指标，免除机器 JSON 信任根强制校验。

@@ -9,6 +9,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   buildAndCheckMatrix,
@@ -16,6 +17,7 @@ import {
   generateAdrAuditReport,
   buildFullTriadMatrix,
   formatTriadHeatmap,
+  loadOverlayConfig,
 } from '../core/matrix-checker.mjs';
 import { runMutationTest } from '../core/mutation-runner.mjs';
 import { verifyAllAdrsTelemetry } from '../core/telemetry_authenticator.mjs';
@@ -102,11 +104,66 @@ function handleCheck() {
   const isFull = args.includes('--full');
   const isTelemetry = args.includes('--telemetry');
   const isJson = args.includes('--json');
+  const isIncremental = args.includes('--incremental') || args.includes('--staged');
 
   let overlayPath = '';
   const overlayIdx = args.indexOf('--overlay');
   if (overlayIdx !== -1 && args[overlayIdx + 1]) {
     overlayPath = args[overlayIdx + 1];
+  }
+
+  // 增量/暂存区模式：仅当暂存区涉及规约、不变量或凭据改动时才执行门禁，否则快速放行 (< 0.02s)
+  if (isIncremental) {
+    let stagedFiles = [];
+    try {
+      const out = execSync('git diff --cached --name-only --diff-filter=ACMR', {
+        cwd: repoRoot,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        encoding: 'utf8',
+      });
+      stagedFiles = out.split('\n').map((f) => f.trim()).filter(Boolean);
+    } catch (e) {
+      // 非 git 目录或无暂存改动
+    }
+
+    if (stagedFiles.length > 0) {
+      const overlayCfg = loadOverlayConfig(repoRoot, overlayPath);
+      const configuredDirs = overlayCfg.adr_dirs || ['group/architecture/adr', 'docs/adr', 'adr', 'docs/proposals'];
+
+      const touchesSpec = stagedFiles.some((f) => {
+        if (/spec-matrix\.overlay\.ya?ml$/i.test(f)) return true;
+        if (/evidence\/[^/]+\.json$/i.test(f)) return true;
+        if (f.endsWith('.md') || f.endsWith('.markdown')) {
+          if (/(?:adr|decisions|proposals|architecture)/i.test(f)) return true;
+          return configuredDirs.some((d) => f.startsWith(d));
+        }
+        return false;
+      });
+
+      let touchesInvariants = false;
+      if (!touchesSpec) {
+        try {
+          const invDiff = execSync('git diff --cached -G"@(i|I)nvariant" --name-only', {
+            cwd: repoRoot,
+            stdio: ['ignore', 'pipe', 'ignore'],
+            encoding: 'utf8',
+          });
+          touchesInvariants = invDiff.trim().length > 0;
+        } catch (e) {}
+      }
+
+      if (!touchesSpec && !touchesInvariants) {
+        if (!isJson) {
+          console.log(`\n🛡️  [spec-guard --incremental] 增量检查：暂存区未包含架构规约、不变量或凭据变更，门禁快速放行 (< 0.02s)。\n`);
+        }
+        return;
+      }
+    } else {
+      if (!isJson) {
+        console.log(`\n🛡️  [spec-guard --incremental] 暂存区无改动文件，快速放行。\n`);
+      }
+      return;
+    }
   }
 
   if (isFull) {
