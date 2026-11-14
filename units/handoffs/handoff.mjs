@@ -82,7 +82,7 @@ function resolveRoot(args) {
   if (rv) {
     const cfg = loadHubConfig(rv);
     if (!cfg) { console.error(`--root 指定的目录不含 .handoff-hub.json，不是合法仓内子 Hub: ${rv}`); process.exit(2); }
-    return { root: rv, mode: 'intra-repo', config: cfg };
+    return { root: rv, mode: cfg.mode || 'intra-repo', config: cfg };
   }
   // 2. 环境变量 BATON_ROOT / HANDOFF_ROOT（CI / 脚本用）
   const envRoot = process.env.BATON_ROOT || process.env.HANDOFF_ROOT;
@@ -192,7 +192,7 @@ function ensureTrailingNewline(s) { return /\n$/.test(s) ? s : s + '\n'; }
 const TARGETS = new Set(
   HUB_CONFIG && Array.isArray(HUB_CONFIG.targets) && HUB_CONFIG.targets.length
     ? HUB_CONFIG.targets.map(s => String(s).toLowerCase())
-    : (MODE === 'intra-repo' ? [] : ['frontend', 'backend', 'mobile'])
+    : (MODE === 'intra-repo' ? [] : ['frontend', 'backend', 'mobile', 'lab'])
 );
 const TARGET_LABELS = {
   frontend: 'Frontend Web',
@@ -399,11 +399,16 @@ function gateDate(fm) {
 function exemptBy(date, since) {
   return ISO_DATE_RE.test(String(date || '')) && String(date) < since;
 }
+function stripFM(content) {
+  if (!content) return '';
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+}
+
 const RECEIPT_BODY_SINCE = '2026-10-13';
 /** 回执正文要素是否达标。唯一源 = RESPONSE-TEMPLATE.md（锚节「修复状态」）；此处兼容仓内「结论」锚节
  *  与历史 v2.6 骨架的「状态」别名——存量回执不回改，只约束契约生效日（RECEIPT_BODY_SINCE）后的新回执。 */
 function receiptBodyProblems(raw) {
-  const body = raw.replace(/^---\n[\s\S]*?\n---\n/, '');
+  const body = stripFM(raw);
   const problems = [];
   if (!body.trim()) problems.push('正文为空');
   if (!/^##\s+\S/m.test(body)) problems.push('无任何 ## 节');
@@ -680,10 +685,11 @@ function nextSeqFor(prefix, ymd) {
 }
 
 function readFM(content) {
-  const m = content.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!content) return null;
+  const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
   if (!m) return null;
   const obj = {};
-  for (const line of m[1].split('\n')) {
+  for (const line of m[1].split(/\r?\n/)) {
     const idx = line.indexOf(':'); if (idx === -1) continue;
     const k = line.slice(0, idx).trim();
     let v = line.slice(idx + 1).trim();
@@ -846,6 +852,86 @@ function extractRejectionRecord(body) {
   return m ? m[1].trim() : '';
 }
 
+/** 将驳回条目安全且精准地追加进回执文本的「驳回记录」小节内（确保位置正确且不被后续其他小节截断） */
+function insertRejectionEntry(raw, entry) {
+  const cleanEntry = String(entry || '').trim();
+  if (!cleanEntry) return raw;
+  const rejSectionRegex = /(?:^|\n)(## (?:驳回记录|Rejection Record)[\s\S]*?)(?=\n## (?!驳回记录|Rejection Record)|$)/i;
+  const m = raw.match(rejSectionRegex);
+  if (!m) {
+    return raw.replace(/\n*$/, '\n') + `\n## 驳回记录\n${cleanEntry}\n`;
+  }
+  const sectionContent = m[1];
+  const sectionStart = m.index + (m[0].startsWith('\n') ? 1 : 0);
+  const sectionEnd = sectionStart + sectionContent.length;
+
+  const coreText = cleanEntry.replace(/[-*#\s]/g, '');
+  const sectionClean = sectionContent.replace(/[-*#\s]/g, '');
+  if (sectionClean.includes(coreText)) {
+    return raw;
+  }
+
+  const updatedSection = sectionContent.replace(/\n*$/, '\n') + `${cleanEntry}\n`;
+  return raw.slice(0, sectionStart) + updatedSection + raw.slice(sectionEnd);
+}
+
+/** 解析驳回小节内的独立条目列表 */
+function parseRejectionEntries(secText) {
+  if (!secText) return [];
+  const body = secText.replace(/^##\s*(?:驳回记录|Rejection Record)[^\n]*\n?/i, '').trim();
+  if (!body || body === '（无）' || body === '(None)' || body === '无') return [];
+
+  const lines = body.split('\n');
+  const entries = [];
+  let current = [];
+
+  for (const line of lines) {
+    const isNewEntry = /^[-*]\s*(?:日期|Date|[0-9]{4}-[0-9]{2}-[0-9]{2})[：:]/i.test(line.trim()) ||
+                       /^###?\s*(?:第\s*[0-9一二三四五六七八九十]+\s*次|Round\s*[0-9]+)/i.test(line.trim());
+    if (isNewEntry && current.length > 0) {
+      entries.push(current.join('\n').trim());
+      current = [line];
+    } else if (current.length === 0 && line.trim()) {
+      current = [line];
+    } else if (current.length > 0) {
+      current.push(line);
+    }
+  }
+  if (current.length > 0 && current.join('\n').trim()) {
+    entries.push(current.join('\n').trim());
+  }
+  return entries.length > 0 ? entries : (body ? [body] : []);
+}
+
+/** 智能合并新旧回执的驳回记录小节：防静默抹除、防模板空标题冲刷、条目级合并去重 */
+function mergeRejectionRecords(oldBody, newBody) {
+  const oldSec = extractRejectionRecord(oldBody);
+  if (!oldSec) return newBody;
+
+  const newSec = extractRejectionRecord(newBody);
+  if (!newSec) {
+    return newBody.replace(/\n*$/, '\n\n') + oldSec + '\n';
+  }
+
+  const oldEntries = parseRejectionEntries(oldSec);
+  if (oldEntries.length === 0) return newBody;
+
+  const newEntries = parseRejectionEntries(newSec);
+  if (newEntries.length === 0) {
+    return newBody.replace(newSec, oldSec);
+  }
+
+  let updatedSec = newSec;
+  for (const oldEntry of oldEntries) {
+    const coreText = oldEntry.replace(/[-*#\s]/g, '');
+    const currentSecClean = updatedSec.replace(/[-*#\s]/g, '');
+    if (!currentSecClean.includes(coreText)) {
+      updatedSec = insertRejectionEntry(updatedSec, oldEntry);
+    }
+  }
+  return newBody.replace(newSec, updatedSec);
+}
+
 function writeFM(file, fm, body) {
   const fmStr = '---\n' + Object.entries(fm).map(([k, v]) => `${k}: ${fmtVal(v)}`).join('\n') + '\n---\n';
   writeAtomic(file, fmStr + (body || ''));
@@ -856,7 +942,7 @@ function setFM(file, patch) {
   const fm = readFM(content);
   if (!fm) throw new Error('无 frontmatter: ' + file);
   Object.assign(fm, patch);
-  const body = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+  const body = stripFM(content);
   writeFM(file, fm, body);
 }
 
@@ -1137,7 +1223,7 @@ function cmdAccept(args) {
       process.exit(1);
     }
 
-    const rBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
+    const rBody = stripFM(rRaw);
 
     // 回执结论门禁（P0-1 修复）：回执最新结论为 REJECTED / NO-GO / INCOMPLETE 等不通过或受阻字样，硬拒闭环
     const concl = extractConclusion(rBody);
@@ -1279,7 +1365,7 @@ function cmdReject(args) {
       if (fs.existsSync(rFile0)) {
         const rRaw0 = fs.readFileSync(rFile0, 'utf8');
         const rFm0 = readFM(rRaw0) || {};
-        const rBody0 = rRaw0.replace(/^---\n[\s\S]*?\n---\n/, '');
+        const rBody0 = stripFM(rRaw0);
         const ws0 = MODE === 'intra-repo' ? (hFm?.workspace || rFm0.workspace || 'same') : undefined;
         const g0 = receiptContentGate(id, rBody0, { mode: MODE, workspace: ws0, date: rFm0.date, evidence: normalizeEvidence(rFm0) });
         if (g0.problems.length) { console.log(`ℹ️ 回执内容门禁发现 ${g0.problems.length} 项（可作本次驳回依据）：`); for (const p of g0.problems) console.log('   - ' + p); }
@@ -1291,13 +1377,10 @@ function cmdReject(args) {
     const rejEntry = `- 日期：${todayISO()}\n- 理由：${note}\n`;
     if (fs.existsSync(rFile)) {
       const rRaw = fs.readFileSync(rFile, 'utf8');
-      const rBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
+      const rBody = stripFM(rRaw);
       rHash = hashContent(getCleanBody(rBody));
-      if (!/^## (驳回记录|Rejection Record)/im.test(rRaw)) {
-        fs.writeFileSync(rFile, rRaw.replace(/\n*$/, '\n') + `\n## 驳回记录\n${rejEntry}`, 'utf8');
-      } else {
-        fs.writeFileSync(rFile, rRaw.replace(/\n*$/, '\n') + rejEntry, 'utf8');
-      }
+      const updatedRaw = insertRejectionEntry(rRaw, rejEntry);
+      fs.writeFileSync(rFile, updatedRaw, 'utf8');
       const rFmOld = readFM(rRaw) || {};
       const rUpdates = { delivered_at: '', delivered_by_lane: '', needs_change: true, audit_nonce: '' };
       if (!rFmOld.evidence_note && (!rFmOld.evidence_paths || !rFmOld.evidence_paths.length) && (!rFmOld.evidence_commits || !rFmOld.evidence_commits.length)) {
@@ -1398,7 +1481,7 @@ function writeReceiptFile(rFile, rFm, note, skeleton) {
     }
     const oldRaw = fs.readFileSync(rFile, 'utf8');
     const fm = readFM(oldRaw) || {};
-    const oldBody = oldRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
+    const oldBody = stripFM(oldRaw);
 
     // 自动备份防覆盖丢失 (P0-2)
     try {
@@ -1406,12 +1489,9 @@ function writeReceiptFile(rFile, rFm, note, skeleton) {
       fs.writeFileSync(bakFile, oldRaw, 'utf8');
     } catch {}
 
-    // 保护旧回执中的「## 驳回记录」：若新 note 未包含驳回记录，自动继承保留 (P0-2)
+    // 保护旧回执中的「## 驳回记录」：若新 note 未包含驳回记录，自动继承保留；若包含则条目级合并，严禁静默抹除历史 (P0-2)
     let finalBody = ensureTrailingNewline(cleanNote);
-    const rejRecord = extractRejectionRecord(oldBody);
-    if (rejRecord && !extractRejectionRecord(cleanNote)) {
-      finalBody = finalBody.replace(/\n*$/, '\n\n') + rejRecord + '\n';
-    }
+    finalBody = mergeRejectionRecords(oldBody, finalBody);
 
     // 继承 needs_change：若原先是 true 且新入参未显式设为 false，保持 true (P1-4)
     const mergedNeedsChange = rFm.needs_change !== undefined ? rFm.needs_change : Boolean(fm.needs_change);
@@ -1577,7 +1657,7 @@ function cmdReceipt(args) {
       try {
         const rRaw = fs.readFileSync(rFile, 'utf8');
         existingRFm = readFM(rRaw) || {};
-        existingRBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
+        existingRBody = stripFM(rRaw);
       } catch {}
     }
     const bodyToCheck = note !== undefined ? note : existingRBody;
@@ -1655,12 +1735,11 @@ function cmdReceipt(args) {
       // 记录撰写方 lane（防提前闭环的耐久证据）：闭环/check 侧可据此核验回执确由接收方撰写，非发起方自填。
       if (cur) rFm.author_lane = cur;
       writeReceiptFile(rFile, rFm, note, receiptStubIntra(id, hFm.from_lane || ''));
+      setFM(hFile, { status: 'received', needs_change: needsChange });
       if (shouldDeliver) {
         cmdDeliver([id, '--as', cur]);
         return;
       }
-
-      setFM(hFile, { status: 'received', needs_change: needsChange });
       logStateJournal(id, 'receipt', {
         from_status: st,
         to_status: 'received',
@@ -1763,7 +1842,7 @@ function cmdDeliver(args) {
     }
 
     // 内容门禁校验
-    const rBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
+    const rBody = stripFM(rRaw);
 
     // 结论与受阻门禁：结论为未通过/受阻或 needs_change=true 时，硬阻断交付
     const concl = extractConclusion(rBody);
@@ -1934,7 +2013,7 @@ async function cmdForward(args) {
     }
     if (isBlind) {
       const rawFull = fs.readFileSync(file, 'utf8');
-      const bodyPart = rawFull.replace(/^---\n[\s\S]*?\n---\n/, '');
+      const bodyPart = stripFM(rawFull);
       // 双盲 Fail-Closed 门禁：必须声明客观验收判据
       if (!/(?:##\s*(?:验收判据|Criteria|Acceptance Criteria|判据))/i.test(bodyPart)) {
         console.error(isZh
@@ -2113,7 +2192,7 @@ function cmdShow(args) {
     console.log(fm.audit_nonce);
     return;
   }
-  const body = raw.replace(/^---\n[\s\S]*?\n---\n/, '');
+  const body = stripFM(raw);
   console.log(`# ${id}`);
   const keys = isResp
     ? (MODE === 'intra-repo'
@@ -2379,7 +2458,7 @@ function cmdCheckCross(args = []) {
       if (fs.existsSync(rPath)) {
         const rRaw = fs.readFileSync(rPath, 'utf8');
         const rFm = readFM(rRaw) || {};
-        const rBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
+        const rBody = stripFM(rRaw);
         const concl = extractConclusion(rBody);
         const isLegacyTicket = fm.created && fm.created < '2026-11-11';
         if (!isLegacyTicket && isVerdictRejected(concl)) {
@@ -2518,7 +2597,7 @@ function cmdCheckIntra(args = []) {
       if (fs.existsSync(rPath)) {
         const rRaw = fs.readFileSync(rPath, 'utf8');
         const rFm = readFM(rRaw) || {};
-        const rBody = rRaw.replace(/^---\n[\s\S]*?\n---\n/, '');
+        const rBody = stripFM(rRaw);
         const concl = extractConclusion(rBody);
         const isLegacyTicket = fm.created && fm.created < '2026-11-11';
         if (!isLegacyTicket && isVerdictRejected(concl)) {
@@ -2772,7 +2851,7 @@ function cmdPrompt(args) {
   const hFile = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(hFile)) { console.error('找不到交接: ' + hFile); process.exit(1); }
   const content = fs.readFileSync(hFile, 'utf8');
-  const title = extractTitle(content.replace(/^---\n[\s\S]*?\n---\n/, ''));
+  const title = extractTitle(stripFM(content));
   const isZh = detectLang() === 'zh';
   const display = hFile.startsWith(os.homedir()) ? '~' + hFile.slice(os.homedir().length) : hFile;
 
@@ -2972,26 +3051,29 @@ function cmdLink(args) {
   const engine = fs.realpathSync(process.argv[1]);
   const remove = args.includes('--remove');
   const checkOnly = args.includes('--check');
-  const home = process.env.HOME;
-  const canonical = path.join(home, '.local/bin', 'handoff');
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  const canonicalDir = process.platform === 'win32'
+    ? path.join(home, 'AppData', 'Roaming', 'npm')
+    : path.join(home, '.local', 'bin');
+  const canonical = path.join(canonicalDir, 'handoff');
   const inPath = (d) => String(process.env.PATH || '').split(path.delimiter).filter(Boolean).includes(d);
   const writable = (d) => { try { fs.accessSync(d, fs.constants.W_OK); return true; } catch { return false; } };
 
   // 选落点
   let dir = null;
-  if (inPath(canonical.replace(/\/handoff$/, ''))) {
-    try { fs.mkdirSync(path.dirname(canonical), { recursive: true }); } catch {}
-    if (writable(path.dirname(canonical))) dir = path.dirname(canonical);
+  if (inPath(canonicalDir)) {
+    try { fs.mkdirSync(canonicalDir, { recursive: true }); } catch {}
+    if (writable(canonicalDir)) dir = canonicalDir;
   }
   if (!dir) {
     for (const d of String(process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
       if (!d.startsWith(home + path.sep)) continue;                                   // 只认 home 下目录
-      if (/\/\.(workbuddy|nvm|cargo|swiftly|antigravity)\//.test(d + '/')) continue;   // 不污染受管运行时
+      if (/[\\/]\.(workbuddy|nvm|cargo|swiftly|antigravity)[\\/]/.test(d + path.sep)) continue;   // 不污染受管运行时
       try { if (fs.statSync(d).isDirectory() && writable(d)) { dir = d; break; } } catch {}
     }
   }
   if (!dir) {
-    dir = path.dirname(canonical);
+    dir = canonicalDir;
   }
 
   // --check：健康检查（桩版本一致性 + shim 校验，可由 baton link --check 或 baton doctor 调用）
@@ -3000,8 +3082,11 @@ function cmdLink(args) {
     console.log(`🔍 [Baton 诊断] 引擎版本: v${BATON_VERSION}`);
     for (const binName of ['baton', 'handoff']) {
       const p = path.join(dir, binName);
+      const pCmd = path.join(dir, `${binName}.cmd`);
       try {
-        if (fs.lstatSync(p).isSymbolicLink() && fs.realpathSync(p) === engine) {
+        if (process.platform === 'win32' && fs.existsSync(pCmd)) {
+          console.log(`✅ [Shim 正常] ${pCmd} → ${engine}`);
+        } else if (fs.lstatSync(p).isSymbolicLink() && fs.realpathSync(p) === engine) {
           console.log(`✅ [Shim 正常] ${p} → ${engine}`);
         } else {
           console.log(`⚠️ [Shim 需同步] ${p} 未指向本引擎`);
@@ -3043,12 +3128,18 @@ function cmdLink(args) {
   // --remove：摘除 shim（测试/回退用）
   if (remove) {
     let removed = false;
-    for (const d of [canonical, ...String(process.env.PATH || '').split(path.delimiter).filter(Boolean)]) {
+    for (const d of [canonicalDir, ...String(process.env.PATH || '').split(path.delimiter).filter(Boolean)]) {
       for (const binName of ['handoff', 'baton']) {
-        const p = path.join(d, binName);
-        try {
-          if (fs.lstatSync(p).isSymbolicLink() && fs.realpathSync(p) === engine) { fs.unlinkSync(p); console.log(`🗑️ 已摘除: ${p}`); removed = true; }
-        } catch { /* 不存在或非本引擎 shim → 跳过 */ }
+        for (const ext of ['', '.cmd', '.ps1']) {
+          const p = path.join(d, binName + ext);
+          try {
+            if (fs.existsSync(p)) {
+              fs.unlinkSync(p);
+              console.log(`🗑️ 已摘除: ${p}`);
+              removed = true;
+            }
+          } catch { /* 不存在或无权限 → 跳过 */ }
+        }
       }
     }
     if (!removed) console.log('未找到指向中央引擎的 handoff/baton shim，无需摘除。');
@@ -3056,13 +3147,35 @@ function cmdLink(args) {
   }
 
   // 引擎须可执行（shebang 已在；缺执行位时补上，否则 symlink 也无法运行）
-  try { fs.chmodSync(engine, 0o755); } catch (e) { console.error(`⚠️ 无法补执行位: ${engine} — ${e.message}`); }
+  try { fs.chmodSync(engine, 0o755); } catch {}
 
   try { fs.mkdirSync(dir, { recursive: true }); } catch {}
-  if (!inPath(dir)) console.log(`⚠️ ${dir} 不在当前 PATH —— 请把它加入 shell profile，例如: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
+  if (!inPath(dir)) {
+    if (process.platform === 'win32') {
+      console.log(`⚠️ ${dir} 不在当前 PATH —— 请将该目录加入系统环境变量 PATH。`);
+    } else {
+      console.log(`⚠️ ${dir} 不在当前 PATH —— 请把它加入 shell profile，例如: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
+    }
+  }
 
   for (const binName of ['handoff', 'baton']) {
     const link = path.join(dir, binName);
+    const linkCmd = path.join(dir, `${binName}.cmd`);
+    const linkPs1 = path.join(dir, `${binName}.ps1`);
+
+    // Windows 平台专属：生成 .cmd 与 .ps1 shim（免除管理员权限与 Developer Mode 限制，直接原生兼容 CMD 与 PowerShell）
+    if (process.platform === 'win32') {
+      try {
+        const cmdScript = `@ECHO off\r\nnode "${engine}" %*\r\n`;
+        fs.writeFileSync(linkCmd, cmdScript, 'utf8');
+        const ps1Script = `& node "${engine}" $args\r\n`;
+        fs.writeFileSync(linkPs1, ps1Script, 'utf8');
+        console.log(`✅ 已接入 (Windows Shim): ${linkCmd} & ${linkPs1} → ${engine}`);
+      } catch (e) {
+        console.error(`⚠️ 写入 Windows Shim 失败: ${e.message}`);
+      }
+    }
+
     try {
       const st = fs.lstatSync(link);
       if (st.isSymbolicLink()) {
@@ -3079,9 +3192,19 @@ function cmdLink(args) {
         console.log(`📦 ${link} 是普通文件（非符号链接），已备份为 ${bak} 后重建为 shim。`);
       }
     } catch { /* 不存在 → 直接建 */ }
-    fs.symlinkSync(engine, link);
-    console.log(`✅ 已接入: ${link} → ${engine}`);
-    verifyLink(link, binName);
+
+    try {
+      fs.symlinkSync(engine, link);
+      console.log(`✅ 已接入: ${link} → ${engine}`);
+      verifyLink(link, binName);
+    } catch (e) {
+      if (process.platform === 'win32') {
+        // Windows 上若无 symlink 权限（未开启开发者模式），上面生成的 .cmd/.ps1 已可正常使用
+        console.log(`ℹ️ [Windows 提示] symlink 权限受限，已通过 .cmd/.ps1 脚本提供无权限依赖的命令访问。`);
+      } else {
+        console.error(`⚠️ 创建软链接失败: ${e.message}`);
+      }
+    }
   }
 
   // 检查接入桩版本，若有漂移则自动重生成
@@ -3104,10 +3227,17 @@ function cmdLink(args) {
 }
 function verifyLink(link, binName = 'handoff') {
   try {
-    execFileSync(link, [], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const targetBin = (process.platform === 'win32' && !link.endsWith('.cmd') && fs.existsSync(`${link}.cmd`))
+      ? `${link}.cmd`
+      : link;
+    execFileSync(targetBin, [], { stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' });
     console.log(`   验证通过: \`${binName}\` 可直接调用（裸命令即中央引擎）。`);
   } catch (e) {
-    console.error(`⚠️ shim 已建但验证调用失败: ${e.message}`);
+    if (process.platform === 'win32') {
+      console.log(`   验证提示: \`${binName}\` 已生成 Windows 启动脚本（可直接在 CMD/PowerShell 运行）。`);
+    } else {
+      console.error(`⚠️ shim 已建但验证调用失败: ${e.message}`);
+    }
   }
 }
 
@@ -3157,7 +3287,7 @@ function cmdBrief(args) {
     const fm = readFM(raw);
     if (!fm || (fm.status !== 'draft' && fm.status !== 'forwarded')) continue;
     if (only && fm.target !== only.toLowerCase()) continue;
-    rows.push({ id: fm.handoff_id, target: fm.target, title: extractTitle(raw.replace(/^---\n[\s\S]*?\n---\n/, '')) });
+    rows.push({ id: fm.handoff_id, target: fm.target, title: extractTitle(stripFM(raw)) });
   }
   const targets = [...new Set(rows.map(r => r.target))];
   // v2.12.5：draft+forwarded 都收——① 仅收 draft 时，按 new→forward→brief 顺序跑的发起方会拿到空收件箱；
@@ -3441,7 +3571,7 @@ function notifyInterrupt(level, title, message) {
     console.log(`   ${message}\n`);
   }
 
-  // 2. 宿主桌面系统通知（macOS osascript / Linux notify-send）
+  // 2. 宿主桌面系统通知（macOS osascript / Linux notify-send / Windows PowerShell Toast）
   if (process.platform === 'darwin') {
     try {
       const sound = level === 'red' ? 'Basso' : 'Glass';
@@ -3453,6 +3583,24 @@ function notifyInterrupt(level, title, message) {
     try {
       const urgency = level === 'red' ? 'critical' : 'normal';
       execFileSync('notify-send', ['-u', urgency, title, message], { stdio: 'ignore' });
+    } catch {}
+  } else if (process.platform === 'win32') {
+    try {
+      const safeTitle = title.replace(/'/g, "''");
+      const safeMsg = message.replace(/'/g, "''");
+      const psScript = `
+Add-Type -AssemblyName System.Windows.Forms
+$balloon = New-Object System.Windows.Forms.NotifyIcon
+$balloon.Icon = [System.Drawing.SystemIcons]::Information
+$balloon.BalloonTipIcon = '${level === 'red' ? 'Error' : 'Info'}'
+$balloon.BalloonTipTitle = '${safeTitle}'
+$balloon.BalloonTipText = '${safeMsg}'
+$balloon.Visible = $true
+$balloon.ShowBalloonTip(5000)
+Start-Sleep -Milliseconds 500
+$balloon.Dispose()
+`;
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psScript], { stdio: 'ignore', windowsHide: true });
     } catch {}
   }
 }
@@ -3554,6 +3702,38 @@ function printWaitWakeupSummary(id, hFile, rFile, hFm) {
   const displayR = rFile.startsWith(os.homedir()) ? '~' + rFile.slice(os.homedir().length) : rFile;
   const displayH = hFile.startsWith(os.homedir()) ? '~' + hFile.slice(os.homedir().length) : hFile;
   const needsChange = Boolean(hFm?.needs_change || hFm?.needs_iggle_change || rFm?.needs_change || rFm?.needs_iggle_change);
+
+  const isPeerRejection = Boolean(hFm?.rejected_at) &&
+    Boolean(hFm?.rejected_by) &&
+    hFm?.rejected_by.toLowerCase() !== String(hFm?.from_lane || '').toLowerCase() &&
+    hFm?.status !== 'delivered' && hFm?.status !== 'closed';
+
+  if (isPeerRejection) {
+    console.log(`\n==================================================`);
+    console.log(`⚠️ [工单被驳回退回] 对端已驳回工单: ${id}`);
+    console.log(`- 交接文档: ${displayH}`);
+    console.log(`- 回执文件: ${displayR}`);
+    if (MODE === 'intra-repo') {
+      const fromRole = resolveLaneRole(hFm?.rejected_by || rFm.from_lane || hFm?.to_lane) || '审核方';
+      console.log(`- 驳回方: 【${fromRole}】(lane: ${hFm?.rejected_by})`);
+    } else {
+      console.log(`- 驳回方: ${hFm?.rejected_by}`);
+    }
+    if (hFm?.rejected_at) {
+      console.log(`- 驳回时间: ${hFm?.rejected_at}`);
+    }
+    const rejM = rText.match(/理由[：:]\s*([^\n]+)/);
+    if (rejM) console.log(`- 驳回理由: ${rejM[1].trim()}`);
+    if (conclusion) console.log(`- 结论摘要: ${conclusion}`);
+    console.log(`- 需后续改动: ⚠️ 是 (needs_change=true)`);
+    console.log(`==================================================`);
+    console.log(`👉 下一步（发起方整改职责）：`);
+    console.log(`1. 查看回执中的驳回理由与证据分析（baton show ${id}）。`);
+    console.log(`2. 按审查意见修复实现代码与测试。`);
+    console.log(`3. 重新送审: baton forward ${id} --wait\n`);
+    notifyInterrupt('yellow', 'Baton 工单被驳回待整改', `工单 ${id} 已被对端驳回退回，请发起方整改！`);
+    return;
+  }
 
   console.log(`\n==================================================`);
   console.log(`🎯 [交付已就绪] 交接回执已正式交付: ${id}`);
@@ -3669,15 +3849,32 @@ async function cmdWait(args) {
     const rFile = path.join(R_DIR, `${id}-resp.md`);
     let hFm = readFM(fs.readFileSync(hFile, 'utf8')) || {};
     let initialRMtime = 0;
-    try { if (fs.existsSync(rFile)) initialRMtime = fs.statSync(rFile).mtimeMs; } catch {}
+    let initialRDelivered = false;
+    let initialRDeliveredTime = '';
+    try {
+      if (fs.existsSync(rFile)) {
+        initialRMtime = fs.statSync(rFile).mtimeMs;
+        const rRaw = fs.readFileSync(rFile, 'utf8');
+        const rFm = readFM(rRaw);
+        if (rFm && isDeliveryValid(rFm.delivered_at, hFm.rejected_at)) {
+          initialRDelivered = true;
+          initialRDeliveredTime = rFm.delivered_at;
+        }
+      }
+    } catch {}
     let initialHMtime = 0;
     try { if (fs.existsSync(hFile)) initialHMtime = fs.statSync(hFile).mtimeMs; } catch {}
+    const isAlreadyDelivered = initialRDelivered || (hFm.status === 'delivered') || (Boolean(hFm.delivered_at) && isDeliveryValid(hFm.delivered_at, hFm.rejected_at));
+    const initStatus = isAlreadyDelivered ? 'delivered' : (hFm.status || 'draft');
+    if (initialRDelivered && !hFm.delivered_at) {
+      hFm.delivered_at = initialRDeliveredTime;
+    }
     ticketMap.set(id, {
       id,
       hFile,
       rFile,
       hFm,
-      status: hFm.status || 'draft',
+      status: initStatus,
       lastHMtime: initialHMtime,
       lastRMtime: initialRMtime,
     });
@@ -3686,8 +3883,14 @@ async function cmdWait(args) {
   const isTicketReady = (t) => {
     const isLegacyExempt = t.hFm.created && t.hFm.created < '2026-11-08' && !t.hFm.delivered_at;
     const isDeliveredAfterReject = isDeliveryValid(t.hFm.delivered_at, t.hFm.rejected_at);
+    // 审计方/对端反向驳回退回（NO-GO 唤醒）：若工单被对端驳回（rejected_by 存在且非发起方自身），必须即刻唤醒发起方处理！
+    const isRejectedByPeer = Boolean(t.hFm.rejected_at) &&
+      Boolean(t.hFm.rejected_by) &&
+      t.hFm.rejected_by.toLowerCase() !== String(t.hFm.from_lane || '').toLowerCase();
+
     return (t.status === 'delivered' && isDeliveredAfterReject) ||
            t.status === 'closed' ||
+           isRejectedByPeer ||
            (Boolean(t.hFm.delivered_at) && isDeliveredAfterReject) ||
            (t.status === 'received' && isLegacyExempt);
   };
@@ -3735,17 +3938,46 @@ async function cmdWait(args) {
 
   let lastHeartbeatTime = startTime;
 
-  // 设置 fs.watch 监听目录变动（事件驱动瞬间唤醒）
+  // 设置 fs.watch 监听目录变动（事件驱动 + 智能去抖 + 精准过滤，消除空转与发热）
   let triggerResolve = null;
+  let debounceTimer = null;
   const watchers = [];
+
   const onFsEvent = (filename) => {
-    if (!filename || ids.some(id => filename.includes(id))) {
+    // 1. 精准文件名过滤：严禁无脑放行 !filename 触发虚假事件风暴
+    let isRelevant = false;
+    if (filename) {
+      const cleanName = String(filename);
+      // 过滤常见噪音文件（.DS_Store、临时文件、锁文件、备份文件等）
+      if (cleanName.startsWith('.') || cleanName.endsWith('.tmp') || cleanName.endsWith('.swp') || cleanName.endsWith('.bak.md')) {
+        return;
+      }
+      isRelevant = ids.some(id => cleanName.includes(id));
+      if (!isRelevant && !cleanName.endsWith('.md')) {
+        return;
+      }
+    } else {
+      // 在 macOS (Darwin FSEvents) 上 filename 为 null 时，做一次极轻量的快速 mtime 检查，若目标文件没有任何变动则直接丢弃
+      for (const t of ticketMap.values()) {
+        try {
+          if (fs.existsSync(t.hFile) && fs.statSync(t.hFile).mtimeMs !== t.lastHMtime) { isRelevant = true; break; }
+          if (fs.existsSync(t.rFile) && fs.statSync(t.rFile).mtimeMs !== t.lastRMtime) { isRelevant = true; break; }
+        } catch {}
+      }
+    }
+
+    if (!isRelevant) return;
+
+    // 2. 智能防抖（Debounce · 300ms）：避免连续写入引发事件循环风暴吃满 CPU
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
       if (triggerResolve) {
         const r = triggerResolve;
         triggerResolve = null;
         r('fs-event');
       }
-    }
+    }, 300);
   };
 
   const safeWatch = (targetDir) => {
@@ -3754,6 +3986,7 @@ async function cmdWait(args) {
         const w = fs.watch(targetDir, { persistent: false }, (eventType, filename) => {
           onFsEvent(filename);
         });
+        w.on('error', () => { /* 忽略底层 watcher 瞬时错误，保底靠轮询退避 */ });
         watchers.push(w);
       }
     } catch {}
@@ -3763,6 +3996,10 @@ async function cmdWait(args) {
   safeWatch(R_DIR);
 
   const cleanupWatchers = () => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
     for (const w of watchers) {
       try { w.close(); } catch {}
     }
@@ -3938,10 +4175,19 @@ async function cmdWait(args) {
         cleanupAll();
         if (ids.length === 1) {
           const singleT = readyTickets[0];
-          console.log(`\n🎉 [交付已就绪] 检测到交接 ${singleT.id} 状态已转为 ${singleT.status}！`);
+          const isPeerRej = Boolean(singleT.hFm.rejected_at) &&
+            Boolean(singleT.hFm.rejected_by) &&
+            singleT.hFm.rejected_by.toLowerCase() !== String(singleT.hFm.from_lane || '').toLowerCase() &&
+            singleT.status !== 'delivered' && singleT.status !== 'closed';
+
+          if (isPeerRej) {
+            console.log(`\n⚠️ [工单被驳回退回] 检测到交接 ${singleT.id} 已被【${singleT.hFm.rejected_by}】驳回退回（Needs Change / 待整改）！`);
+          } else {
+            console.log(`\n🎉 [交付已就绪] 检测到交接 ${singleT.id} 状态已转为 ${singleT.status}！`);
+          }
           printWaitWakeupSummary(singleT.id, singleT.hFile, singleT.rFile, singleT.hFm);
         } else {
-          console.log(`\n🎉 [聚合交付就绪] 模式 ${mode.toUpperCase()} 达成条件（就绪 ${readyTickets.length}/${ids.length} 项）！`);
+          console.log(`\n🎉 [聚合就绪唤醒] 模式 ${mode.toUpperCase()} 达成条件（就绪 ${readyTickets.length}/${ids.length} 项）！`);
           for (const t of readyTickets) {
             printWaitWakeupSummary(t.id, t.hFile, t.rFile, t.hFm);
           }
@@ -3953,17 +4199,22 @@ async function cmdWait(args) {
     }
 
     // 结合自适应退避与 fs.watch 事件驱动：任意一个先触发即刻进入下一轮检查
-    const waitTime = Math.min(getNextInterval(elapsed), Math.max(0, timeoutMs - elapsed));
+    const remainMs = Math.max(0, timeoutMs - elapsed);
+    if (remainMs <= 0) continue;
+    const interval = getNextInterval(elapsed);
+    const waitTime = Math.min(interval, remainMs);
     await new Promise((resolve) => {
       let timer = null;
       triggerResolve = (source) => {
         if (timer) clearTimeout(timer);
         resolve(source);
       };
+      // 保底休眠至少 1000ms（防止由于微小抖动引发每秒多次唤醒，保护 CPU 能效核心）
+      const safeWaitTime = Math.max(1000, waitTime);
       timer = setTimeout(() => {
         triggerResolve = null;
         resolve('timer');
-      }, Math.max(200, waitTime));
+      }, safeWaitTime);
     });
   }
 }

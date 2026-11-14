@@ -20,9 +20,8 @@ if [ -z "$SPEC_GUARD_BIN" ]; then
   exit 0
 fi
 
-# 2. 仅针对当前暂存区（git diff --cached）运行增量检查
-# 拦截非法篡改已 Frozen 的 ADR，或检查裸原型
-$SPEC_GUARD_BIN check --incremental || {
+# 2. 全景三元对账门禁拦截（检查断言脱节、实测数据伪造与孤儿冻结决策）
+$SPEC_GUARD_BIN check --full --strict || {
   echo ""
   echo "❌ [spec-guard] 架构规约门禁检查未通过！"
   echo "提示：请检查是否有未按规范修改的 Frozen ADR 或未沙箱隔离的裸原型代码。"

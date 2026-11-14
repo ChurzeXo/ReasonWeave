@@ -6,6 +6,10 @@
 
 ---
 
+> **v2.29.1 补丁（2026-11-14 · 跨仓目标注册 lab）**：生态跨仓一等 target 扩容 lab（`.handoff-hub.json` / `TARGETS` / `TARGET_LABELS` / `status --for` / 跨仓正则同步），正式打通外部消费方（如 iggle / Tappy 等）向 lab 能力库派发跨仓工单 (`LAB-YYYYMMDD-NN-TYPE`) 及回执闭环通道。
+
+---
+
 > **v2.29.0 变更（2026-11-12 · Agent Baton 核心收敛与异构会话韧性根治 · ADR-0008 · Backlog-09 · 工单自描述身份 `--as <lane>` · 防伪门禁中间件解耦与无条件安全下车 · needs_change 双轨归一化 · 接入桩轻量化瘦身 80% 去恐吓化 · 运行时确定性自愈 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——针对近期 Handoff 状态机与门禁反复修补、在“同仓同对话多工单、同仓跨对话多工单、跨仓跨对话多工单（跨异构 AI 客户端）”中遭遇阻塞与认知失配的问题，落实 ADR-0008 核心架构重构。①**防伪门禁中间件解耦与交付拦截**：将 Audit Nonce 校验从 `cmdReceipt` 草稿登记阶段解耦至 `cmdDeliver` 终态交付闸门；审计受阻或中间草稿回执允许免 Nonce 登记（落盘标记受阻待办），`cmdDeliver` 实施 Fail-Closed 拦截；②**无条件安全下车通道（Unconditional Bailout）**：`assertStatusFresh` 针对 `reject` 与 `reopen` 操作豁免快照超时与未读状态拦截；放行发起方（`from_lane`）主动驳回已派发工单，打通阻断回退；③**工单自描述身份机制（`--as <lane>`）**：在 `receipt`、`deliver`、`accept`、`reject`、`reopen`、`status` 中全面支持 `--as <lane>` 参数，彻底解除单一进程/会话只能绑定全局单一 `HANDOFF_LANE` 环境变量的硬限制，完美支持同一会话并发处理多工单，并杜绝身份漂移与冒名越权；④**同跨仓数据模型归一化**：废除历史 `needs_iggle_change` 与 `needs_change` 双轨并存，全链路归一化对齐为 `needs_change`，`readFM` 与 `parseFM` 透明自动向下兼容；⑤**接入桩轻量韧性化瘦身**：将原 3,500 字符重度恐吓式桩精简至 ~700 字符，由“前置规则恐吓”转为“运行时精准拦截 + 报错提供 100% 可复制的一键自愈命令”，极大降低异构 LLM 上下文衰减与幻觉；⑥**全场景测试与自动化回归**：`tests/audit-receipt.test.mjs` 新增全套覆盖用例。
 
 ---

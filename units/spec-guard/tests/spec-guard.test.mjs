@@ -9,6 +9,8 @@ import {
   makeStrictBoundaryRegex,
   containsStrictInvariant,
   parseAdrContent,
+  findAdrFiles,
+  loadOverlayConfig,
 } from '../core/adr-parser.mjs';
 
 import {
@@ -19,6 +21,7 @@ import {
 
 import {
   buildAndCheckMatrix,
+  buildFullTriadMatrix,
   generateAdrAuditReport,
 } from '../core/matrix-checker.mjs';
 
@@ -485,5 +488,109 @@ assert.equal(ep, "/api/v1/device/interlock");
     assert.equal(callersEval.testCallerCount, 1);
     assert.equal(callersEval.docReferenceCount, 1);
     assert.equal(callersEval.wiringStatus, 'wired');
+  });
+});
+
+describe('spec-guard v2.1: ADR 发现规则可配置化与零覆盖防护 (LAB-20261114-01-feature)', () => {
+  it('findAdrFiles 支持配置 adr_dirs 与 adr_id_pattern，未配置时缺省回退四目录零回归', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-find-'));
+    try {
+      // 1. 缺省目录
+      const defDir = path.join(tmp, 'docs', 'adr');
+      fs.mkdirSync(defDir, { recursive: true });
+      fs.writeFileSync(path.join(defDir, 'ADR-001-init.md'), '# ADR-001');
+      fs.writeFileSync(path.join(defDir, '0002-legacy.md'), '# 0002');
+      fs.writeFileSync(path.join(defDir, 'README.md'), '# Readme');
+
+      const defFound = findAdrFiles(tmp);
+      assert.equal(defFound.length, 2);
+
+      // 2. 自定义目录与正则
+      const customDir = path.join(tmp, 'docs', 'decisions');
+      fs.mkdirSync(customDir, { recursive: true });
+      fs.writeFileSync(path.join(customDir, 'DECISION-0001-test.md'), '# DECISION-0001');
+      fs.writeFileSync(path.join(customDir, 'DECISION-0002-test.md'), '# DECISION-0002');
+      fs.writeFileSync(path.join(customDir, 'GUIDE.md'), '# Guide');
+
+      const customFound = findAdrFiles(tmp, {
+        adr_dirs: ['docs/decisions'],
+        adr_id_pattern: 'DECISION-\\d+',
+      });
+      assert.equal(customFound.length, 2);
+      assert.ok(customFound.every((f) => f.includes('DECISION-')));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('parseAdrContent 支持 frontmatter id 与 status 映射（active 不误判 Frozen）', () => {
+    const doc = `---
+id: DECISION-0007
+status: active
+scope:
+  - src/core.ts
+---
+# DECISION-0007 · coreml 自愈定位架构不变量
+
+## 背景
+一些背景。
+
+## 决定
+采用 \`elementFromPoint\` 与 \`grounding_repair\` 进行定位。
+
+## 验证
+实测基准通过。
+`;
+    const parsed = parseAdrContent(doc, 'docs/decisions/DECISION-0007-grounding.md', {
+      adr_id_pattern: 'DECISION-\\d+',
+      section_aliases: {
+        decision: ['决定'],
+        implementation: ['验证'],
+      },
+    });
+
+    assert.equal(parsed.adrId, 'DECISION-0007');
+    assert.equal(parsed.status, 'active');
+    assert.equal(parsed.isFrozen, false, 'active 状态不得误判为 Frozen');
+    assert.equal(parsed.hasImplementationStatus, true, '## 验证 应被识别为 implementation 节');
+  });
+
+  it('totalAdrs === 0 时必须报告 ZERO_COVERAGE，覆盖率严禁为 100%，strict 模式下 exit 1 阻断', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-zero-check-'));
+    try {
+      const matrix = buildAndCheckMatrix(tmp);
+      assert.equal(matrix.adrsCount, 0);
+      assert.equal(matrix.coveragePercent, 0, '零 ADR 时覆盖率必须为 0%，禁止输出 100%');
+      assert.equal(matrix.zeroCoverage, true);
+      assert.equal(matrix.isHealthy, false);
+
+      const triad = buildFullTriadMatrix(tmp);
+      assert.equal(triad.totalAdrs, 0);
+      assert.equal(triad.coveragePercent, 0);
+      assert.equal(triad.zeroCoverage, true);
+      assert.equal(triad.isHealthy, false);
+
+      let threw = false;
+      try {
+        execSync(`node units/spec-guard/bin/spec-guard.mjs check --strict --repo "${tmp}"`, {
+          encoding: 'utf8',
+          stdio: 'pipe',
+        });
+      } catch (err) {
+        threw = true;
+        assert.equal(err.status, 1);
+        const out = (err.stdout || '') + (err.stderr || '');
+        assert.ok(out.includes('ZERO_COVERAGE'));
+      }
+      assert.ok(threw, 'check --strict 在零覆盖时必须 Exit 1 阻断');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('门禁片 15-spec-guard 改为 check --full --strict，反向漂移夹具必须 Exit 1 阻断', () => {
+    const hookContent = fs.readFileSync('units/spec-guard/templates/pre-commit.d/15-spec-guard', 'utf8');
+    assert.ok(hookContent.includes('check --full --strict'), '门禁脚本必须调用 check --full --strict');
+    assert.ok(!hookContent.includes('check --incremental'), '门禁脚本禁止残留未实现的 check --incremental');
   });
 });

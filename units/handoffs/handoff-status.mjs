@@ -3,7 +3,7 @@
 // 脚本位置即交接根：<root>/handoff-status.mjs，<root>/handoffs/，<root>/receipts/。
 // 人类可读摘要：  node <root>/handoff-status.mjs
 // 机器可读（自动化运营轮询，v1，字段禁止改）： node <root>/handoff-status.mjs --json
-// 依赖方待办视角：  node <root>/handoff-status.mjs --for <swoop|prospero|iggle|coreml|tappy|yiqiyihuihua> [--json=v2]
+// 依赖方待办视角：  node <root>/handoff-status.mjs --for <swoop|prospero|iggle|coreml|tappy|yiqiyihuihua|lab> [--json=v2]
 // 根目录由脚本自身位置推导，整个 hub 目录可整体移动而不失灵。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,7 +41,7 @@ try {
 const VALID_TARGETS = new Set(
   hubCfg && Array.isArray(hubCfg.targets) && hubCfg.targets.length
     ? hubCfg.targets.map(s => String(s).toLowerCase())
-    : ['frontend', 'backend', 'mobile', 'audit']
+    : ['frontend', 'backend', 'mobile', 'audit', 'lab']
 );
 
 function detectLang() {
@@ -98,10 +98,11 @@ const ID_RE = MODE === 'intra-repo'
   : new RegExp(`^(${_TARGET_ALT})-\\d{8}-\\d{2}-(bug|feature|breaking|question)$`);
 
 function parseFM(content) {
-  const m = content.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!content) return null;
+  const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
   if (!m) return null;
   const obj = {};
-  for (const line of m[1].split('\n')) {
+  for (const line of m[1].split(/\r?\n/)) {
     const idx = line.indexOf(':');
     if (idx === -1) continue;
     const k = line.slice(0, idx).trim();
@@ -400,7 +401,7 @@ for (const r of rows) {
 const open = rows.filter(r => r.status !== 'closed');
 const byStatus = {};
 for (const r of open) (byStatus[r.status] = byStatus[r.status] || []).push(r);
-const receiptButStale = open.filter(r => r.hasReceipt && r.status !== 'received' && r.status !== 'delivered' && r.status !== 'closed');
+const receiptButStale = open.filter(r => r.hasReceipt && r.status !== 'received' && r.status !== 'delivered' && r.status !== 'closed' && !r.rejected_at);
 
 // ── 下一步导航 ──
 // 状态名中文化 + 每项给出「谁该做什么」，消除「看到状态名却不知下一步」的记忆负担。

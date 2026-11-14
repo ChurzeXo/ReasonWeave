@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { findAdrFiles, parseAdrFile } from './adr-parser.mjs';
+import { findAdrFiles, parseAdrFile, loadOverlayConfig } from './adr-parser.mjs';
 
 /**
  * 量化指标正则：匹配延迟、吞吐、内存、精度等量化数值与关键字
@@ -22,12 +22,12 @@ export const QUANTITATIVE_METRICS_REGEX = /(?:\b\d+(?:\.\d+)?\s*(?:ms|MB|GB|FPS|
 /**
  * 实测基准上下文线索关键字（避免将背景设备参数如 4GB RAM 或章节序号误判为实测基准声明）
  */
-const MEASUREMENT_CONTEXT_REGEX = /(?:实测|基准|均值|P95|P99|INT8|冷启|推理|拟合斜率|准确率|Top-?1|ECE|Latency|Throughput|Tokens?\/s|FPS|耗时|执行时间|软拷贝|基线|Benchmark|Spike)/i;
+const MEASUREMENT_CONTEXT_REGEX = /(?:实测|基准|均值|P95|P99|INT8|冷启|推理|拟合斜率|准确率|Top-?1|ECE|Latency|Throughput|Tokens?\/s|FPS|耗时|执行时间|软拷贝|基线|Benchmark|Spike|采样|常驻|阈值)/i;
 
 /**
  * 实测基准章节标题正则
  */
-const MEASUREMENT_SECTION_REGEX = /(?:Implementation\s+Status|落地情况|Benchmark|基准|实测|Evaluation|性能|Spike|测试数据|压测)/i;
+const MEASUREMENT_SECTION_REGEX = /(?:Implementation\s+Status|落地情况|Benchmark|基准|实测|Evaluation|性能|Spike|测试数据|压测|^\s*验证\s*$)/i;
 
 /**
  * 提取文本中出现的量化性能指标（具备上下文感知能力）
@@ -336,7 +336,9 @@ export function verifyAdrTelemetry(adrData, repoRoot) {
  * 校验指定目录下所有 ADR 的实测数据信任根
  */
 export function verifyAllAdrsTelemetry(repoRoot, options = {}) {
-  const adrPaths = findAdrFiles(repoRoot);
+  const config = options.config || loadOverlayConfig(repoRoot, options.overlay || options.overlayPath || '');
+  const mergedOptions = { ...config, ...options };
+  const adrPaths = findAdrFiles(repoRoot, mergedOptions);
   const targetId = options.targetAdrId ? options.targetAdrId.toUpperCase() : null;
 
   const reports = [];
@@ -346,7 +348,7 @@ export function verifyAllAdrsTelemetry(repoRoot, options = {}) {
   let skippedCount = 0;
 
   for (const adrPath of adrPaths) {
-    const parsed = parseAdrFile(adrPath);
+    const parsed = parseAdrFile(adrPath, mergedOptions);
     if (targetId && parsed.adrId.toUpperCase() !== targetId) {
       continue;
     }

@@ -10,96 +10,33 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { findAdrFiles, parseAdrFile, containsStrictInvariant } from './adr-parser.mjs';
+import {
+  findAdrFiles,
+  parseAdrFile,
+  containsStrictInvariant,
+  loadOverlayConfig,
+  parseSimpleYamlOverlay,
+} from './adr-parser.mjs';
 import { scanRepository, analyzeSymbolWiring } from './scanner.mjs';
 import { verifyAllAdrsTelemetry } from './telemetry_authenticator.mjs';
 import { traceAllAdrsWiring } from './wiring_tracer.mjs';
 
-/**
- * 读取可选的 spec-matrix.overlay.yml 文件
- */
-export function loadOverlayConfig(repoRoot, customPath = '') {
-  const candidatePaths = [
-    customPath ? path.resolve(repoRoot, customPath) : '',
-    path.join(repoRoot, 'spec-matrix.overlay.yml'),
-    path.join(repoRoot, 'spec-matrix.yml'),
-    path.join(repoRoot, '.spec-matrix.yml'),
-  ].filter(Boolean);
-
-  for (const p of candidatePaths) {
-    if (fs.existsSync(p)) {
-      try {
-        const content = fs.readFileSync(p, 'utf8');
-        // 轻量提取 YAML 中的 invariants 节（避免必须依赖第三方 js-yaml）
-        return parseSimpleYamlOverlay(content);
-      } catch (err) {
-        // ignore overlay parse failure
-      }
-    }
-  }
-  return { invariants: [] };
-}
-
-/**
- * 极简 YAML 提取器（提取 id, name, status, cross_repo_contracts 与 production.symbols 字段）
- */
-function parseSimpleYamlOverlay(yamlContent) {
-  const invariants = [];
-  const lines = yamlContent.split('\n');
-  let currentInv = null;
-  let inSymbols = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('- id:')) {
-      if (currentInv) invariants.push(currentInv);
-      const idMatch = trimmed.match(/- id:\s*["']?([^"']+)["']?/);
-      currentInv = { id: idMatch ? idMatch[1] : '', isOverlay: true, productionSymbols: [] };
-      inSymbols = false;
-    } else if (currentInv) {
-      if (trimmed.startsWith('name:')) {
-        const m = trimmed.match(/name:\s*["']?([^"']+)["']?/);
-        if (m) currentInv.name = m[1];
-        inSymbols = false;
-      } else if (trimmed.startsWith('status:')) {
-        const m = trimmed.match(/status:\s*["']?([^"']+)["']?/);
-        if (m) currentInv.status = m[1];
-        inSymbols = false;
-      } else if (trimmed.startsWith('symbols:')) {
-        inSymbols = true;
-      } else if (inSymbols && trimmed.startsWith('-')) {
-        const symMatch = trimmed.match(/-\s*["']?([^"'\s]+)["']?/);
-        if (symMatch) {
-          let rawSym = symMatch[1];
-          if (rawSym.includes('#')) {
-            rawSym = rawSym.split('#')[1];
-          }
-          currentInv.productionSymbols.push(rawSym);
-        }
-      } else if (!trimmed.startsWith('-')) {
-        inSymbols = false;
-      }
-    }
-  }
-  if (currentInv) invariants.push(currentInv);
-  return { invariants };
-}
+export { loadOverlayConfig, parseSimpleYamlOverlay };
 
 /**
  * 核心对账计算：动态生成 Code-as-Spec-Matrix 并比对
  */
 export function buildAndCheckMatrix(repoRoot, options = {}) {
   // 1. 扫描所有 ADR
-  const adrFilePaths = findAdrFiles(repoRoot);
-  const parsedAdrs = adrFilePaths.map((p) => parseAdrFile(p));
+  const overlay = loadOverlayConfig(repoRoot, options.overlay || options.overlayPath || '');
+  const config = { ...overlay, ...options };
+  const adrFilePaths = findAdrFiles(repoRoot, config);
+  const parsedAdrs = adrFilePaths.map((p) => parseAdrFile(p, config));
 
   // 2. 扫描源码中所有的 @Invariant 与 @ContractOnly 声明
   const scanResult = scanRepository(repoRoot);
   const codeInvariants = scanResult.invariants;
   const codeContracts = scanResult.contracts;
-
-  // 3. 读取 Overlay 覆盖层配置
-  const overlay = loadOverlayConfig(repoRoot, options.overlay);
 
   // 建立全局对账账本
   const adrReports = [];
@@ -275,7 +212,12 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
     }
   }
 
-  const coveragePercent = totalInvariantsCount > 0 ? Math.round(((verifiedCount + sandboxedCount) / totalInvariantsCount) * 100) : 100;
+  const isZeroCoverage = parsedAdrs.length === 0;
+  const coveragePercent = isZeroCoverage
+    ? 0
+    : (totalInvariantsCount > 0
+        ? Math.round(((verifiedCount + sandboxedCount) / totalInvariantsCount) * 100)
+        : 100);
 
   return {
     repoRoot,
@@ -290,7 +232,8 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
     coveragePercent,
     orphanAssertions,
     unwiredInvariants,
-    isHealthy: driftCount === 0 && orphanAssertions.length === 0 && (!options.checkCallers || unwiredInvariants.length === 0),
+    zeroCoverage: isZeroCoverage,
+    isHealthy: !isZeroCoverage && driftCount === 0 && orphanAssertions.length === 0 && (!options.checkCallers || unwiredInvariants.length === 0),
   };
 }
 
@@ -304,6 +247,10 @@ export function formatConsoleReport(matrixResult) {
   lines.push(`📁 扫描代码文件: ${matrixResult.scannedFilesCount} 个 | ADR 规约: ${matrixResult.adrsCount} 份`);
   lines.push(`📊 总不变量: ${matrixResult.totalInvariantsCount} | 已验证: \x1b[32m${matrixResult.verifiedCount}\x1b[0m | 沙箱隔离: \x1b[36m${matrixResult.sandboxedCount}\x1b[0m | 进行中: \x1b[33m${matrixResult.inProgressCount}\x1b[0m | 漂移: \x1b[31m${matrixResult.driftCount}\x1b[0m`);
   lines.push(`📈 规约断言有效覆盖率: \x1b[1m${matrixResult.coveragePercent}%\x1b[0m\n`);
+
+  if (matrixResult.zeroCoverage || matrixResult.adrsCount === 0) {
+    lines.push(`\x1b[31m⚠️ ZERO_COVERAGE: 未扫描到任何有效 ADR 规约文件！零覆盖不可伪装为通过。\x1b[0m\n`);
+  }
 
   for (const rep of matrixResult.adrReports) {
     if (!rep.hasInvariants) continue;
@@ -564,7 +511,8 @@ export function buildFullTriadMatrix(repoRoot, options = {}) {
     return numA - numB;
   });
 
-  const isHealthy = assertionDriftCount === 0 && telemetryDriftCount === 0 && orphanDecisionCount === 0;
+  const isZeroCoverage = totalAdrs === 0;
+  const isHealthy = !isZeroCoverage && assertionDriftCount === 0 && telemetryDriftCount === 0 && orphanDecisionCount === 0;
 
   return {
     repoRoot,
@@ -577,6 +525,8 @@ export function buildFullTriadMatrix(repoRoot, options = {}) {
     assertionDriftCount,
     telemetryDriftCount,
     orphanDecisionCount,
+    coveragePercent: isZeroCoverage ? 0 : assertionMatrix.coveragePercent,
+    zeroCoverage: isZeroCoverage,
     isHealthy,
   };
 }
@@ -625,7 +575,9 @@ export function formatTriadHeatmap(triadResult) {
   }
 
   lines.push('═'.repeat(96));
-  if (triadResult.isHealthy) {
+  if (triadResult.totalAdrs === 0 || triadResult.zeroCoverage) {
+    lines.push('\x1b[31m❌ [ZERO_COVERAGE] 门禁阻断：未发现任何有效 ADR 规约！零覆盖不可伪装为健康。\x1b[0m\n');
+  } else if (triadResult.isHealthy) {
     lines.push('\x1b[32m✅ 全景三元对账检查通过！无断言漂移、无实测数据伪造、无孤儿冻结决策。\x1b[0m\n');
   } else {
     lines.push('\x1b[31m❌ 全景三元对账门禁阻断！发现存在断言脱节、实测数据伪造或孤儿冻结决策。\x1b[0m\n');

@@ -5,7 +5,41 @@
 
 version: "1.0"
 
-# 跨端跨语言契约覆盖定义
+# ==============================================================================
+# ADR 发现与状态映射配置 (可选)
+# 适用于定制化 ADR 目录结构或异构决策体系（如 docs/decisions/DECISION-NNNN）
+# ==============================================================================
+
+# 可选：自定义 ADR 存放目录列表（缺省搜索 group/architecture/adr, docs/adr, adr, docs/proposals）
+# adr_dirs:
+#   - docs/decisions
+
+# 可选：自定义 ADR 编号与文件名提取正则（缺省匹配 ADR-\d+ 与 ^\d{4}-）
+# adr_id_pattern: "DECISION-\\d+"
+
+# 可选：自定义判定为 Frozen 状态的值列表（缺省自动识别包含 🔒 或 frozen/Frozen 的状态，active/superseded 默认不冻结）
+# frozen_states:
+#   - "frozen"
+#   - "🔒 Frozen"
+
+# 可选：自定义核心章节标题别名
+# section_aliases:
+#   decision:
+#     - "决定"
+#     - "决策"
+#     - "Decision"
+#   implementation:
+#     - "验证"
+#     - "落地情况"
+#     - "Implementation Status"
+#   invariants:
+#     - "不可变量"
+#     - "不变量"
+#     - "Invariants"
+
+# ==============================================================================
+# 跨端跨语言契约覆盖定义 (Overlay)
+# ==============================================================================
 invariants:
   - id: "ADR-060:Gate1"
     name: "跨端设备排他锁互斥"

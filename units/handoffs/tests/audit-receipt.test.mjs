@@ -581,4 +581,135 @@ status: draft
     assert.ok(stubMatch, '必须找到接入桩标记');
     assert.ok(stubMatch[1].length < 2500, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
   });
+
+  it('18. 连续多轮驳回历史无损继承与防冲刷（防模板空标题冲刷、精准小节定位追加）', () => {
+    const tmpDir = createTestRepo();
+    const res = runBaton(tmpDir, 'new impl task "测试多轮驳回历史保护" --from audit');
+    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+
+    // 1. 第 1 轮驳回
+    const rej1 = runBaton(tmpDir, `reject ${id} -n "第1轮驳回：缺少真机用例" --as audit`);
+    assert.equal(rej1.status, 0);
+
+    const rPath = path.join(tmpDir, '.handoffs', 'receipts', `${id}-resp.md`);
+    assert.ok(fs.existsSync(rPath), '第1轮驳回应自动创建回执');
+    let rContent = fs.readFileSync(rPath, 'utf-8');
+    assert.match(rContent, /第1轮驳回：缺少真机用例/);
+
+    // 2. 执行方收到驳回后进行整改，提交回执（模拟 Agent 模板自带空 ## 驳回记录 和后续章节）并交付
+    fs.writeFileSync(path.join(tmpDir, 'index.ts'), 'export const a = 1;');
+    const receiptBody1 = [
+      '## 状态 / 结论',
+      '- **结论**：PASS',
+      '',
+      '## 驳回记录',
+      '',
+      '## 验收证据',
+      '- Modified Paths: index.ts',
+      '- Result Output: 100% pass',
+      '',
+      '## 遗留与建议',
+      '- 无',
+    ].join('\n');
+
+    const receipt1 = runBaton(tmpDir, `receipt ${id} -n "${receiptBody1}" --evidence-paths "index.ts" --deliver --as impl`, { HANDOFF_LANE: '' });
+    assert.equal(receipt1.status, 0, `第1次整改交付应当成功: ${receipt1.stderr}\n${receipt1.stdout}`);
+
+    rContent = fs.readFileSync(rPath, 'utf-8');
+    assert.match(rContent, /第1轮驳回：缺少真机用例/, '模板带有空标题时历史第1轮记录不能被抹除');
+
+    // 3. 审计方进行第 2 轮驳回：验证第2轮记录精准追加在 ## 驳回记录 小节内，且在 ## 验收证据 之前
+    const rej2 = runBaton(tmpDir, `reject ${id} -n "第2轮驳回：单元测试未覆盖边界" --as audit`);
+    assert.equal(rej2.status, 0);
+
+    rContent = fs.readFileSync(rPath, 'utf-8');
+    assert.match(rContent, /第1轮驳回：缺少真机用例/, '第1轮驳回记录必须保留');
+    assert.match(rContent, /第2轮驳回：单元测试未覆盖边界/, '第2轮驳回记录必须追加');
+
+    // 检查小节顺序：第2轮驳回必须在 ## 验收证据 之前！
+    const rejSectionIdx2 = rContent.indexOf('## 驳回记录');
+    const rej2Idx = rContent.indexOf('第2轮驳回：单元测试未覆盖边界');
+    const evidenceIdx2 = rContent.indexOf('## 验收证据');
+
+    assert.ok(rejSectionIdx2 < rej2Idx, '第2轮驳回必须在 ## 驳回记录 小节之后');
+    assert.ok(rej2Idx < evidenceIdx2, '第2轮驳回必须在 ## 验收证据 之前，严禁盲目追加至文末！');
+
+    // 4. 执行方进行第 2 次整改并交付（这次不带 ## 驳回记录 节，测试缺省自动继承）
+    fs.writeFileSync(path.join(tmpDir, 'index.ts'), 'export const a = 2;\nexport const b = 3;');
+    const receiptBody2 = [
+      '## 状态 / 结论',
+      '- **结论**：PASS (Second Try)',
+      '',
+      '## 验收证据',
+      '- Modified Paths: index.ts',
+      '- Result Output: 100% pass',
+    ].join('\n');
+
+    const receipt2 = runBaton(tmpDir, `receipt ${id} -n "${receiptBody2}" --evidence-paths "index.ts" --deliver --as impl`, { HANDOFF_LANE: '' });
+    assert.equal(receipt2.status, 0);
+
+    rContent = fs.readFileSync(rPath, 'utf-8');
+    assert.match(rContent, /第1轮驳回：缺少真机用例/, '第2次整改必须继承第1轮驳回');
+    assert.match(rContent, /第2轮驳回：单元测试未覆盖边界/, '第2次整改必须继承第2轮驳回');
+
+    // 5. 审计方进行第 3 轮驳回
+    const rej3 = runBaton(tmpDir, `reject ${id} -n "第3轮驳回：发现性能退化" --as audit`);
+    assert.equal(rej3.status, 0);
+
+    rContent = fs.readFileSync(rPath, 'utf-8');
+    assert.match(rContent, /第1轮驳回：缺少真机用例/);
+    assert.match(rContent, /第2轮驳回：单元测试未覆盖边界/);
+    assert.match(rContent, /第3轮驳回：发现性能退化/);
+  });
+
+  it('19. Windows CRLF 换行符全生命周期无感兼容（frontmatter/正文剥离/交付状态）', () => {
+    // 1. 创建工单
+    const res = runBaton(tmpDir, 'new impl task "测试 Windows 平台换行符" --from lead', { HANDOFF_LANE: 'lead' });
+    assert.equal(res.status, 0);
+    const m = res.stdout.match(/(impl-\d+-\d+-task)/);
+    assert.ok(m, '应匹配到工单 ID');
+    const id = m[1];
+    const ticketPath = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
+
+    // 强行将工单换行符转换为 CRLF (\r\n) 模拟 Windows Git checkout
+    let content = fs.readFileSync(ticketPath, 'utf8');
+    content = content.replace(/\r?\n/g, '\r\n');
+    fs.writeFileSync(ticketPath, content, 'utf8');
+    assert.ok(content.includes('\r\n'), '工单文件必须包含 CRLF');
+
+    // 2. 状态查看验证
+    const statusRes = runBaton(tmpDir, 'status', { HANDOFF_LANE: 'impl' });
+    assert.equal(statusRes.status, 0);
+    assert.ok(statusRes.stdout.includes(id), 'status 应正常解析 CRLF 工单 ID');
+
+    // 3. show 验证
+    const showRes = runBaton(tmpDir, `show ${id}`, { HANDOFF_LANE: 'impl' });
+    assert.equal(showRes.status, 0);
+    assert.ok(showRes.stdout.includes('- status: draft'), 'show 应在 CRLF 下正确提取状态');
+    assert.ok(showRes.stdout.includes('- to_lane: impl'), 'show 应在 CRLF 下正确提取接收方');
+
+    // 4. 提交带有 CRLF 的回执
+    const receiptBody = [
+      '## 状态 / 结论',
+      '- **结论**：PASS',
+      '- **修复状态**：完成',
+      '',
+      '## 验收证据',
+      '- paths: README.md'
+    ].join('\r\n');
+
+    const receiptRes = runBaton(tmpDir, `receipt ${id} -n "${receiptBody}" --evidence-paths "README.md" --deliver --as impl`, { HANDOFF_LANE: '' });
+    assert.equal(receiptRes.status, 0, `receipt deliver 应该成功: ${receiptRes.stderr}\n${receiptRes.stdout}`);
+
+    // 将回执文件也转换为纯 CRLF
+    const rPath = path.join(tmpDir, '.handoffs', 'receipts', `${id}-resp.md`);
+    let rContent = fs.readFileSync(rPath, 'utf8');
+    rContent = rContent.replace(/\r?\n/g, '\r\n');
+    fs.writeFileSync(rPath, rContent, 'utf8');
+
+    // 5. 验收方 status 检查交付状态
+    const statusDelivered = runBaton(tmpDir, 'status', { HANDOFF_LANE: 'lead' });
+    assert.equal(statusDelivered.status, 0);
+    assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
+  });
 });

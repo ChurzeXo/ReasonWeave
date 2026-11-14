@@ -122,7 +122,11 @@ function handleCheck() {
     }
 
     if (!triadResult.isHealthy) {
-      console.error(`\x1b[31m❌ [spec-guard check --full] 门禁阻断：全景三元对账发现漂移、自述伪造或孤儿决策！\x1b[0m\n`);
+      if (triadResult.totalAdrs === 0 || triadResult.zeroCoverage) {
+        console.error(`\x1b[31m❌ [spec-guard check --full] 门禁阻断：未发现任何有效 ADR 规约 (ZERO_COVERAGE)！零覆盖不可伪装为健康。\x1b[0m\n`);
+      } else {
+        console.error(`\x1b[31m❌ [spec-guard check --full] 门禁阻断：全景三元对账发现漂移、自述伪造或孤儿决策！\x1b[0m\n`);
+      }
       process.exit(1);
     }
     return;
@@ -139,8 +143,12 @@ function handleCheck() {
     console.log(formatConsoleReport(result));
   }
 
+  if (result.zeroCoverage) {
+    console.error(`\x1b[31m⚠️ [spec-guard] 零覆盖警示：当前工程未发现任何有效 ADR 规约 (ZERO_COVERAGE)！\x1b[0m\n`);
+  }
+
   if (isTelemetry) {
-    const telResult = verifyAllAdrsTelemetry(repoRoot);
+    const telResult = verifyAllAdrsTelemetry(repoRoot, { overlay: overlayPath });
     if (!telResult.isHealthy) {
       console.error(`\x1b[31m❌ [spec-guard --telemetry] 实测数据自述校验失败：存在违背 ADR-064 机器信任根的伪造指标！\x1b[0m\n`);
       process.exit(1);
@@ -152,8 +160,8 @@ function handleCheck() {
     process.exit(1);
   }
 
-  if (isStrict && !result.isHealthy) {
-    console.error(`\x1b[31m❌ [spec-guard --strict] 严格模式检查失败：检测到未修复的架构漂移或孤儿断言！\x1b[0m\n`);
+  if (isStrict && (!result.isHealthy || result.zeroCoverage)) {
+    console.error(`\x1b[31m❌ [spec-guard --strict] 严格模式检查失败：检测到未修复的架构漂移、孤儿断言或零覆盖 (ZERO_COVERAGE)！\x1b[0m\n`);
     process.exit(1);
   }
 }
@@ -162,7 +170,13 @@ function handleVerifyEvidence(targetAdrId) {
   const repoRoot = getRepoRoot();
   console.log(`\n🛡️  [spec-guard verify-evidence] 正在校验实测数据机器信任根凭证 (ADR-064): ${repoRoot}`);
 
-  const result = verifyAllAdrsTelemetry(repoRoot, { targetAdrId });
+  let overlayPath = '';
+  const overlayIdx = args.indexOf('--overlay');
+  if (overlayIdx !== -1 && args[overlayIdx + 1]) {
+    overlayPath = args[overlayIdx + 1];
+  }
+
+  const result = verifyAllAdrsTelemetry(repoRoot, { targetAdrId, overlay: overlayPath });
 
   if (result.auditedCount === 0 && result.skippedCount === 0) {
     console.log(`ℹ️  未找到匹配的 ADR 规约文件。`);
@@ -201,7 +215,13 @@ function handleCheckWiring(targetAdrId) {
   const repoRoot = getRepoRoot();
   console.log(`\n🛡️  [spec-guard check-wiring] 正在反查 ADR 决策在生产代码中的物理接线: ${repoRoot}`);
 
-  const result = traceAllAdrsWiring(repoRoot, { targetAdrId });
+  let overlayPath = '';
+  const overlayIdx = args.indexOf('--overlay');
+  if (overlayIdx !== -1 && args[overlayIdx + 1]) {
+    overlayPath = args[overlayIdx + 1];
+  }
+
+  const result = traceAllAdrsWiring(repoRoot, { targetAdrId, overlay: overlayPath });
 
   console.log(
     `\n📊 规约总数: ${result.totalAdrs} | 🔒Frozen: ${result.frozenAdrsCount} | 孤儿决策: \x1b[31m${result.orphanAdrsCount}\x1b[0m | 接线存活: \x1b[32m${result.passedCount}\x1b[0m\n`

@@ -10,7 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { findAdrFiles, parseAdrFile, escapeRegex } from './adr-parser.mjs';
+import { findAdrFiles, parseAdrFile, escapeRegex, loadOverlayConfig } from './adr-parser.mjs';
 import { scanRepository, isTestPath } from './scanner.mjs';
 
 /**
@@ -28,19 +28,33 @@ const STOP_WORDS = new Set([
 /**
  * 从 ADR 内容中定位 Decision 节并提取候选代码实体符号
  */
-export function extractDecisionSymbols(content) {
+export function extractDecisionSymbols(content, options = {}) {
+  const decAliases = [
+    'Decision',
+    '决策内容',
+    '决策',
+    '决定',
+    ...((options.section_aliases && options.section_aliases.decision) ||
+      (options.sectionAliases && options.sectionAliases.decision) ||
+      options.decision_section_aliases ||
+      []),
+  ];
+  const decPattern = decAliases.map((s) => escapeRegex(s).replace(/\\s\+/g, '\\s+')).join('|');
+  const decHeaderRegex = new RegExp(`^#{2,3}\\s+(?:\\d+\\.?\\s*)?(?:${decPattern})`, 'i');
+  const decWordRegex = new RegExp(decPattern, 'i');
+
   const lines = content.split('\n');
   let inDecision = false;
   const decisionLines = [];
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^#{2,3}\s+(?:\d+\.?\s*)?(?:Decision|决策内容|决策)/i.test(trimmed)) {
+    if (decHeaderRegex.test(trimmed)) {
       inDecision = true;
       continue;
     }
     // 遇到下一个同级二级标题时退出
-    if (inDecision && /^##\s+[^#]/.test(trimmed) && !/Decision|决策/i.test(trimmed)) {
+    if (inDecision && /^##\s+[^#]/.test(trimmed) && !decWordRegex.test(trimmed)) {
       inDecision = false;
       break;
     }
@@ -151,14 +165,14 @@ export function loadProductionFilesCache(repoRoot, scannedRepo = null) {
 /**
  * 针对单个 ADR 执行生产代码物理接线与符号存活性探测
  */
-export function traceAdrWiring(adrData, repoRoot, scannedRepo = null, fileCache = null) {
+export function traceAdrWiring(adrData, repoRoot, scannedRepo = null, fileCache = null, options = {}) {
   const adrId = adrData.adrId || 'ADR-UNKNOWN';
   const filePath = adrData.filePath || '';
   const isFrozen = !!adrData.isFrozen;
   const content = typeof adrData.content === 'string' ? adrData.content : fs.readFileSync(filePath, 'utf8');
 
   // 1. 抽取决策核心符号
-  const candidateSymbols = extractDecisionSymbols(content);
+  const candidateSymbols = extractDecisionSymbols(content, options);
 
   // 2. 加载或复用生产文件内存缓存 (No-Cheat: 严格排除测试代码)
   let cache = fileCache;
@@ -246,7 +260,9 @@ export function traceAdrWiring(adrData, repoRoot, scannedRepo = null, fileCache 
  * 批量检查全仓 ADR 的物理接线状态
  */
 export function traceAllAdrsWiring(repoRoot, options = {}) {
-  const adrPaths = findAdrFiles(repoRoot);
+  const config = options.config || loadOverlayConfig(repoRoot, options.overlay || options.overlayPath || '');
+  const mergedOptions = { ...config, ...options };
+  const adrPaths = findAdrFiles(repoRoot, mergedOptions);
   const targetId = options.targetAdrId ? options.targetAdrId.toUpperCase() : null;
 
   // 预热加载一次生产文件缓存
@@ -258,7 +274,7 @@ export function traceAllAdrsWiring(repoRoot, options = {}) {
   let passedCount = 0;
 
   for (const adrPath of adrPaths) {
-    const parsed = parseAdrFile(adrPath);
+    const parsed = parseAdrFile(adrPath, mergedOptions);
     if (targetId && parsed.adrId.toUpperCase() !== targetId) {
       continue;
     }
@@ -267,7 +283,7 @@ export function traceAllAdrsWiring(repoRoot, options = {}) {
       frozenAdrsCount++;
     }
 
-    const report = traceAdrWiring(parsed, repoRoot, repoScan, fileCache);
+    const report = traceAdrWiring(parsed, repoRoot, repoScan, fileCache, mergedOptions);
     reports.push(report);
 
     if (report.isOrphan) {

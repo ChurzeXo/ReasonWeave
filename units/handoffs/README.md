@@ -100,7 +100,7 @@ units/handoffs/                    ← 契约 + 引擎层（版本化，稳定�
 ```yaml
 ---
 handoff_id: SWOOP-20260816-01-bug
-target: swoop            # swoop | prospero | iggle | coreml | tappy | yiqiyihuihua（接收方；iggle = Swoop→iggle 反向发现）
+target: swoop            # swoop | prospero | iggle | coreml | tappy | yiqiyihuihua | lab（接收方；iggle = Swoop→iggle 反向发现）
 type: bug                # bug | feature | breaking | question
 status: draft            # draft → forwarded → received → delivered → closed
 needs_iggle_change: false

@@ -1,5 +1,19 @@
 # Changelog - spec-guard (drift-gate)
 
+## [2.1.0] - 2026-11-14
+
+### Added
+- **ADR 发现与解析规则项目侧可配置化 (`core/adr-parser.mjs`)**：
+  - `findAdrFiles` 支持通过 `spec-matrix.overlay.yml`（或 CLI/选项）配置 `adr_dirs` 与 `adr_id_pattern`。
+  - 缺省无配置时自动回退现有四候选目录 (`group/architecture/adr`, `docs/adr`, `adr`, `docs/proposals`) 及 `ADR-\d+`/`^\d{4}-`，保持 100% 零回归。
+  - `parseAdrContent` 支持提取 frontmatter `id:` 并采用同一模式解析异构决策编号（如 `DECISION-NNNN`）。
+  - 支持 frontmatter `status:` 及 `frozen_states` 状态列表映射，确保 `active|superseded` 状态不会被误判为 `🔒Frozen`。
+  - 核心章节标题（Decision, Invariants, Implementation Status）支持别名匹配（如 `## 决定`、`## 验证`）。
+- **零覆盖假绿防卫与严格门禁拦截 (`core/matrix-checker.mjs`)**：
+  - 根除「0 规约/0 不变量 → 覆盖率 100%」的空集假绿缺陷：`totalAdrs === 0` 时严禁判定健康，强制输出 `coveragePercent: 0` 与 `ZERO_COVERAGE` 警示，`--strict` 与 `--full` 模式下一律 Exit 1 阻断。
+- **Git 提交门禁片全面升级 (`templates/pre-commit.d/15-spec-guard`)**：
+  - 将未实现的 `check --incremental` 升级为 `check --full --strict`，杜绝非 strict 恒 Exit 0 导致的装饰性空壳门禁。
+
 ## [2.0.0] - 2026-11-14
 
 ### Added
