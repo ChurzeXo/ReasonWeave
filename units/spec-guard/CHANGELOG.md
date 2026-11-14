@@ -1,5 +1,15 @@
 # Changelog - spec-guard (drift-gate)
 
+## [2.2.0] - 2026-11-14
+
+### Added
+- **性能实测自述与架构约定阈值解耦 (`core/telemetry_authenticator.mjs`, `core/adr-parser.mjs`)**：
+  - **Overlay 规则支持**：`spec-matrix.overlay.yml` 支持配置 `telemetry_ignore_patterns`（字符串/正则）与 `telemetry_exempt_adrs`（ADR 编号列表），支持顶层或 `telemetry:` 嵌套语法。
+  - **行级内联标记**：支持在 ADR Markdown 行中通过 `<!-- telemetry: ignore -->`（或 `skip`/`convention`/`exempt`）将轮询周期上限、配置参数、超时门限等约定阈值声明为非基准指标，免除机器 JSON 信任根强制校验。
+  - **块级范围标记**：支持通过 `<!-- telemetry: ignore-start -->` 与 `<!-- telemetry: ignore-end -->` 对特定配置段落实施整体忽略。
+  - **ADR 级显式豁免**：支持在 ADR frontmatter 中声明 `telemetry: exempt`（或 `skip`/`ignore`/`convention`/`false`），或在 overlay 中配置 `telemetry_exempt_adrs`，将特定非量化 ADR 整体标记为 `SKIPPED`。
+  - 彻底解耦「**架构约定阈值（SLA/上限/轮询）**」与「**性能跑分实测自述（Benchmark/Telemetry）**」，杜绝消费方被迫为纯文本约定补写伪造基准 JSON。
+
 ## [2.1.0] - 2026-11-14
 
 ### Added

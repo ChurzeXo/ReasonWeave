@@ -11,7 +11,14 @@ import {
   parseAdrContent,
   findAdrFiles,
   loadOverlayConfig,
+  parseSimpleYamlOverlay,
 } from '../core/adr-parser.mjs';
+
+import {
+  extractTelemetryMetrics,
+  verifyAdrTelemetry,
+  verifyAllAdrsTelemetry,
+} from '../core/telemetry_authenticator.mjs';
 
 import {
   isTestPath,
@@ -592,5 +599,118 @@ scope:
     const hookContent = fs.readFileSync('units/spec-guard/templates/pre-commit.d/15-spec-guard', 'utf8');
     assert.ok(hookContent.includes('check --full --strict'), '门禁脚本必须调用 check --full --strict');
     assert.ok(!hookContent.includes('check --incremental'), '门禁脚本禁止残留未实现的 check --incremental');
+  });
+});
+
+describe('spec-guard v2.2: 性能实测自述与约定阈值解耦 (Telemetry Decoupling & Exemption)', () => {
+  it('parseSimpleYamlOverlay 正确解析 telemetry_ignore_patterns 与 telemetry_exempt_adrs（支持顶层与嵌套）', () => {
+    const yaml = `
+version: "1.0"
+telemetry:
+  ignore_patterns:
+    - "≤1s"
+    - "/\\\\b\\\\d+\\\\s*s\\\\s*轮询/"
+  exempt_adrs:
+    - "ADR-0006"
+telemetry_ignore_patterns:
+  - "周期 <= 500ms"
+telemetry_exempt_adrs:
+  - "ADR-0008"
+`;
+    const cfg = parseSimpleYamlOverlay(yaml);
+    assert.ok(cfg.telemetry_ignore_patterns.includes('≤1s'));
+    assert.ok(cfg.telemetry_ignore_patterns.includes('/\\b\\d+\\s*s\\s*轮询/'));
+    assert.ok(cfg.telemetry_ignore_patterns.includes('周期 <= 500ms'));
+    assert.ok(cfg.telemetry_exempt_adrs.includes('ADR-0006'));
+    assert.ok(cfg.telemetry_exempt_adrs.includes('ADR-0008'));
+  });
+
+  it('extractTelemetryMetrics 支持配置 ignorePatterns（字符串与正则）：约定阈值被忽略，实测数据正常保留', () => {
+    const content = `
+## 验证
+- 约定阈值：checkAuth 这类 ≤1s 轮询属于高频，不作为基准
+- 实测基准：PP-OCRv5 推理均值 39.42ms，P95 44.37ms
+`;
+    // 无 ignorePatterns 时：提取 1s, 39.42ms, P95, 44.37ms
+    const allMetrics = extractTelemetryMetrics(content);
+    assert.ok(allMetrics.some((m) => m.metric === '1s'));
+    assert.ok(allMetrics.some((m) => m.metric === '39.42ms'));
+
+    // 配置 ignorePatterns: ["≤1s"]
+    const filteredMetrics = extractTelemetryMetrics(content, {
+      ignorePatterns: ['≤1s'],
+    });
+    assert.equal(filteredMetrics.some((m) => m.metric === '1s'), false, '≤1s 应被 ignorePatterns 过滤');
+    assert.ok(filteredMetrics.some((m) => m.metric === '39.42ms'), '实测 39.42ms 必须正常保留');
+  });
+
+  it('extractTelemetryMetrics 支持行级内联标记 <!-- telemetry: ignore --> 过滤约定阈值', () => {
+    const content = `
+## 验证
+- checkAuth 轮询周期 ≤1s <!-- telemetry: ignore -->
+- 软拷贝实测均值 207ms，P95 264.92ms
+`;
+    const metrics = extractTelemetryMetrics(content);
+    assert.equal(metrics.some((m) => m.metric === '1s'), false, '标记 telemetry: ignore 的行不得提取指标');
+    assert.ok(metrics.some((m) => m.metric === '207ms'), '未标记的实测行正常提取指标');
+  });
+
+  it('extractTelemetryMetrics 支持块级标记 <!-- telemetry: ignore-start --> / ignore-end 范围过滤', () => {
+    const content = `
+## 验证
+<!-- telemetry: ignore-start -->
+- 超时门限 ≤ 120s
+- 重试窗口 500ms
+<!-- telemetry: ignore-end -->
+- 实测冷启耗时 460ms
+`;
+    const metrics = extractTelemetryMetrics(content);
+    assert.equal(metrics.some((m) => m.metric === '120s'), false);
+    assert.equal(metrics.some((m) => m.metric === '500ms'), false);
+    assert.ok(metrics.some((m) => m.metric === '460ms'), '块外实测指标必须被提取');
+  });
+
+  it('verifyAdrTelemetry 支持 ADR frontmatter 声明 telemetry: exempt 整体豁免', () => {
+    const adrData = {
+      adrId: 'ADR-0006',
+      filePath: 'adr/0006.md',
+      content: `---
+id: ADR-0006
+status: active
+telemetry: exempt
+---
+# ADR-0006
+## 验证
+- 实测均值 39.42ms
+`,
+      telemetryExempt: true,
+    };
+    const res = verifyAdrTelemetry(adrData, '/tmp');
+    assert.equal(res.status, 'SKIPPED');
+    assert.equal(res.isCompliant, true);
+    assert.ok(res.reason.includes('telemetry: exempt'));
+  });
+
+  it('verifyAdrTelemetry 支持 overlay 配置 telemetry_exempt_adrs 整体豁免', () => {
+    const adrData = {
+      adrId: 'ADR-0006',
+      filePath: 'adr/0006.md',
+      content: `
+# ADR-0006
+## 验证
+- 实测均值 39.42ms（无凭证）
+`,
+    };
+    // 未豁免时应 FAIL
+    const unexempted = verifyAdrTelemetry(adrData, '/tmp');
+    assert.equal(unexempted.status, 'FAIL');
+
+    // 配置 telemetry_exempt_adrs: ["ADR-0006"]
+    const exempted = verifyAdrTelemetry(adrData, '/tmp', {
+      telemetry_exempt_adrs: ['ADR-0006'],
+    });
+    assert.equal(exempted.status, 'SKIPPED');
+    assert.equal(exempted.isCompliant, true);
+    assert.ok(exempted.reason.includes('telemetry_exempt_adrs'));
   });
 });

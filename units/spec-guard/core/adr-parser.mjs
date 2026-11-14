@@ -50,6 +50,8 @@ export function parseSimpleYamlOverlay(yamlContent) {
       implementation: [],
       invariants: [],
     },
+    telemetry_ignore_patterns: [],
+    telemetry_exempt_adrs: [],
     invariants: [],
   };
 
@@ -100,6 +102,38 @@ export function parseSimpleYamlOverlay(yamlContent) {
         config.section_aliases[currentSubSection].push(itemVal);
         continue;
       }
+    }
+
+    // Sub-keys under telemetry
+    if (currentSection === 'telemetry') {
+      const subMatch = rawLine.match(/^\s{1,4}([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
+      if (subMatch) {
+        currentSubSection = subMatch[1].trim();
+        continue;
+      }
+      if (currentSubSection && trimmed.startsWith('-')) {
+        const itemVal = trimmed.replace(/^-\s*/, '').replace(/^["']|["']$/g, '').replace(/\\\\/g, '\\').trim();
+        if (currentSubSection === 'ignore_patterns' || currentSubSection === 'telemetry_ignore_patterns') {
+          config.telemetry_ignore_patterns.push(itemVal);
+        } else if (currentSubSection === 'exempt_adrs' || currentSubSection === 'telemetry_exempt_adrs') {
+          config.telemetry_exempt_adrs.push(itemVal);
+        }
+        continue;
+      }
+    }
+
+    // Flat list items under telemetry_ignore_patterns
+    if (currentSection === 'telemetry_ignore_patterns' && trimmed.startsWith('-')) {
+      const patVal = trimmed.replace(/^-\s*/, '').replace(/^["']|["']$/g, '').replace(/\\\\/g, '\\').trim();
+      config.telemetry_ignore_patterns.push(patVal);
+      continue;
+    }
+
+    // Flat list items under telemetry_exempt_adrs
+    if (currentSection === 'telemetry_exempt_adrs' && trimmed.startsWith('-')) {
+      const adrVal = trimmed.replace(/^-\s*/, '').replace(/^["']|["']$/g, '').trim();
+      config.telemetry_exempt_adrs.push(adrVal);
+      continue;
     }
 
     // List items under adr_dirs
@@ -327,6 +361,14 @@ export function parseAdrContent(content, filePath = '', options = {}) {
 
   let status = (frontmatter && frontmatter.status) ? frontmatter.status : 'Unknown';
   let isFrozen = false;
+  let telemetryExempt = false;
+
+  if (frontmatter && frontmatter.telemetry) {
+    const t = String(frontmatter.telemetry).toLowerCase().trim();
+    if (['exempt', 'skip', 'ignore', 'false', 'none', 'convention', 'disabled'].includes(t)) {
+      telemetryExempt = true;
+    }
+  }
 
   const frozenStates = config.frozen_states || config.frozenStates || [];
 
@@ -480,6 +522,8 @@ export function parseAdrContent(content, filePath = '', options = {}) {
     title,
     status,
     isFrozen,
+    telemetryExempt,
+    frontmatter,
     hasImplementationStatus,
     implementationItems,
     hasInvariantsSection,
