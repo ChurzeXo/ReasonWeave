@@ -45,3 +45,7 @@
 ### 3. 交割与审计契约（Handoff & Audit Protocol）
 - 在多窗口或跨 Agent 异步交割任务时，审计方（`to_lane: audit`）代码审查的第一道防线为“孤儿与接线检查（Orphan Check）”：凡新增的导出函数、Struct、View 或 Page 未在主入口调用树中被引用，一律直接打回（Reject），禁止合并。
 
+### 4. 物理门禁（Physical Gate，与 `AGENTS.md` 同名章节等价）
+- 本仓 Fast Gate 挂载于 `.git/hooks/pre-commit`（软链至 `$HOME/dev-templates/hooks/pre-commit-node`，SSOT 为 `units/orphan/templates/wiring/pre-commit-node.sh.template`），提交时自动执行 `node --check` + `lab-orphan check-diff --staged`。
+- 被拦截时按输出的「缺失清单 + 修复动作」自愈，**禁止用 `--no-verify` 绕过**；紧急豁免仅限 `SKIP_WIRING_GATE=1`，且需在回执/PR 补交 Wiring Proof。
+
