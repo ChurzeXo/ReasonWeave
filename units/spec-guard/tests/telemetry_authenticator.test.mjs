@@ -257,6 +257,90 @@ describe('spec-guard v2.0: 实测数据自述凭据与机器信任根验签 (Tel
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  // [必红守护 V1]: 1 真 3 假混合样本严密拦截
+  it('V1 必红守护：1 真 3 假混合样本严禁蒙混过关，必须逐指标 0% 容差严密拦截且报出未命中指标', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-v1-'));
+    try {
+      const evidenceDir = path.join(tmpDir, 'evidence');
+      fs.mkdirSync(evidenceDir, { recursive: true });
+
+      const evidenceFile = path.join(evidenceDir, 'bench.json');
+      const fileData = JSON.stringify({ latency_ms: 39.42 }, null, 2);
+      fs.writeFileSync(evidenceFile, fileData, 'utf8');
+
+      const realHash = crypto.createHash('sha256').update(fileData).digest('hex');
+
+      // ADR 包含 1 个真实数值 39.42ms，但混入了 999.99ms, 77.7MB, 66% 假指标
+      const adrContent = `
+# ADR-911: 混合真假指标规约
+
+- **状态（Status）**：Draft
+- **evidence_ref**: evidence/bench.json
+- **digest**: sha256:${realHash}
+
+## 3. Implementation Status
+| 实测项 | 状态 | 数据 |
+|---|---|---|
+| 基准 | ✅ 已完成 | 真实 39.42ms，同时伪造 999.99ms 与 77.7MB 与 66% |
+      `;
+
+      const res = verifyAdrTelemetry(
+        {
+          adrId: 'ADR-911',
+          filePath: path.join(tmpDir, 'ADR-911.md'),
+          content: adrContent,
+        },
+        tmpDir
+      );
+
+      assert.equal(res.status, 'FAIL');
+      assert.equal(res.isCompliant, false);
+      assert.ok(res.details.some((d) => d.includes('违反 0% 容差铁律')));
+      assert.ok(res.details.some((d) => d.includes('999.99ms') || d.includes('77.7MB')));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // [必红守护 V2]: 裸 signature 占位符严禁跳过哈希校验
+  it('V2 必红守护：裸 signature 占位符严禁跳过机器 SHA-256 哈希校验 (缺少 digest 必须 FAIL 阻断)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-v2-'));
+    try {
+      const evidenceDir = path.join(tmpDir, 'evidence');
+      fs.mkdirSync(evidenceDir, { recursive: true });
+
+      const evidenceFile = path.join(evidenceDir, 'bench.json');
+      fs.writeFileSync(evidenceFile, JSON.stringify({ latency_ms: 39.42 }, null, 2), 'utf8');
+
+      // ADR 仅提供 40 字符伪造 signature，不提供 digest
+      const adrContent = `
+# ADR-912: 伪造签名规约
+
+- **状态（Status）**：Draft
+- **evidence_ref**: evidence/bench.json
+- **signature**: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
+## 3. Implementation Status
+| 基准 | ✅ 已完成 | 均值 39.42ms |
+      `;
+
+      const res = verifyAdrTelemetry(
+        {
+          adrId: 'ADR-912',
+          filePath: path.join(tmpDir, 'ADR-912.md'),
+          content: adrContent,
+        },
+        tmpDir
+      );
+
+      assert.equal(res.status, 'FAIL');
+      assert.equal(res.isCompliant, false);
+      assert.ok(res.details.some((d) => d.includes('缺少机器 SHA-256 哈希摘要')));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('spec-guard v2.0: 物理代码接线探测与孤儿决策防卫 (Wiring Tracer)', () => {
@@ -362,6 +446,43 @@ describe('spec-guard v2.0: 物理代码接线探测与孤儿决策防卫 (Wiring
       // 因为生产代码没有 FakePipelineRunner，测试里的调用被 No-Cheat 铁律严格过滤，判定为孤儿决策！
       assert.equal(report.isOrphan, true);
       assert.equal(report.status, 'FAIL');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // [必红守护 V4]: 自然语言未加反引号 🔒Frozen 孤儿决策拦截
+  it('V4 必红守护：🔒Frozen 状态但 Decision 节仅用自然语言写符号（无反引号）且生产代码零命中，必须判定 ORPHAN_DECISION 并阻断', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-v4-'));
+    try {
+      const prodDir = path.join(tmpDir, 'src', 'main');
+      fs.mkdirSync(prodDir, { recursive: true });
+      fs.writeFileSync(path.join(prodDir, 'App.kt'), 'class App {}');
+
+      // ADR-914 🔒Frozen，Decision 用自然语言写实体（无反引号）
+      const adrContent = `
+# ADR-914: 自然语言孤儿决策规约
+
+- **状态（Status）**：🔒 Frozen
+
+## 2. Decision
+生产环境必须接入核心引擎 QuantumGhostEngine 与 PhotonDispatcher。
+      `;
+
+      const report = traceAdrWiring(
+        {
+          adrId: 'ADR-914',
+          filePath: path.join(tmpDir, 'ADR-914.md'),
+          isFrozen: true,
+          content: adrContent,
+        },
+        tmpDir
+      );
+
+      assert.equal(report.isOrphan, true);
+      assert.equal(report.status, 'FAIL');
+      assert.ok(report.reason.includes('ORPHAN_DECISION'));
+      assert.ok(report.reason.includes('QuantumGhostEngine'));
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

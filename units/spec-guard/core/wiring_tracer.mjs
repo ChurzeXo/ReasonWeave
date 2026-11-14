@@ -2,7 +2,7 @@
  * wiring_tracer.mjs
  *
  * 负责 ADR 物理代码接线探测与孤儿决策防卫 (spec-guard v2.0):
- * 1. 从 ADR 决策节 (## 2. Decision) 提取核心架构符号、类名、函数与引擎编号
+ * 1. 从 ADR 决策节 (## 2. Decision) 提取核心架构符号、类名、函数与引擎编号 (支持反引号与自然语言实体)
  * 2. 严格排除测试目录 (src/test/, tests/, __tests__ 等)，贯彻 No-Cheat 防作弊铁律
  * 3. 在生产源码目录中反查符号存活性与物理接线
  * 4. 若 ADR 已标记 🔒Frozen 但生产代码零符号命中，判定为孤儿决策 (ORPHAN_DECISION) 并熔断阻断
@@ -26,7 +26,7 @@ const STOP_WORDS = new Set([
 ]);
 
 /**
- * 从 ADR 内容中定位 Decision 节并提取反引号内的候选代码实体符号
+ * 从 ADR 内容中定位 Decision 节并提取候选代码实体符号
  */
 export function extractDecisionSymbols(content) {
   const lines = content.split('\n');
@@ -52,7 +52,7 @@ export function extractDecisionSymbols(content) {
   const decisionText = decisionLines.join('\n');
   const symbols = new Set();
 
-  // 匹配反引号内的代码实体 `...`
+  // 1. 匹配反引号内的代码实体 `...`
   const backtickRegex = /`([^`]+)`/g;
   let match;
 
@@ -105,6 +105,19 @@ export function extractDecisionSymbols(content) {
         symbols.add(raw);
       }
       continue;
+    }
+  }
+
+  // 2. 补充：从自然语言文本中抽取未包裹反引号的大写驼峰实体标识符 (如 QuantumGhostEngine, PhotonDispatcher)
+  const pascalRegex = /\b([A-Z][a-zA-Z0-9_]{3,})\b/g;
+  let pMatch;
+  while ((pMatch = pascalRegex.exec(decisionText)) !== null) {
+    const raw = pMatch[1];
+    if (
+      !STOP_WORDS.has(raw.toLowerCase()) &&
+      !/^(Context|Decision|Consequences|Invariants|Status|Redmi|Android|Linux|Kotlin|Python|Java|Apple|Docker)$/i.test(raw)
+    ) {
+      symbols.add(raw);
     }
   }
 
@@ -186,14 +199,20 @@ export function traceAdrWiring(adrData, repoRoot, scannedRepo = null, fileCache 
     }
   }
 
-  // 3. 判定 ADR 整体物理接线状态
+  // 3. 判定 ADR 整体物理接线状态 (🔒Frozen ADR 严禁因格式不合规而静默豁免)
   let status = 'PASS';
   let reason = '';
   let isOrphan = false;
 
   if (candidateSymbols.length === 0) {
-    status = 'SKIPPED';
-    reason = 'Decision 节未提取到独立架构符号或无需生产接线';
+    if (isFrozen) {
+      status = 'FAIL';
+      isOrphan = true;
+      reason = `🚨 孤儿决策 (ORPHAN_DECISION): 规约已 🔒Frozen 但 Decision 节未声明任何可机检的架构代码实体符号！`;
+    } else {
+      status = 'SKIPPED';
+      reason = 'Decision 节未提取到独立架构符号或无需生产接线';
+    }
   } else if (isFrozen && wiredSymbols.length === 0) {
     status = 'FAIL';
     isOrphan = true;

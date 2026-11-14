@@ -121,8 +121,8 @@ function handleCheck() {
       console.log(formatTriadHeatmap(triadResult));
     }
 
-    if ((isStrict || isTelemetry) && !triadResult.isHealthy) {
-      console.error(`\x1b[31m❌ [spec-guard check --full] 严格模式检查失败：全景三元对账发现漂移、自述伪造或孤儿决策！\x1b[0m\n`);
+    if (!triadResult.isHealthy) {
+      console.error(`\x1b[31m❌ [spec-guard check --full] 门禁阻断：全景三元对账发现漂移、自述伪造或孤儿决策！\x1b[0m\n`);
       process.exit(1);
     }
     return;

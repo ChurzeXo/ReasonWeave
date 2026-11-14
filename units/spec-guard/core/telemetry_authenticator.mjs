@@ -3,9 +3,9 @@
  *
  * 负责 ADR 实测数据自述与机器信任根对账 (spec-guard v2.0):
  * 1. 扫描 ADR 表格与正文中的量化性能指标 (ms, s, MB, FPS, %, Tokens, P95, P99, INT8 等)
- * 2. 检查 ADR 是否绑定机器信任根 (evidence_ref: evidence/*.json 与 digest / signature)
- * 3. 校验凭据文件 SHA-256 哈希完整性与签名
- * 4. 容差恒等于 0%：比对 ADR 文本声明数值与 JSON 实测字段值
+ * 2. 检查 ADR 是否绑定机器信任根 (evidence_ref: evidence/*.json 与 digest: sha256:...)
+ * 3. 校验凭据文件 SHA-256 哈希完整性，严禁用裸 signature 占位符跳过哈希校验
+ * 4. 容差恒等于 0%：逐指标全量对账，所有 ADR 声明数值必须在凭据 JSON 中精确命中
  * 5. 发现违规时熔断阻断，报告「ADR-XXX: 实测数据自述漂移（违反 ADR-064 机器信任根）」
  */
 
@@ -20,20 +20,44 @@ import { findAdrFiles, parseAdrFile } from './adr-parser.mjs';
 export const QUANTITATIVE_METRICS_REGEX = /(?:\b\d+(?:\.\d+)?\s*(?:ms|MB|GB|FPS|Tokens?|tok|KB|μs|us)\b|\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*s\b|\bP95\b|\bP99\b|\bINT8\b)/gi;
 
 /**
- * 提取文本中出现的量化指标
+ * 实测基准上下文线索关键字（避免将背景设备参数如 4GB RAM 或章节序号误判为实测基准声明）
+ */
+const MEASUREMENT_CONTEXT_REGEX = /(?:实测|基准|均值|P95|P99|INT8|冷启|推理|拟合斜率|准确率|Top-?1|ECE|Latency|Throughput|Tokens?\/s|FPS|耗时|执行时间|软拷贝|基线|Benchmark|Spike)/i;
+
+/**
+ * 实测基准章节标题正则
+ */
+const MEASUREMENT_SECTION_REGEX = /(?:Implementation\s+Status|落地情况|Benchmark|基准|实测|Evaluation|性能|Spike|测试数据|压测)/i;
+
+/**
+ * 提取文本中出现的量化性能指标（具备上下文感知能力）
  */
 export function extractTelemetryMetrics(content) {
   const lines = content.split('\n');
   const metrics = [];
+  let currentSection = '';
 
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx];
-    // 忽略标题中的版本号（如 v1.0, v2.0）以及日期
-    if (/^\s*#+\s+/.test(line) && !line.includes('实测') && !line.includes('基准')) {
+    const trimmed = line.trim();
+
+    // 跟踪当前章节标题
+    const headerMatch = trimmed.match(/^#{2,4}\s+(.+)$/);
+    if (headerMatch) {
+      currentSection = headerMatch[1].trim();
       continue;
     }
+
     // 忽略日期行，如 2026-11-14
     if (/^\s*[-*]?\s*\**.*?(?:日期|Date).*?\**\s*[:：]/i.test(line)) {
+      continue;
+    }
+
+    // 上下文判断：必须处于测量节内，或该行明确包含实测/性能/基准关键词
+    const inMeasurementSection = MEASUREMENT_SECTION_REGEX.test(currentSection);
+    const hasMeasurementKeyword = MEASUREMENT_CONTEXT_REGEX.test(line);
+
+    if (!inMeasurementSection && !hasMeasurementKeyword) {
       continue;
     }
 
@@ -183,6 +207,7 @@ export function verifyAdrTelemetry(adrData, repoRoot) {
   const details = [];
   let allFilesValid = true;
   let primaryActualDigest = null;
+  let totalVerifiedMetrics = 0;
 
   for (const refPath of evidenceFiles) {
     // 搜索候选物理路径
@@ -212,20 +237,20 @@ export function verifyAdrTelemetry(adrData, repoRoot) {
     const actualDigest = crypto.createHash('sha256').update(fileBuf).digest('hex').toLowerCase();
     primaryActualDigest = actualDigest;
 
-    // 检查摘要匹配度
-    if (!declaredDigest && !signature) {
+    // 强制机器 SHA-256 完整性摘要检验（严禁以裸 signature 占位符跳过哈希校验）
+    if (!declaredDigest) {
       allFilesValid = false;
-      details.push(`凭证 ${refPath} 缺少机器哈希摘要或数字签名 (实测计算摘要: sha256:${actualDigest})`);
+      details.push(`凭证 ${refPath} 缺少机器哈希摘要或数字签名 (缺少机器 SHA-256 哈希摘要 digest: sha256:...)，严禁以裸 signature 占位符跳过机器信任根`);
       continue;
     }
 
-    if (declaredDigest && declaredDigest !== actualDigest) {
+    if (declaredDigest.toLowerCase() !== actualDigest.toLowerCase()) {
       allFilesValid = false;
       details.push(`凭证 ${refPath} 哈希不匹配 (期望: ${declaredDigest}, 实际: ${actualDigest})`);
       continue;
     }
 
-    // 5. 数据真实性判定：比对 ADR 声明数值与凭据 JSON 内的数值（容差 0%）
+    // 5. 数据真实性判定：逐指标全量 0% 强对账（所有 ADR 声明的数值必须全量在凭据 JSON 中命中）
     let jsonContent;
     try {
       jsonContent = JSON.parse(fileBuf.toString('utf8'));
@@ -237,24 +262,40 @@ export function verifyAdrTelemetry(adrData, repoRoot) {
 
     // 提取 JSON 中的所有数值
     const jsonNumericMap = extractNumericValuesFromJson(jsonContent);
-    const jsonValues = new Set(Array.from(jsonNumericMap.values()).map((v) => String(v)));
+    const jsonNumbers = Array.from(jsonNumericMap.values());
 
-    // 校验 ADR 文本中出现的独立数值是否能在凭证中精确找到匹配
-    let verifiedValuesCount = 0;
+    const matchedMetrics = [];
+    const unmatchedMetrics = [];
+
     for (const m of rawMetrics) {
+      // 排除分位标称/精度标签（如 P95, P99, INT8, FP16 等，其数值由紧随的实测数值表征）
+      if (/^(?:P\d+|INT\d+|FP\d+)$/i.test(m.metric)) {
+        matchedMetrics.push(m.metric);
+        continue;
+      }
+
       const numMatch = m.metric.match(/(\d+(?:\.\d+)?)/);
       if (numMatch) {
-        const numStr = numMatch[1];
-        if (jsonValues.has(numStr) || Array.from(jsonValues).some((v) => parseFloat(v) === parseFloat(numStr))) {
-          verifiedValuesCount++;
+        const val = parseFloat(numMatch[1]);
+        const hit = jsonNumbers.some((jsonVal) => {
+          return Math.abs(jsonVal - val) < 1e-6 || String(jsonVal) === numMatch[1];
+        });
+        if (hit) {
+          matchedMetrics.push(m.metric);
+        } else {
+          unmatchedMetrics.push(m.metric);
         }
       }
     }
 
-    // 若凭证中完全找不到 ADR 声明的任何数值，判定为数据伪造或错挂
-    if (rawMetrics.length > 0 && verifiedValuesCount === 0 && jsonNumericMap.size > 0) {
+    // 0% 容差铁律：所有 ADR 文本中提取的量化实测指标必须 100% 在凭据 JSON 中命中，但凡有 1 处未命中即判 FAIL 阻断
+    if (unmatchedMetrics.length > 0) {
       allFilesValid = false;
-      details.push(`凭证 ${refPath} 实测数值与 ADR 文本自述数值完全脱节 (容差 $0\\%$)`);
+      details.push(
+        `凭证 ${refPath} 实测数值与 ADR 文本自述数值脱节，存在 ${unmatchedMetrics.length} 处未验证指标 (${unmatchedMetrics.slice(0, 5).join(', ')})，违反 0% 容差铁律 (容差 $0%)`
+      );
+    } else {
+      totalVerifiedMetrics += matchedMetrics.length;
     }
   }
 
@@ -283,7 +324,7 @@ export function verifyAdrTelemetry(adrData, repoRoot) {
     metrics: metricStrings,
     status: 'PASS',
     isCompliant: true,
-    reason: `✅ 机器信任根验签通过 (SHA-256: ${primaryActualDigest.slice(0, 8)}... | ${rawMetrics.length} 处实测指标对账吻合)`,
+    reason: `✅ 机器信任根验签通过 (SHA-256: ${primaryActualDigest.slice(0, 8)}... | 全部 ${totalVerifiedMetrics} 处实测指标 0% 容差对账吻合)`,
     evidenceFiles,
     declaredDigest,
     actualDigest: primaryActualDigest,
