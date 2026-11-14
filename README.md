@@ -40,7 +40,7 @@ npm link
 | 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、防伪回执、静默管道与事件唤醒（Baton v2.29.1） |
 | 🌳 `baton-worktree` | 基于 Git Worktree 的多 Agent 物理目录隔离调度引擎 |
 | 🛡️ `baton-audit-runner` | 双盲审计自动化运行器（无上下文独立重跑测试，Exit Code 真实裁决） |
-| 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫（S1–S3 求解器、增量提交门禁，v1.1.0） |
+| 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫、反未接线联邦门禁（S1–S3 求解器、增量提交门禁，v1.2.1） |
 | 🛡️ `spec-guard` / `drift-gate` | 架构规约与物理接线守卫（P3' 三元映射对账、三维热力表、ADR 机器信任根验签、约定阈值解耦，v2.2.0） |
 | 📐 `adr-init` | 架构决策记录 (ADR) 快速引导初始化 |
 
@@ -117,7 +117,7 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 |---|---|---|
 | **adr** | [`units/adr/`](units/adr/) | 架构决策记录（ADR），三档强度 light / standard / frozen，跨会话架构记忆 |
 | **spec-guard** | [`units/spec-guard/`](units/spec-guard/) | 全局架构漂移与规约守卫（v2.2.0），ADR 机器信任根验签、物理接线探针、P3' 三元映射对账（三维热力表）、自定义发现规则与 overlay、约定阈值语义解耦、零覆盖假绿防卫、暂存区增量感知门禁（<0.05s） |
-| **orphan** | [`units/orphan/`](units/orphan/) | 死代码与孤儿资产清道夫（v1.1.0），只读 Git HEAD + S1–S3 求解器自检 + 增量提交门禁 |
+| **orphan** | [`units/orphan/`](units/orphan/) | 死代码与孤儿资产清道夫、反未接线联邦门禁（v1.2.1），只读 Git HEAD + S1–S3 求解器自检 + 跨栈增量提交门禁 |
 | **backlog** | [`units/backlog/`](units/backlog/) | 待办捕获：越界 / 待拍板 / 未来功能，一任务一文件，不打断当前工作流 |
 | **preflight** | [`units/preflight/`](units/preflight/) | 仓库不变量探针 + Git 提交门禁（v2.2.0），A1~A5 探针（含配置化单一事实源与派生状态防漂移对账），防止“做完才发现还有一件事” |
 | **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`) |
@@ -165,6 +165,29 @@ baton install && baton link --check && baton check
 ```
 
 可直接复制给消费方 Agent 的完整升级提示词见 [docs/CONSUMER-PROMPTS.md 场景五](docs/CONSUMER-PROMPTS.md)；升级坑位与命令差异见 [INSTALL.md §4](INSTALL.md)。
+
+### 场景 E：接入全栈“反未接线”（Anti-Orphan）Fast Gate 本地门禁 (ADR-0009)
+为根治 AI 辅助开发中“底层原语/函数/组件已实现，但上层未接线（Dead Code / Wiring Gap）”的恶习，在消费方项目根目录下按技术栈软链极速物理门禁（执行耗时 $\le 2\text{s}$）：
+
+```bash
+# 1. Node.js / Web 栈（L1 语法检查 + L2 增量孤儿代码拦截）
+ln -sf ~/dev-templates/hooks/pre-commit-node .git/hooks/pre-commit
+
+# 2. Python 栈（Agent/Planner 架构，毫秒级内存对等集合断言）
+ln -sf ~/dev-templates/hooks/pre-commit-python .git/hooks/pre-commit
+
+# 3. Rust 栈（cargo check 穷尽模式匹配与 #![deny(dead_code)]）
+ln -sf ~/dev-templates/hooks/pre-commit-rust .git/hooks/pre-commit
+
+# 4. SwiftUI / iOS 客户端栈（暂存代码语法校验，CI 引导 Periphery）
+ln -sf ~/dev-templates/hooks/pre-commit-swift .git/hooks/pre-commit
+
+# 5. 微信小程序栈（纯 Node 原生 app.json 页面/组件闭环 AST 探针）
+ln -sf ~/dev-templates/hooks/pre-commit-miniprogram .git/hooks/pre-commit
+```
+
+- **统一模板库**：位于 `$HOME/dev-templates/hooks/`，各技术栈最佳实践与参考实现见 [`$(lab path orphan)/templates/wiring/README.md`](units/orphan/templates/wiring/README.md)。
+- **紧急豁免机制**：生产紧急 Hotfix 支持通过 `SKIP_WIRING_GATE=1 git commit -m "..."` 临时跳过。
 
 ---
 
