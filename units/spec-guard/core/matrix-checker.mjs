@@ -12,6 +12,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { findAdrFiles, parseAdrFile, containsStrictInvariant } from './adr-parser.mjs';
 import { scanRepository, analyzeSymbolWiring } from './scanner.mjs';
+import { verifyAllAdrsTelemetry } from './telemetry_authenticator.mjs';
+import { traceAllAdrsWiring } from './wiring_tracer.mjs';
 
 /**
  * 读取可选的 spec-matrix.overlay.yml 文件
@@ -411,6 +413,222 @@ export function generateAdrAuditReport(matrixResult, targetAdrId) {
     lines.push('> ✅ **合规建议**：所有声明的不变量均已绑定有效可机判断言，且落地状态节完备。具备由架构师及用户人工签署 `🔒Frozen` 的机器凭据。\n');
   } else {
     lines.push('> ⏳ **进行中判定**：规约部分能力处于逐步交付中（存在 ❌ 未接线 或 ⚠️ 部分实现 项）。请在 `## Implementation Status` 中如实跟踪，待全量落地后方可签署 Frozen 验收。\n');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * 构建断言、证据、接线三元全景对账矩阵 (Triad Matrix)
+ */
+export function buildFullTriadMatrix(repoRoot, options = {}) {
+  const assertionMatrix = buildAndCheckMatrix(repoRoot, options);
+  const telemetryMatrix = verifyAllAdrsTelemetry(repoRoot, options);
+  const wiringMatrix = traceAllAdrsWiring(repoRoot, options);
+
+  const triadRows = [];
+  const adrMap = new Map();
+
+  for (const rep of assertionMatrix.adrReports) {
+    const id = rep.adr.adrId.toUpperCase();
+    adrMap.set(id, {
+      adrId: rep.adr.adrId,
+      title: rep.adr.title,
+      isFrozen: rep.adr.isFrozen,
+      status: rep.adr.status,
+      assertion: rep,
+      telemetry: null,
+      wiring: null,
+    });
+  }
+
+  for (const t of telemetryMatrix.reports) {
+    const id = t.adrId.toUpperCase();
+    if (!adrMap.has(id)) {
+      adrMap.set(id, {
+        adrId: t.adrId,
+        title: '',
+        isFrozen: false,
+        status: 'Unknown',
+        assertion: null,
+        telemetry: t,
+        wiring: null,
+      });
+    } else {
+      adrMap.get(id).telemetry = t;
+    }
+  }
+
+  for (const w of wiringMatrix.reports) {
+    const id = w.adrId.toUpperCase();
+    if (!adrMap.has(id)) {
+      adrMap.set(id, {
+        adrId: w.adrId,
+        title: '',
+        isFrozen: w.isFrozen,
+        status: w.isFrozen ? '🔒 Frozen' : 'Draft',
+        assertion: null,
+        telemetry: null,
+        wiring: w,
+      });
+    } else {
+      adrMap.get(id).wiring = w;
+      if (w.isFrozen) adrMap.get(id).isFrozen = true;
+    }
+  }
+
+  let totalAdrs = adrMap.size;
+  let healthyAdrs = 0;
+  let telemetryDriftCount = 0;
+  let orphanDecisionCount = 0;
+  let assertionDriftCount = assertionMatrix.driftCount;
+
+  for (const [id, item] of adrMap.entries()) {
+    let verdict = 'VERIFIED';
+    let verdictIcon = '✅';
+    let hasFailure = false;
+
+    // 1. 断言状态
+    let assertionSummary = '无不变量';
+    if (item.assertion && item.assertion.invariants.length > 0) {
+      const totalInv = item.assertion.invariants.length;
+      const verifiedInv = item.assertion.invariants.filter((i) => i.status === 'verified').length;
+      const hasDrift = item.assertion.invariants.some((i) => i.status === 'drift_detected');
+      if (hasDrift) {
+        assertionSummary = `🚨 漂移 (${verifiedInv}/${totalInv})`;
+        verdict = 'DRIFT_DETECTED';
+        verdictIcon = '🚨';
+        hasFailure = true;
+      } else if (verifiedInv === totalInv) {
+        assertionSummary = `✅ 100% (${verifiedInv}/${totalInv})`;
+      } else {
+        assertionSummary = `⏳ ${Math.round((verifiedInv / totalInv) * 100)}% (${verifiedInv}/${totalInv})`;
+        if (verdict === 'VERIFIED') verdict = 'IN_PROGRESS';
+      }
+    }
+
+    // 2. 数据自述凭据状态
+    let telemetrySummary = 'ℹ️ 豁免 (无量化)';
+    if (item.telemetry && item.telemetry.hasMetrics) {
+      if (item.telemetry.status === 'PASS') {
+        telemetrySummary = `✅ 验签通过 (${item.telemetry.metricsCount}项)`;
+      } else {
+        telemetrySummary = `🚨 自述漂移 (违反 ADR-064)`;
+        telemetryDriftCount++;
+        verdict = 'TELEMETRY_DRIFT';
+        verdictIcon = '🚨';
+        hasFailure = true;
+      }
+    }
+
+    // 3. 物理代码接线状态
+    let wiringSummary = 'ℹ️ 无需接线';
+    if (item.wiring && item.wiring.candidateSymbolsCount > 0) {
+      if (item.wiring.status === 'FAIL' || item.wiring.isOrphan) {
+        wiringSummary = `🚨 孤儿决策 (0/${item.wiring.candidateSymbolsCount})`;
+        orphanDecisionCount++;
+        verdict = 'ORPHAN_DECISION';
+        verdictIcon = '🚨';
+        hasFailure = true;
+      } else if (item.wiring.status === 'PASS') {
+        wiringSummary = `✅ 存活 (${item.wiring.wiredCount}/${item.wiring.candidateSymbolsCount})`;
+      } else {
+        wiringSummary = `⏳ 未接线 (0/${item.wiring.candidateSymbolsCount})`;
+        if (verdict === 'VERIFIED') verdict = 'IN_PROGRESS';
+      }
+    }
+
+    if (!hasFailure && verdict === 'VERIFIED') {
+      healthyAdrs++;
+    }
+
+    triadRows.push({
+      adrId: item.adrId,
+      title: item.title,
+      isFrozen: item.isFrozen,
+      status: item.status,
+      assertionSummary,
+      telemetrySummary,
+      wiringSummary,
+      verdict,
+      verdictIcon,
+      hasFailure,
+      item,
+    });
+  }
+
+  // 排序
+  triadRows.sort((a, b) => {
+    const numA = parseInt((a.adrId.match(/\d+/) || [0])[0], 10);
+    const numB = parseInt((b.adrId.match(/\d+/) || [0])[0], 10);
+    return numA - numB;
+  });
+
+  const isHealthy = assertionDriftCount === 0 && telemetryDriftCount === 0 && orphanDecisionCount === 0;
+
+  return {
+    repoRoot,
+    assertionMatrix,
+    telemetryMatrix,
+    wiringMatrix,
+    triadRows,
+    totalAdrs,
+    healthyAdrs,
+    assertionDriftCount,
+    telemetryDriftCount,
+    orphanDecisionCount,
+    isHealthy,
+  };
+}
+
+/**
+ * 格式化全景对账热力表输出 (Triad Heatmap)
+ */
+export function formatTriadHeatmap(triadResult) {
+  const lines = [];
+  lines.push('\n🛡️  \x1b[1mSpec-Guard (Drift-Gate) v2.0 - 全景对账热力表 (Triad Heatmap)\x1b[0m');
+  lines.push('═'.repeat(96));
+  lines.push(
+    `📊 规约总数: ${triadResult.totalAdrs} | 断言漂移: \x1b[31m${triadResult.assertionDriftCount}\x1b[0m | 数据漂移: \x1b[31m${triadResult.telemetryDriftCount}\x1b[0m | 孤儿决策: \x1b[31m${triadResult.orphanDecisionCount}\x1b[0m`
+  );
+  lines.push('─'.repeat(96));
+
+  // 表头
+  const colAdr = 'ADR 编号'.padEnd(10);
+  const colStatus = '规约状态'.padEnd(12);
+  const colAss = '断言 (Assertion)'.padEnd(20);
+  const colTel = '证据 (Evidence)'.padEnd(28);
+  const colWir = '接线 (Wiring)'.padEnd(16);
+  const colVer = '综合裁决';
+
+  lines.push(`\x1b[1m${colAdr} | ${colStatus} | ${colAss} | ${colTel} | ${colWir} | ${colVer}\x1b[0m`);
+  lines.push('─'.repeat(96));
+
+  for (const row of triadResult.triadRows) {
+    const frozenTag = row.isFrozen ? '[🔒Frozen]' : '[Draft]';
+    const statusCol = frozenTag.padEnd(10);
+    const adrCol = row.adrId.padEnd(10);
+    const assCol = row.assertionSummary.padEnd(18);
+    const telCol = row.telemetrySummary.padEnd(26);
+    const wirCol = row.wiringSummary.padEnd(14);
+
+    let verdictColor = '\x1b[32m';
+    if (row.verdict === 'DRIFT_DETECTED' || row.verdict === 'TELEMETRY_DRIFT' || row.verdict === 'ORPHAN_DECISION') {
+      verdictColor = '\x1b[31m';
+    } else if (row.verdict === 'IN_PROGRESS') {
+      verdictColor = '\x1b[33m';
+    }
+
+    lines.push(
+      `${adrCol} | ${statusCol} | ${assCol} | ${telCol} | ${wirCol} | ${verdictColor}${row.verdictIcon} ${row.verdict}\x1b[0m`
+    );
+  }
+
+  lines.push('═'.repeat(96));
+  if (triadResult.isHealthy) {
+    lines.push('\x1b[32m✅ 全景三元对账检查通过！无断言漂移、无实测数据伪造、无孤儿冻结决策。\x1b[0m\n');
+  } else {
+    lines.push('\x1b[31m❌ 全景三元对账门禁阻断！发现存在断言脱节、实测数据伪造或孤儿冻结决策。\x1b[0m\n');
   }
 
   return lines.join('\n');

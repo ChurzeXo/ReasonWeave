@@ -46,12 +46,18 @@ lab spec-guard --help
 spec-guard init
 
 # 2. 扫描并对账全仓规约覆盖率与架构漂移
-spec-guard check [--strict] [--check-callers] [--overlay <path>]
+spec-guard check [--full] [--strict] [--telemetry] [--check-callers] [--overlay <path>]
 
-# 3. 执行变异反向测试敏感度自检（消灭回音壁假测试）
+# 3. 专项数据自述验签（精准排查 ADR-066 类违规，强制 ADR-064 机器信任根）
+spec-guard verify-evidence [ADR-ID] [--repo <path>]
+
+# 4. 专项生产代码物理接线探测（拦截 🔒Frozen 孤儿决策）
+spec-guard check-wiring [ADR-ID] [--repo <path>]
+
+# 5. 执行变异反向测试敏感度自检（消灭回音壁假测试）
 spec-guard mutate --file <file> --cmd "<test-command>" [--mutator <type>]
 
-# 4. 针对指定 ADR 产出机器审计证据报告（冻结前的机器背书）
+# 6. 针对指定 ADR 产出机器审计证据报告（冻结前的机器背书）
 spec-guard audit-adr ADR-060 [--out report.md]
 ```
 
@@ -60,6 +66,8 @@ spec-guard audit-adr ADR-060 [--out report.md]
 - `📦 SANDBOXED`：标注了 `@ContractOnly` 的算法原型（存在测试断言，生产未接线，处于垂直切片初级阶段，受保护不被当死代码误删）；
 - `⏳ IN_PROGRESS`：有部分实现或单测，但尚未形成完整闭环；
 - `🚨 DRIFT_DETECTED`：ADR 声称已实现（`✅ 已实现`）或已 `🔒Frozen`，但代码库中**零断言**或**生产零接线**；
+- `🚨 TELEMETRY_DRIFT`：ADR 文本声明了性能量化指标（ms, MB, P95 等），但缺少机器签名凭据或实测数据与凭据矛盾（容差 $0\%$，违反 ADR-064 机器信任根）；
+- `🚨 ORPHAN_DECISION`：ADR 标记为 `🔒Frozen`，但决策中声明的核心架构实体在生产代码中零命中；
 - `⚠️ ORPHAN_ASSERTION`：代码中标记了 `@Invariant`，但在 ADR 中不存在对应不变量定义。
 
 ---
@@ -119,19 +127,22 @@ node "$(lab path spec-guard)/bin/spec-guard.mjs" check
 units/spec-guard/
 ├── README.md                           # 单元核心规约与单一事实源（本文件）
 ├── AGENTS.md                           # 面向 AI Agent 的专属行为法则与防漂移守则
-├── VERSION.md                          # 语义版本号 (v1.0.0)
+├── VERSION.md                          # 语义版本号 (v2.0.0)
 ├── CHANGELOG.md                        # 版本演进记录
 ├── bin/
-│   └── spec-guard.mjs                  # CLI 入口 (支持 init, check, audit-adr)
+│   └── spec-guard.mjs                  # CLI 入口 (支持 init, check, verify-evidence, check-wiring, audit-adr)
 ├── core/
 │   ├── adr-parser.mjs                  # ADR Invariants 与 Implementation Status 抽取器
 │   ├── scanner.mjs                     # 多语言源码 @Invariant 扫描器与 No-Cheat 防伪探针
-│   └── matrix-checker.mjs              # 三元映射对账计算与 Markdown 审计报告生成引擎
+│   ├── telemetry_authenticator.mjs     # 实测数据自述凭据验签与 ADR-064 机器信任根对账引擎
+│   ├── wiring_tracer.mjs               # ADR 决策核心符号物理接线与孤儿决策探针
+│   └── matrix-checker.mjs              # 三元映射对账计算与全景热力表生成引擎
 ├── templates/
 │   ├── spec-matrix.overlay.yml         # 跨端跨语言协议层按需覆写模板 (Overlay)
 │   ├── pre-commit.d/15-spec-guard      # preflight 分发器轻量提交门禁片
 │   ├── ci/spec-guard-audit.yml         # 异步 CI 持续审计工作流模板
 │   └── annotations/                    # Kotlin, Python, Go, TypeScript 打标模板
 └── tests/
-    └── spec-guard.test.mjs             # 自动化测试套件 (覆盖词界、ADR、No-Cheat、矩阵全流程)
+    ├── spec-guard.test.mjs             # 基础测试套件 (覆盖词界、ADR、No-Cheat、矩阵全流程)
+    └── telemetry_authenticator.test.mjs # v2.0 测试套件 (覆盖数据自述验签、签名熔断、0%容差、孤儿决策)
 ```

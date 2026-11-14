@@ -1,5 +1,26 @@
 # Changelog - spec-guard (drift-gate)
 
+## [2.0.0] - 2026-11-14
+
+### Added
+- **实测数据自述凭据与机器信任根对账引擎 (`core/telemetry_authenticator.mjs`)**：
+  - 静态扫描 ADR 表格与正文中声明的量化性能指标 (`ms`, `s`, `MB`, `FPS`, `%`, `Tokens`, `P95`, `P99`, `INT8` 等)。
+  - 强制对齐上位规约 ADR-064 机器信任根模型：命中量化指标的 ADR 必须显式引用 `evidence_ref: evidence/*.json` 及 `digest: sha256:...` / `signature`。
+  - 自动检验凭证文件物理存在性与 SHA-256 哈希完整性，杜绝离线篡改。
+  - 容差恒等于 $0\%$：比对 ADR 文本自述数值与 JSON 实测字段值，彻底根除 ADR-066 式的文本伪造实测数据漂移。
+  - 新增 `spec-guard verify-evidence [ADR-ID]` 子命令与 `--telemetry` 门禁选项。
+- **物理代码接线探测与孤儿决策防卫 (`core/wiring_tracer.mjs`)**：
+  - 自动解析 ADR `## 2. Decision` 节提取核心架构实体、类名、方法与引擎编号。
+  - 严格贯彻 No-Cheat 铁律：排除测试目录 (`src/test/`, `tests/` 等)，在生产源码目录反查真实符号存活性与物理接线。
+  - 预热加载生产代码内存缓存，避免海量物理 I/O，极速完成全仓反查。
+  - 精准识别 `🔒Frozen` 但生产代码零符号命中的孤儿决策 (`ORPHAN_DECISION`) 并 Exit 1 阻断。
+  - 新增 `spec-guard check-wiring [ADR-ID]` 子命令。
+- **全景对账热力表与一键三元体检 (`check --full`)**：
+  - 覆盖「断言 (Assertion) ↔ 证据 (Evidence) ↔ 接线 (Wiring)」三元闭环。
+  - 一键输出全景对账热力表 (Triad Heatmap) 与客观综合裁决 (`VERIFIED`, `TELEMETRY_DRIFT`, `ORPHAN_DECISION`, `DRIFT_DETECTED`)。
+- **全量测试套件保障 (`tests/telemetry_authenticator.test.mjs`)**：
+  - 包含格式伪造拦截与缺少机器签名熔断双必红守护、0% 容差比对、孤儿决策熔断以及针对 Tappy 仓 ADR-066 的真实端到端抓捕验证。
+
 ## [1.1.0] - 2026-11-10
 
 ### Added
