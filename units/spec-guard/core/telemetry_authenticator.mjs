@@ -20,14 +20,51 @@ import { findAdrFiles, parseAdrFile, loadOverlayConfig } from './adr-parser.mjs'
 export const QUANTITATIVE_METRICS_REGEX = /(?:\b\d+(?:\.\d+)?\s*(?:ms|MB|GB|FPS|Tokens?|tok|KB|μs|us)\b|\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*s\b|\bP95\b|\bP99\b|\bINT8\b)/gi;
 
 /**
- * 实测基准上下文线索关键字（避免将背景设备参数如 4GB RAM 或章节序号误判为实测基准声明）
+ * 实测基准上下文线索关键字（严格聚焦性能跑分，排除泛用词如“阈值”、“常驻”）
  */
-const MEASUREMENT_CONTEXT_REGEX = /(?:实测|基准|均值|P95|P99|INT8|冷启|推理|拟合斜率|准确率|Top-?1|ECE|Latency|Throughput|Tokens?\/s|FPS|耗时|执行时间|软拷贝|基线|Benchmark|Spike|采样|常驻|阈值)/i;
+const MEASUREMENT_CONTEXT_REGEX = /(?:实测|基准|跑测|冷启|推理|软拷贝|拟合斜率|Throughput|Tokens?\/s|FPS|耗时|执行时间|Benchmark|Spike|P95|P99|INT8)/i;
 
 /**
  * 实测基准章节标题正则
  */
 const MEASUREMENT_SECTION_REGEX = /(?:Implementation\s+Status|落地情况|Benchmark|基准|实测|Evaluation|性能|Spike|测试数据|压测|^\s*验证\s*$)/i;
+
+/**
+ * 假阳性过滤：排除非性能基准的参数配置、媒体时长、公式与中文强调词
+ */
+function isFalsePositiveMetric(line, matchText, matchIndex) {
+  // 1. 媒体素材时长：如 "10s 语音"、"4s 音频"、"录音文件"
+  const tail = line.slice(matchIndex, matchIndex + 25);
+  if (/(?:语音|音频|视频|录音|素材|古诗)/.test(tail)) return true;
+
+  // 2. 超时、时间窗、门限与配置预算：如 "≤ 120s"、">3600s"、"0.5s 竞态窗口"、"耗时 ≤"
+  const prefix = line.slice(Math.max(0, matchIndex - 20), matchIndex);
+  const suffix = line.slice(matchIndex + matchText.length, matchIndex + matchText.length + 20);
+  if (/[≤<=≥>=]\s*$/.test(prefix)) return true;
+  if (/^(?:\s*竞态窗口|\s*窗口|\s*超时|\s*自动回收|\s*到期|\s*防抖)/.test(suffix)) return true;
+  if (/(?:上限|时限|预算|门限|门禁线|阈值)/.test(prefix)) return true;
+  if (/(?:未验证|暂未验证|未测试|未实测|未接入)/.test(line)) return true;
+
+  // 3. 单测用例套件统计：如 "440 项单元测试 100% 全绿通过（耗时 28.27s）"
+  if (/(?:单元测试|测试用例|pytest|套件|全仓回归)/.test(line)) return true;
+
+  // 4. 算法动态计算与打字节律公式：如 "基础 1.0s + 0.05s/字，上限 4.0s"
+  if (/(?:计算阅读耗时|基础\s*\d|\/字|算法公式|打字节律)/.test(line)) return true;
+
+  // 5. 中文程度修饰与状态陈述：如 "100% 严格"、"100% 向后兼容"、"保持 100%"
+  if (matchText === '100%' && /(?:严格|完全|向后兼容|一致|收拢|落地|覆盖|存活|通过|上线)/.test(line)) return true;
+
+  // 6. 业务风控与重复率阈值：如 "文案重复率 ≥80%"
+  if (/(?:重复率|风控|限流|重标)/.test(line)) return true;
+
+  // 7. 架构机制零开销修饰：如 "0 Token 消耗"、"0ms 直通"
+  if (matchText === '0 Token' || matchText === '0ms') return true;
+
+  // 8. 物理硬件规格与安装包体积：如 "8GB 内存"、"最新体积约 315MB"
+  if (/(?:整机|物理机|手机内存|ROM|RAM|内存规格|体积约|包体积|安装包)/.test(line)) return true;
+
+  return false;
+}
 
 /**
  * 提取文本中出现的量化性能指标（具备上下文感知能力）
@@ -53,11 +90,16 @@ export function extractTelemetryMetrics(content) {
       continue;
     }
 
-    // 上下文判断：必须处于测量节内，或该行明确包含实测/性能/基准关键词
+    // 上下文判断：必须明确包含实测/性能/基准关键词，或处于测量节且具有明确测量动词
     const inMeasurementSection = MEASUREMENT_SECTION_REGEX.test(currentSection);
     const hasMeasurementKeyword = MEASUREMENT_CONTEXT_REGEX.test(line);
 
-    if (!inMeasurementSection && !hasMeasurementKeyword) {
+    if (!hasMeasurementKeyword && !inMeasurementSection) {
+      continue;
+    }
+
+    // 处于测量节但无实测基准关键字的纯描述行放行
+    if (inMeasurementSection && !hasMeasurementKeyword && !/(?:均值|P95|P99|INT8|FPS|Tokens?\/s|实测|测试)/i.test(line)) {
       continue;
     }
 
@@ -65,11 +107,13 @@ export function extractTelemetryMetrics(content) {
     let match;
     while ((match = QUANTITATIVE_METRICS_REGEX.exec(line)) !== null) {
       const matchedText = match[0].trim();
-      metrics.push({
-        metric: matchedText,
-        line: lineIdx + 1,
-        lineContent: line.trim(),
-      });
+      if (!isFalsePositiveMetric(line, matchedText, match.index)) {
+        metrics.push({
+          metric: matchedText,
+          line: lineIdx + 1,
+          lineContent: line.trim(),
+        });
+      }
     }
   }
 

@@ -489,8 +489,10 @@ describe('spec-guard v2.0: 物理代码接线探测与孤儿决策防卫 (Wiring
   });
 });
 
+import { fileURLToPath } from 'node:url';
+
 describe('spec-guard v2.0: CLI 命令与端到端实测 (AC1 - AC4)', () => {
-  const CLI_PATH = path.resolve('units/spec-guard/bin/spec-guard.mjs');
+  const CLI_PATH = fileURLToPath(new URL('../bin/spec-guard.mjs', import.meta.url));
 
   it('AC1: verify-evidence 遇到包含量化指标却无签名凭证的 ADR 时输出违规详情并 Exit 1', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-cli-ac1-'));
