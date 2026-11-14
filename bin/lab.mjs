@@ -20,6 +20,7 @@ Lab Agent Engineering Toolkit (AEF v1.0)
   lab list                    列出所有可用工程能力 Unit
   lab path [unit]             获取某个 Unit (或 lab 根目录) 的安装绝对路径
   lab doctor                  自检本地环境（node, git, opengrep 等前置依赖）
+  lab sync-consumers          全自动批量同步并刷新所有下游消费方 (接入桩/配置/合规体检)
   lab orphan [cmd]            运行死代码与孤儿资产清道夫
   lab migrate [dir]           将老项目中的硬编码路径 (~/Documents/lab/...) 一键迁移为动态规范
   lab zspec init [name]       按 ZSpec 工业标准为新项目一键初始化架构骨架与规范文档
@@ -378,6 +379,15 @@ switch (command) {
   case 'check':
     doctor();
     break;
+  case 'sync-consumers': {
+    const scriptPath = path.join(PKG_ROOT, 'scripts', 'sync-all-consumers.mjs');
+    try {
+      execFileSync(process.execPath, [scriptPath, ...args.slice(1)], { stdio: 'inherit' });
+    } catch (err) {
+      process.exit(err.status || 1);
+    }
+    break;
+  }
   case 'orphan': {
     const orphanBin = path.join(UNITS_DIR, 'orphan', 'bin', 'lab-orphan.mjs');
     if (!fs.existsSync(orphanBin)) {
