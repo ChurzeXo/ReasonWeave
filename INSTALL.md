@@ -5,16 +5,17 @@
 
 ---
 
-## 0. 当前版本快照（2026-11-13）
+## 0. 当前版本快照（2026-11-14）
 
 | 组件 | 版本 | 备注 |
 |---|---|---|
-| **Agent Baton / handoffs** | **v2.29.0** | 接入桩 sha `ca438a6f`；`STUB_BODY` 已变更 ⇒ 老消费方**必须重刷接入桩** |
-| **spec-guard / drift-gate** | v1.1.0 | 架构规约与漂移守卫（P3′ 三元对账、变异敏感度校验） |
+| **Agent Baton / handoffs** | **v2.29.1** | 接入桩 sha `ca438a6f`；Hub 注册 lab 跨仓 target；跨仓/仓内工作流中枢 |
+| **spec-guard / drift-gate** | **v2.2.0** | 架构规约与物理接线守卫（ADR-064 机器信任根验签、三维热力表、约定阈值解耦、增量感知门禁） |
+| **preflight** | **v2.2.0** | 仓库不变量探针（A1~A5 配置化对账防漂移、工程落地指引） |
 | **orphan** | v1.1.0 | 死代码与孤儿资产清道夫（S1–S3 求解器、增量提交门禁） |
 | **worktree** | v0.1.0 | 多 Agent 物理工作树隔离调度 |
 | **review-gate** | v1.1.0 | SAST + 双盲审计独立重跑器 |
-| **preflight / adr / backlog / playbook** | v1.0.6 / v1.0 / v1.2.0 / — | 门禁、ADR、待办、方法论 |
+| **adr / backlog / playbook** | v1.0 / v1.2.0 / — | 架构记忆、待办捕获、AEF 执行手册 |
 
 > 版本事实源 = `units/<unit>/VERSION.md` 与 `$(lab path handoffs)/README.md`。
 > `package.json` 仍是 `1.0.0`：本机是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule、npm 版本依赖或 commit 钉值，因此 lab 仓更新后引用自动指向最新，**不需要逐仓 bump 版本号**（跨机器按版本分发才需要 `npm version` + publish）。
@@ -46,12 +47,12 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| `lab` | 能力库总管、路径动态解析、环境体检、ZSpec 脚手架、`orphan` / `spec-guard` 转发 |
-| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、防伪回执、事件驱动唤醒（v2.29.0） |
+| `lab` | 能力库总管、路径动态解析、环境体检、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、`orphan` / `spec-guard` 转发 |
+| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、防伪回执、事件驱动唤醒（v2.29.1） |
 | `baton-worktree` | 为工单分配 / 回收独立物理工作树 |
 | `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执 |
 | `lab-orphan` | 死代码与孤儿资产清道夫（也可 `lab orphan <cmd>`） |
-| `spec-guard`（别名 `drift-gate`） | 架构规约对账、ADR 机器审计、变异测试（也可 `lab spec-guard <cmd>`） |
+| `spec-guard`（别名 `drift-gate`） | 架构规约与物理接线守卫、ADR 机器信任根验签、三维热力表（v2.2.0） |
 | `adr-init` | 架构决策记录 (ADR) 三档脚手架 |
 
 > **无全局写权限时**：把 `bin` 与 `units/handoffs` 加入 PATH，例如 `export PATH="$HOME/Documents/lab/bin:$HOME/Documents/lab/units/handoffs:$PATH"`；`baton link` 会自愈 `baton` / `handoff` 的 shim 到 `~/.local/bin`。
@@ -90,7 +91,19 @@ baton check       # 交接 / 回执合规自检（exit 0 = 合规）
 
 ## 4. 升级：已安装老版本的消费方（本次必读）
 
-### 4.1 为什么必须做两件事
+### 4.0 一键全自动批量同步（强烈推荐）
+
+在 `lab` 根目录下运行一条命令，全自动完成本地 `npm link` 刷新、扫描同级目录或指定路径下的全部消费仓、刷新接入桩 (`baton install`) 与一致性检查 (`baton doctor`)、就绪 `spec-matrix.overlay.yml` 并执行全仓合规自检 (`baton check`)：
+
+```bash
+lab sync-consumers      # 或 npm run sync:consumers
+# 若消费仓分布在其他目录：
+lab sync-consumers /path/to/parent_dir
+```
+
+---
+
+### 4.1 为什么必须做两件事（手动逐仓升级原理）
 
 1. **重跑 `npm link`**：本轮新增了 `agent-baton`、`lab-orphan`、`spec-guard`、`drift-gate` 等 bin。全局 bin shim 只在 `npm link` 时生成，旧的软链不会凭空多出新命令。
 2. **重跑 `baton install`**：v2.23.0 → v2.29.0 每个版本都改了接入桩正文（`STUB_BODY`），桩 sha 从 `1d843498` 变为 `ca438a6f`。旧桩留在 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `README.md` 及全局载体里，`baton link --check` 会判「桩版本漂移」并 **exit 1**，Agent 也会继续按过期工作流行动。
@@ -138,6 +151,7 @@ baton check               # 本仓交接 / 回执合规自检
 lab list                        # 列出全部 9 个工程单元
 lab path [unit]                 # 动态解析 Unit / lab 根绝对路径
 lab doctor                      # 环境体检
+lab sync-consumers [dir]        # 一键批量同步与体检所有下游消费仓（自动 link、刷桩与体检）
 lab orphan <cmd>                # 死代码与孤儿资产清道夫（等价 lab-orphan）
 lab spec-guard <cmd>            # 规约守卫（等价 spec-guard / drift-gate）
 lab migrate [dir] --dry-run     # 预览硬编码路径迁移（不带 --dry-run 即真写）
@@ -146,7 +160,7 @@ lab zspec add-unit <端名>       # 新增工程端
 lab zspec guide                 # 面向 Agent 的 ZSpec 实施规范
 ```
 
-### 5.2 交接中枢 `baton`（别名 `handoff`，v2.29.0）
+### 5.2 交接中枢 `baton`（别名 `handoff`，v2.29.1）
 
 ```bash
 baton status [--for <lane|target> | --as <lane|target>]   # 待办入口（两者等价）
@@ -174,7 +188,10 @@ lab orphan test-solver                 # S1–S3 求解器自检
 lab orphan scan [--stack auto|android|python|web] [--out candidates.json]
 lab orphan check-diff --staged         # 增量提交门禁
 lab orphan clean --dry-run             # 安全清理（只读 Git HEAD）
-spec-guard check [--strict] [--check-callers]
+spec-guard check --full                # 全景三维热力表（断言 ↔ 证据 ↔ 接线）
+spec-guard check --incremental         # 暂存区增量感知（<0.05s 放行）
+spec-guard verify-evidence [ADR-ID]    # 校验实测数据机器签名与凭据完整性（ADR-064 机器信任根）
+spec-guard check-wiring [ADR-ID]       # 探测决策在生产代码中的真实接线（拦截孤儿决策）
 spec-guard audit-adr ADR-060 [--out report.md]
 spec-guard mutate --file <file> --cmd "<test-command>"
 adr-init <项目目录> <light|standard|frozen> "<项目名>"

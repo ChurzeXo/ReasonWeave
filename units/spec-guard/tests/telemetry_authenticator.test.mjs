@@ -592,21 +592,42 @@ describe('spec-guard v2.0: CLI 命令与端到端实测 (AC1 - AC4)', () => {
     }
   });
 
-  it('AC4: 针对已绑定机器签名与真机凭证的 ADR-066 能够验签通过 (PASS)', () => {
-    const tappyPath = '/Users/churze/Documents/Developer/Tappy';
-    if (!fs.existsSync(tappyPath)) {
-      // 容错：若本地没有 Tappy 路径，则跳过实机校验
-      return;
-    }
+  it('AC4: 针对已绑定机器签名与真机凭证的 ADR 能够验签通过 (PASS)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-cli-ac4-'));
+    try {
+      const adrDir = path.join(tmpDir, 'group', 'architecture', 'adr');
+      const evidenceDir = path.join(tmpDir, 'evidence', 'benchmarks');
+      fs.mkdirSync(adrDir, { recursive: true });
+      fs.mkdirSync(evidenceDir, { recursive: true });
 
-    const output = execSync(`node "${CLI_PATH}" verify-evidence ADR-066 --repo "${tappyPath}"`, {
-      encoding: 'utf8',
-      stdio: 'pipe',
-    });
-    const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, '');
-    assert.ok(
-      cleanOutput.includes('ADR-066: ✅ 机器信任根验签通过'),
-      `输出必须包含验签通过信息，实际输出: ${cleanOutput}`
-    );
+      const benchmarkData = {
+        cold_init_ms: 1301.9,
+        avg_infer_ms: 264.8,
+        p95_infer_ms: 362.9,
+        ram_mb: 8.8,
+      };
+      const jsonContent = JSON.stringify(benchmarkData, null, 2);
+      const jsonPath = path.join(evidenceDir, 'adr066-baseline.json');
+      fs.writeFileSync(jsonPath, jsonContent);
+
+      const digest = crypto.createHash('sha256').update(fs.readFileSync(jsonPath)).digest('hex');
+
+      fs.writeFileSync(
+        path.join(adrDir, 'ADR-066-sample.md'),
+        `# ADR-066: 示例基准评测规约\n\n- **状态（Status）**：🔒 Frozen\n\n## 3. Implementation Status\n- **基准凭证**：\`evidence_ref: evidence/benchmarks/adr066-baseline.json\`\n- **机器摘要**：\`digest: sha256:${digest}\`\n\n| 评测项 | 实测均值 264.8ms (P95 362.9ms)，冷启 1301.9ms，常驻 8.8MB |\n`
+      );
+
+      const output = execSync(`node "${CLI_PATH}" verify-evidence ADR-066 --repo "${tmpDir}"`, {
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+      const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, '');
+      assert.ok(
+        cleanOutput.includes('ADR-066: ✅ 机器信任根验签通过'),
+        `输出必须包含验签通过信息，实际输出: ${cleanOutput}`
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
