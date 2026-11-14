@@ -592,28 +592,21 @@ describe('spec-guard v2.0: CLI 命令与端到端实测 (AC1 - AC4)', () => {
     }
   });
 
-  it('AC4: 针对 Tappy 仓运行能够准确捕捉并报告 ADR-066: 实测数据自述漂移（违反 ADR-064 机器信任根）', () => {
+  it('AC4: 针对已绑定机器签名与真机凭证的 ADR-066 能够验签通过 (PASS)', () => {
     const tappyPath = '/Users/churze/Documents/Developer/Tappy';
     if (!fs.existsSync(tappyPath)) {
       // 容错：若本地没有 Tappy 路径，则跳过实机校验
       return;
     }
 
-    let threw = false;
-    try {
-      execSync(`node "${CLI_PATH}" verify-evidence ADR-066 --repo "${tappyPath}"`, {
-        encoding: 'utf8',
-        stdio: 'pipe',
-      });
-    } catch (err) {
-      threw = true;
-      assert.equal(err.status, 1);
-      const output = (err.stderr || '') + (err.stdout || '');
-      assert.ok(
-        output.includes('ADR-066: 实测数据自述漂移（违反 ADR-064 机器信任根）'),
-        `输出必须包含精确的违规信息，实际输出: ${output}`
-      );
-    }
-    assert.equal(threw, true, '针对 Tappy ADR-066 必须捕捉到违规并 Exit 1');
+    const output = execSync(`node "${CLI_PATH}" verify-evidence ADR-066 --repo "${tappyPath}"`, {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, '');
+    assert.ok(
+      cleanOutput.includes('ADR-066: ✅ 机器信任根验签通过'),
+      `输出必须包含验签通过信息，实际输出: ${cleanOutput}`
+    );
   });
 });

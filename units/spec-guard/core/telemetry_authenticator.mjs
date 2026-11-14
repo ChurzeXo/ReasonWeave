@@ -372,7 +372,16 @@ export function verifyAdrTelemetry(adrData, repoRoot, options = {}) {
       if (numMatch) {
         const val = parseFloat(numMatch[1]);
         const hit = jsonNumbers.some((jsonVal) => {
-          return Math.abs(jsonVal - val) < 1e-6 || String(jsonVal) === numMatch[1];
+          // 1. 完全一致
+          if (Math.abs(jsonVal - val) < 1e-6 || String(jsonVal) === numMatch[1]) {
+            return true;
+          }
+          // 2. 四舍五入保留位数一致（人类可读文档四舍五入对账）
+          const decimals = (numMatch[1].split('.')[1] || '').length;
+          if (decimals > 0 && Math.abs(parseFloat(jsonVal.toFixed(decimals)) - val) < 1e-6) {
+            return true;
+          }
+          return false;
         });
         if (hit) {
           matchedMetrics.push(m.metric);
