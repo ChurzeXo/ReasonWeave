@@ -3241,39 +3241,113 @@ function verifyLink(link, binName = 'handoff') {
   }
 }
 
-/** PATH 中解析 `handoff`（复刻 shell 查找：存在 + 可执行）。 */
-function whichHandoff() {
+/** PATH 中解析可执行命令（跨平台支持：Windows 扩展名与 PATHEXT，Unix 可执行权限位）。 */
+function whichBin(binName) {
+  const isWin = process.platform === 'win32';
+  const exts = isWin
+    ? (process.env.PATHEXT ? process.env.PATHEXT.split(';').map(e => e.toLowerCase()) : ['.cmd', '.bat', '.ps1', '.exe', ''])
+    : [''];
+  if (isWin && !exts.includes('')) exts.push('');
+
   for (const d of String(process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
-    const p = path.join(d, 'handoff');
-    try { if (fs.statSync(p).isFile() && fs.accessSync(p, fs.constants.X_OK) === undefined) return p; } catch {}
+    for (const ext of exts) {
+      const p = path.join(d, binName + ext);
+      try {
+        const st = fs.statSync(p);
+        if (st.isFile()) {
+          if (isWin || fs.accessSync(p, fs.constants.X_OK) === undefined) {
+            return p;
+          }
+        }
+      } catch {}
+    }
   }
   return null;
 }
 
-/** CLI 可达性门禁（v2.12.4 热修批次八）：裸 `handoff` 必须可用且指向中央引擎。
+/** 判定二进制路径或脚本是否实际解析/指向中央引擎。
+ * 兼容符号链接、Windows .cmd/.ps1 启动脚本、以及路径大小写不敏感匹配。
+ */
+function resolvesToEngine(binPath, engine) {
+  if (!binPath || !engine) return false;
+  try {
+    const real = fs.realpathSync(binPath);
+    if (path.normalize(real).toLowerCase() === path.normalize(engine).toLowerCase()) return true;
+  } catch {}
+
+  // Windows 下针对 .cmd / .ps1 / shell shim 文本内容的检测
+  if (process.platform === 'win32' || binPath.endsWith('.cmd') || binPath.endsWith('.ps1')) {
+    try {
+      const content = fs.readFileSync(binPath, 'utf8');
+      const normEngine = path.normalize(engine).toLowerCase();
+      const normContent = path.normalize(content).toLowerCase();
+      if (normContent.includes(normEngine)) return true;
+    } catch {}
+  }
+  return false;
+}
+
+/** CLI 可达性门禁（ADR-0008 & 韧性收敛）：主命令 `baton` 或兼容别名 `handoff` 必须可用且指向中央引擎。
  *
- * 为什么进 check：文档/接入桩全部按裸命令编写，「命令不存在」这类不一致只有机器信号
- * 才能在扩散前被拦住。shim 存在但当前 PATH 解析不到 = 环境问题（某工具未 source
- * profile），降级为 ⚠️ 提示加 PATH，不阻断收尾。 */
+ * 门禁哲学与防阻断守卫：
+ * 1. 主命令为 baton，兼容别名为 handoff。若两者均指向中央引擎，静默通过。
+ * 2. 若 baton 正常指向中央引擎，而 handoff 别名指向外部软件目录（如 WorkBuddy node 目录）或不在 PATH，
+ *    由于当前主链路完全通畅，仅作为 ⚠️ warning 告警并给出建议自愈命令，严禁硬阻断 check（避免逼迫 Agent 越权修改外部全局环境）。
+ * 3. 若 handoff 正常指向中央引擎而 baton 异常，同理仅降级为 ⚠️ warning。
+ * 4. 仅当 baton 与 handoff 两者均无法解析到中央引擎时，才记录阻塞性 problem（exit 1）。
+ */
 function checkCliReachable(problems, warnings) {
   let engine;
   try { engine = fs.realpathSync(process.argv[1]); } catch { return; }
-  const viaPath = whichHandoff();
-  if (viaPath) {
-    let real = null;
-    try { real = fs.realpathSync(viaPath); } catch {}
-    if (real === engine) return;
-    problems.push(`[CLI] handoff(${viaPath}) 指向 ${real || '失效目标'} ≠ 中央引擎(${engine}) → 自愈: node ${engine} link`);
+
+  const batonPath = whichBin('baton');
+  const handoffPath = whichBin('handoff');
+
+  const batonOk = batonPath && resolvesToEngine(batonPath, engine);
+  const handoffOk = handoffPath && resolvesToEngine(handoffPath, engine);
+
+  if (batonOk && handoffOk) {
     return;
   }
-  const canonical = path.join(process.env.HOME, '.local/bin', 'handoff');
-  try {
-    if (fs.statSync(canonical).isFile() && fs.realpathSync(canonical) === engine) {
-      warnings.push(`[CLI] shim 存在于 ${canonical} 但当前 PATH 解析不到 → 将 ~/.local/bin 加入 shell profile（echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc）`);
-      return;
+
+  // 只要至少有一个正常，就不阻断 check，仅输出 warning 提示修复别名
+  if (batonOk || handoffOk) {
+    if (!batonOk) {
+      if (batonPath) {
+        let real = null;
+        try { real = fs.realpathSync(batonPath); } catch {}
+        warnings.push(`[CLI] baton(${batonPath}) 指向 ${real || '失效目标'} ≠ 中央引擎(${engine})，但 handoff 别名正常可用 → 可选修复: node "${engine}" link`);
+      } else {
+        warnings.push(`[CLI] 裸 baton 命令不在 PATH，但 handoff 别名正常可用 → 可选修复: node "${engine}" link`);
+      }
     }
-  } catch {}
-  problems.push(`[CLI] 裸 handoff 命令不在 PATH（文档/接入桩均按 \`handoff <op>\` 编写）→ 自愈: node ${engine} link`);
+    if (!handoffOk) {
+      if (handoffPath) {
+        let real = null;
+        try { real = fs.realpathSync(handoffPath); } catch {}
+        warnings.push(`[CLI] handoff 别名(${handoffPath}) 指向 ${real || '失效目标'} ≠ 中央引擎(${engine})，但 baton 主命令正常可用 → 可选修复: node "${engine}" link`);
+      } else {
+        warnings.push(`[CLI] 裸 handoff 别名不在 PATH，但 baton 主命令正常可用 → 可选修复: node "${engine}" link`);
+      }
+    }
+    return;
+  }
+
+  // 两者都不可用，检查是否本地 canonical 存在但未加 PATH
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  const canonicalDir = process.platform === 'win32'
+    ? path.join(home, 'AppData', 'Roaming', 'npm')
+    : path.join(home, '.local', 'bin');
+  const canonicalBaton = path.join(canonicalDir, process.platform === 'win32' ? 'baton.cmd' : 'baton');
+  const canonicalHandoff = path.join(canonicalDir, process.platform === 'win32' ? 'handoff.cmd' : 'handoff');
+
+  if ((fs.existsSync(canonicalBaton) && resolvesToEngine(canonicalBaton, engine)) ||
+      (fs.existsSync(canonicalHandoff) && resolvesToEngine(canonicalHandoff, engine))) {
+    warnings.push(`[CLI] shim 存在于 ${canonicalDir} 但当前 PATH 解析不到 → 请将 ${canonicalDir} 加入 shell profile 或系统环境变量 PATH`);
+    return;
+  }
+
+  problems.push(`[CLI] 裸 baton 与 handoff 命令均无法解析到中央引擎(${engine}) → 自愈: node "${engine}" link`);
 }
 
 function cmdBrief(args) {
@@ -4230,6 +4304,15 @@ for (let i = 0; i < rawArgv.length; i++) {
 const cmd = nonRoot.find(a => !a.startsWith('-'));
 const cmdIdx = nonRoot.indexOf(cmd);
 const rest = cmdIdx >= 0 ? nonRoot.slice(cmdIdx + 1) : [];
+
+const isVersion = nonRoot.includes('--version') || nonRoot.includes('-v') || nonRoot.includes('-V') || cmd === 'version';
+if (isVersion) {
+  console.log(`Agent Baton (baton) CLI · v${BATON_VERSION} (alias: handoff)`);
+  process.exit(0);
+}
+
+const isHelp = nonRoot.includes('--help') || nonRoot.includes('-h') || cmd === 'help';
+
 switch (cmd) {
   case 'init': cmdInit(rest); break;
   case 'new': cmdNew(rest); break;
@@ -4297,26 +4380,30 @@ switch (cmd) {
 跨仓 target: ${[...TARGETS].join(' | ')}    type: bug | feature | breaking | question
 仓内 lane: 由配置文件定义                     type: task | bug | feature | question | continuation`);
     } else {
-      console.log(`Agent Baton (baton) CLI · v2.20.0 (alias: handoff)
+      console.log(`Agent Baton (baton) CLI · v${BATON_VERSION} (alias: handoff)
 Usage:
   baton init [--cross] [--root <dir>] [--targets <a,b>] [--lanes <a,b>]
                                                Initialize hub (--cross for cross-repo, default intra-repo)
   baton import --from <dir>                    Scan legacy handoffs directory to generate read-only snapshot
-  baton new <target|lane> <type> <title...>    Create handoff (cross-repo target / intra-repo lane)
+  baton new <target|lane> <type> <title...> [--workspace worktree]
+                                               Create handoff (cross-repo target / intra-repo lane / support worktree isolation)
   baton status [--json] [--for <t|lane>] [--mermaid]
                                                View open handoffs summary (supports --mermaid diagram)
-  baton accept <id> -n "<verdict>" [--by <lane>]
-                                               Audit closure (close is an alias)
+  baton accept <id> -n "<verdict>" [--by <lane>] [--prune-worktree]
+                                               Audit closure (close is an alias; optional auto-prune isolated worktree)
   baton reject <id> -n "<reason>"              Audit rejection (return to executor for revision)
+  baton reopen <id> -n "<reason>"              Reopen misclosed handoff (change closed back to forwarded)
   baton receipt <id> [-n "<body text>"] [--deliver] [--evidence-paths "..."] [--evidence-commits "..."] [--audit-nonce "..."]
                                                Record receipt and set received (optional --deliver for one-step delivery)
   baton deliver <id> [-n "<delivery note>"]    Final executor delivery to state 'delivered' (ready for audit)
+  baton throttle <id> -- <cmd...>              Silent pipeline for time-consuming tasks (filter noise, alert on failure/delivery)
   baton forward <id> [--wait] [--daemon] [--blind]
                                                Mark forwarded (--wait managed blocking wait; --daemon detached daemon; --blind desensitize)
   baton wait <id1> [id2 ...] [--any|--all] [--timeout <dur>] [--settle <dur>] [--daemon]
                                                0-Token background event listener waiting for delivery (supports multi-ID aggregation --any/--all and settle window; --daemon detaches)
   baton open <id>                              Open handoff file in editor
-  baton show <id>                              Triage summary view (does not dump full text)
+  baton show <id> [--nonce]                    Triage summary view (does not dump full text; --nonce extracts Audit Nonce)
+  baton nonce <id> [--reissue]                 View or reissue Audit Nonce challenge token for ticket
   baton check                                  Full hub compliance inspection (exit condition)
   baton prompt <id>                            Generate Baton Pass Prompt (cross-workspace)
   baton install [--global|--project] [--no-readme] [--lang <en|zh>]
@@ -4329,6 +4416,6 @@ Scope root: --root <dir> | BATON_ROOT / HANDOFF_ROOT | upward search for .handof
 Cross-repo target: ${[...TARGETS].join(' | ')}    type: bug | feature | breaking | question
 Intra-repo lane: defined by configuration          type: task | bug | feature | question | continuation`);
     }
-    process.exit(cmd ? 2 : 0);
+    process.exit((cmd && !isHelp) ? 2 : 0);
   }
 }

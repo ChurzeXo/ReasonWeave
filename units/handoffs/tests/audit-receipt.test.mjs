@@ -712,4 +712,55 @@ status: draft
     assert.equal(statusDelivered.status, 0);
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
+
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.29.0，无 v2.20.0 漂移）', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. --version 与 -v
+    const verRes = runBaton(tmpDir, '--version');
+    assert.equal(verRes.status, 0);
+    assert.ok(verRes.stdout.includes('v2.29.0'), '应当输出 v2.29.0');
+    assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
+
+    const vRes = runBaton(tmpDir, '-v');
+    assert.equal(vRes.status, 0);
+    assert.ok(vRes.stdout.includes('v2.29.0'), '-v 应当输出 v2.29.0');
+
+    const versionRes = runBaton(tmpDir, 'version');
+    assert.equal(versionRes.status, 0);
+    assert.ok(versionRes.stdout.includes('v2.29.0'), 'version 应当输出 v2.29.0');
+
+    // 2. 英文环境下的 help 与默认输出
+    const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
+    assert.equal(enHelpRes.status, 0);
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.29.0'), '英文帮助中必须展示 v2.29.0');
+    assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
+    assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
+    assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
+  });
+
+  it('21. CLI 可达性门禁韧性（baton 主命令正常但 handoff 别名指向外部目录时降级为 warning，不阻断 check 收尾）', () => {
+    const tmpDir = createTestRepo();
+
+    // 创建模拟外部软件目录（如 WorkBuddy node 目录）
+    const fakeExternalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-workbuddy-bin-'));
+    const fakeHandoff = path.join(fakeExternalDir, 'handoff');
+    fs.writeFileSync(fakeHandoff, '#!/bin/sh\necho "legacy handoff"\n', { mode: 0o755 });
+
+    // 创建模拟正确指向中央引擎的 baton shim 目录
+    const fakeBatonDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-central-bin-'));
+    const fakeBaton = path.join(fakeBatonDir, 'baton');
+    try {
+      fs.symlinkSync(HANDOFF_BIN, fakeBaton);
+    } catch {
+      fs.writeFileSync(fakeBaton, `#!/bin/sh\nnode "${HANDOFF_BIN}" "$@"\n`, { mode: 0o755 });
+    }
+
+    // 设置 PATH: 包含 fakeBatonDir（baton 正常）与 fakeExternalDir（handoff 别名漂移）
+    const customPath = `${fakeBatonDir}${path.delimiter}${fakeExternalDir}${path.delimiter}${process.env.PATH}`;
+
+    const checkRes = runBaton(tmpDir, 'check', { PATH: customPath });
+    assert.equal(checkRes.status, 0, `check 应当成功通过（不被外部 handoff 别名阻断）: ${checkRes.stderr}\n${checkRes.stdout}`);
+    assert.ok(/⚠️.*\[CLI\] handoff 别名/i.test(checkRes.stdout), '应当以 warning 提示 handoff 别名异常，而非作为阻塞性 problem');
+  });
 });

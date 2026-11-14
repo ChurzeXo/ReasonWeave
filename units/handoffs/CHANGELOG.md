@@ -6,7 +6,10 @@
 
 ---
 
-> **v2.29.1 补丁（2026-11-14 · 跨仓目标注册 lab）**：生态跨仓一等 target 扩容 lab（`.handoff-hub.json` / `TARGETS` / `TARGET_LABELS` / `status --for` / 跨仓正则同步），正式打通外部消费方（如 iggle / Tappy 等）向 lab 能力库派发跨仓工单 (`LAB-YYYYMMDD-NN-TYPE`) 及回执闭环通道。
+> **v2.29.1 补丁（2026-11-14 · 跨仓目标注册 lab · CLI 英文帮助版本漂移根治 · CLI 可达性门禁韧性分层）**：
+> 1. **生态跨仓一等 target 扩容 lab**：正式打通外部消费方（如 iggle / Tappy 等）向 lab 能力库派发跨仓工单 (`LAB-YYYYMMDD-NN-TYPE`) 及回执闭环通道；
+> 2. **英文帮助版本漂移根治**：修复英文 help 文本中残留硬编码 `v2.20.0` 的历史缺陷，对齐为 `${BATON_VERSION}`（v2.29.0）；补齐英文帮助缺失的 `reopen` / `throttle` / `nonce` / `--workspace worktree` / `--prune-worktree` 等新命令及参数；增加 `--version` / `-v` / `version` 与 `--help` / `-h` 规范化退出码；
+> 3. **CLI 可达性门禁韧性分层（防工作区外越权与死锁）**：`checkCliReachable` 升级为 `baton` 与 `handoff` 双探针，并支持 Windows 可执行扩展名（`.cmd`/`.ps1`/`.exe`）与文本 shim 内容感知；当主命令 `baton` 正常可用时，`handoff` 别名指向外部软件目录（如 WorkBuddy node 目录）降级为 `⚠️ warning` 并给出修复建议，绝不作为阻塞性 `problem`（不 exit 1 阻断收尾），彻底杜绝消费方 Agent 验收收口被外部环境别名误拦，恪守不越权修改工作区外目录原则。
 
 ---
 
