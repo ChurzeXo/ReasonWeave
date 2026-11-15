@@ -6,6 +6,22 @@
 
 ---
 
+> **v2.33.0 变更（2026-11-15 · 提示词人机协作卡片化重构 · 身份警示入宪解耦 · 独立 Round 标题行 · 发起方自动身份锁与 Agent 无监听裸转递硬拦截 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——人类操作员反馈提示词结构过度充斥机器术语、括号混乱、长路径打断认知心流；且多 Agent 协作时存在未锁冷启动夺舍隐患与 Agent 托管环境下跳过监听问题。
+> 1. **出站提示词结构化卡片重构（Human-Centric Structured Card）**：
+>    - 确立人类自然认知黄金顺序：`谁接单 → 任务主题 → 轮次（若有）→ 工单ID → 长路径`；
+>    - 废黜全角粗黑方头括号 `【】`，全面换用清爽中括号 `[ ]`；
+>    - 任务轮次（`round > 1`）提取为独立标题行：`[任务轮次] Round <round>（第 <round> 轮复审）`；
+>    - 剥离所有内部机械术语（`to_lane=audit`、`audit_nonce` 等），纯化业务主题；
+> 2. **身份警示与反角色漂移入宪（Constitution Principle T4）**：
+>    - 将「禁止角色漂移与越权代办」写入最高工程宪法（`constitution.md` T4）与接入桩核心守卫，不再在日常交接便签中堆砌口号式警示；
+> 3. **身份锁定冷启动加固（Cold-Start Anti-Impersonation）**：
+>    - `baton new` 与 `baton forward` 在当前会话未绑定时，自动将会话锁定为发起方角色（`from_lane`），防止冷启动 Agent 误读外来提示词后被“夺舍”变身；
+> 4. **Agent 托管环境无监听裸转递硬拦截（Fail-Closed Listener Gate）**：
+>    - `cmdForward` 在 Agent 环境下检测到未带 `--wait`、未带 `--async` 且未显式指定 `--no-wait` 时，由弱 Warning 升级为物理拦截（Exit 1），彻底杜绝工单沦为无监听孤儿；
+> 5. **接入桩与指纹同步升级至 v2.33.0**。
+
+---
+
 > **v2.32.0 变更（2026-11-15 · ADR-0010 落地 · 防跨角色伪装漂移 · 会话环境身份锁 · 同工作区审计私钥凭据与签章防伪 · 出站提示词防注入三段式 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——下游专项双盲红队审计（`audit-20261115-01-task`）在同工作区多 Agent 场景发生严重角色漂移与自我闭环事故（实现方误读提示词后通过 `--as audit` 代办交付，击穿「禁止自我闭环」铁律）。
 > 1. **环境与会话身份锁（Fail-Closed Environment & Session Lane Binding）**：
 >    - 强环境绑定门禁：若进程环境声明了 `HANDOFF_LANE=<lane>`，CLI 严格以此为准，严禁通过 `--as` 随意漂移到其他角色（违者触发 `CROSS_LANE_IMPERSONATION_BLOCKED` 拦截）；

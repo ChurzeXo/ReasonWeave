@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.32.0';
+const BATON_VERSION = '2.33.0';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -1667,10 +1667,17 @@ function cmdReject(args) {
       const isZh = detectLang() === 'zh';
       const toRole = resolveLaneRole(hFm?.from_lane) || hFm?.from_lane || (isZh ? '实现方' : 'Implementer');
       const fromRole = resolveLaneRole(cur) || cur || (isZh ? '驳回方' : 'Rejector');
-      console.log(`\n📋 可复制驳回提示词（防混淆三段式 · 复制给实现方 Agent）:`);
-      console.log(`\`\`\`text`);
-      console.log(`【身份警示：你是实现方 ${toRole}，请勿切换角色】工单 [${id}] 已被【${fromRole}】驳回退回整改（理由：${note}）。请完成整改后重新转递。`);
-      console.log(`\`\`\`\n`);
+      if (isZh) {
+        console.log(`\n📋 可复制整改提示词（复制给实现方 Agent）:`);
+        console.log(`\`\`\`text`);
+        console.log(`请 [${toRole}] 接单整改：\n[工单编号] [${id}]\n[驳回角色] ${fromRole}\n[驳回理由] ${note}\n[后续动作] 请完成整改后重新转递 (baton forward ${id} --wait)`);
+        console.log(`\`\`\`\n`);
+      } else {
+        console.log(`\n📋 Copyable Rejection Prompt (pass to implementer):`);
+        console.log(`\`\`\`text`);
+        console.log(`Please [${toRole}] take ticket for remediation:\n[Ticket ID] [${id}]\n[Rejected By] ${fromRole}\n[Reason] ${note}\n[Next Step] Please remediate and re-forward (baton forward ${id} --wait)`);
+        console.log(`\`\`\`\n`);
+      }
     }
   });
 }
@@ -1815,10 +1822,17 @@ function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
     const fromRole = resolveLaneRole(fromLane) || fromLane || (isZh ? '本方' : 'Executor');
     if (isDelivered) {
       console.log(`\n✅ 仓内终态交付已生效 [${ticketId}]（状态推进为 delivered，后台监听已自动感知平息并唤醒发起方/审计方进行独立验收闭环）。`);
-      console.log(`📋 可复制交付提示词（防混淆三段式 · 同对话多工单精准对齐）:`);
-      console.log(`\`\`\`text`);
-      console.log(`【身份警示：你是发起方 ${toRole}，请勿切换角色】请查收【${fromRole}】提交的回执 [${ticketId}]：${display}（已交付 · 需发起方改动：${flag}）`);
-      console.log(`\`\`\`\n`);
+      if (isZh) {
+        console.log(`📋 可复制交付提示词（复制给发起方 Agent）:`);
+        console.log(`\`\`\`text`);
+        console.log(`请 [${toRole}] 查收 [${fromRole}] 提交的回执：\n[工单编号] [${ticketId}]\n[需发起方改动] ${flag}\n[回执路径] ${display}`);
+        console.log(`\`\`\`\n`);
+      } else {
+        console.log(`📋 Copyable Delivery Prompt (pass to initiator):`);
+        console.log(`\`\`\`text`);
+        console.log(`Please [${toRole}] inspect receipt submitted by [${fromRole}]:\n[Ticket ID] [${ticketId}]\n[Needs Initiator Action] ${flag}\n[Receipt Path] ${display}`);
+        console.log(`\`\`\`\n`);
+      }
     } else {
       const waitNotice = needsChange
         ? `（status: received · 需整改/受阻待处理，严禁 deliver）`
@@ -2328,6 +2342,10 @@ async function cmdForward(args) {
     }
     const fm = readFM(fs.readFileSync(file, 'utf8'));
     const toLane = String(fm?.to_lane || fm?.target || '').toLowerCase();
+    const ticketFrom = String(fm?.from_lane || '').toLowerCase();
+    if (!getSessionLane() && ticketFrom) {
+      setSessionLane(ticketFrom);
+    }
 
     if (fm.status === 'received' || fm.status === 'delivered' || fm.status === 'closed') {
       console.log(`⚠️ 交接 ${id} 当前状态为 ${fm.status}，已是更靠后状态，跳过翻 forwarded。`);
@@ -2444,20 +2462,22 @@ async function cmdForward(args) {
     const noWaitExplicit = args.includes('--no-wait');
     if (isAgentEnvironment() && !noWaitExplicit) {
       if (isZh) {
-        console.warn(`\n⚠️  [安全警示: 必须挂起监听] 检测到在 Agent 环境下转递未带 --wait！`);
-        console.warn(`   真相提醒：Baton 是基于本地文件系统内核事件（fs.watch）的总线。`);
-        console.warn(`   即使执行方是外部客户端（Cursor/WorkBuddy/Antigravity 等）或人类终端，对方运行 baton deliver 也会直接落盘唤醒。`);
-        console.warn(`   严禁以为「外部客户端等不到」而跳过监听！请立即执行:`);
-        console.warn(`   👉 baton wait ${ids.join(' ')} （请作为后台任务/Background Task 运行）`);
-        console.warn(`   💡 多工单并发派发提示：可使用 baton forward <id> --async 解耦派发，派发完毕后统一运行 baton wait <id1> <id2> ... 聚合监听。\n`);
+        console.error(`\n❌ [物理门禁拦截: 必须挂起监听探针] 检测到在 Agent 环境下转递未带 --wait 监听！`);
+        console.error(`   真相提醒：Baton 是基于本地文件系统内核事件（fs.watch）的总线。对方一旦 deliver 立即毫秒级唤醒。`);
+        console.error(`   严禁以为「外部客户端等不到」或担心长任务而跳过监听（跳过监听会导致工单沦为无人唤醒的孤儿）！`);
+        console.error(`   👉 推荐动作（转递并监听）：运行 'baton forward ${ids.join(' ')} --wait' 作为后台任务运行（如 run_command 带 WaitMsBeforeAsync）`);
+        console.error(`   👉 推荐动作（后台独立监听）：调用平台后台任务能力运行 'baton wait ${ids.join(' ')}'`);
+        console.error(`   👉 并发派发：若需先派发多个工单，请运行 'baton forward ${ids.join(' ')} --async' 解耦，最后统一运行 'baton wait ...' 监听`);
+        console.error(`   （如确有特殊原因本次无需监听，请显式追加 --no-wait 声明豁免）\n`);
       } else {
-        console.warn(`\n⚠️  [Security Warning: Listener Required] Detected 'forward' without --wait in an Agent environment!`);
-        console.warn(`   Fact: Baton is an fs.watch filesystem event bus.`);
-        console.warn(`   Even if the executor is an external client (Cursor/WorkBuddy, etc.), 'baton deliver' will wake you up immediately.`);
-        console.warn(`   Never skip waiting assuming external clients cannot be detected! Run immediately:`);
-        console.warn(`   👉 baton wait ${ids.join(' ')} (run as a background task)`);
-        console.warn(`   💡 Concurrent dispatch tip: Use baton forward <id> --async and run baton wait <id1> <id2> ... after all dispatched.\n`);
+        console.error(`\n❌ [Physical Gate Blocked: Background Listener Required] Detected 'forward' without '--wait' in an Agent environment!`);
+        console.error(`   Never skip waiting assuming external clients cannot wake you up.`);
+        console.error(`   👉 Recommended: Run 'baton forward ${ids.join(' ')} --wait' as a background task`);
+        console.error(`   👉 Or run: 'baton wait ${ids.join(' ')}' in background`);
+        console.error(`   👉 Or concurrent: 'baton forward ${ids.join(' ')} --async', then 'baton wait ...'`);
+        console.error(`   (To explicitly bypass listener, pass --no-wait)\n`);
       }
+      process.exit(1);
     } else {
       if (isZh) {
         console.log(`\n👉 提示: 请立即启动后台监听: baton forward ${ids.join(' ')} --wait（由 AI 宿主托管或阻塞等待），以便在回执到达时自动唤醒。`);
@@ -2632,7 +2652,7 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.32.0 为准）
+const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.33.0 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
@@ -2653,14 +2673,18 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 2. **回复收尾（交接提示词规范）**：出站回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
    ## 交接提示词
    \`\`\`text
-   【身份警示：你是接收方 <目标角色>，请勿切换角色】请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）
+   请 [<目标角色>] 接单：
+   [任务主题] <主题>
+   [任务轮次] Round <round>（第 <round> 轮复审）
+   [工单编号] [<ID>]
+   [工单路径] <交接路径>
    \`\`\`
 
 详见 \`$(lab path handoffs)/AGENT-GUIDE.md\` 获取完整版 Preflight。`;
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.32.0 · Details in $(lab path handoffs)/README.md)
+const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.33.0 · Details in $(lab path handoffs)/README.md)
 
 **Core Guards & Identity (Mandatory)**
 - **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.
@@ -2681,7 +2705,11 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
 2. **Tail Block (Baton Pass Prompt Standard)**: End outbound replies with a dedicated code block for one-click human copying (no text after this block):
    ## Baton Pass Prompt
    \`\`\`text
-   【ROLE NOTICE: You are assignee <Target Role>, do not switch roles】Please [<Target Role>] take handoff [<ID>]: <path> (<topic>)
+   Please [<Target Role>] take handoff:
+   [Task Topic] <Title>
+   [Task Round] Round <round> (Review Round <round>)
+   [Ticket ID] [<ID>]
+   [Ticket Path] <Path>
    \`\`\`
 
 See \`$(lab path handoffs)/AGENT-GUIDE.md\` for full Preflight.`;
@@ -3219,24 +3247,29 @@ function cmdPrompt(args) {
     const fm = readFM(content) || {};
     const ws = fm.workspace || 'same';
     const toRole = resolveLaneRole(fm.to_lane) || fm.to_lane || (isZh ? '执行方' : 'Executor');
+    const cleanTitle = title.replace(/\s*\((?:to_)?lane:\s*[^)]+\)/gi, '').trim();
+    const round = Number(fm.round || 1);
+    const roundLineZh = round > 1 ? `[任务轮次] Round ${round}（第 ${round} 轮复审）\n` : '';
+    const roundLineEn = round > 1 ? `[Task Round] Round ${round} (Review Round ${round})\n` : '';
+
     // 审计动作契约（v2.13）：to_lane=audit 时注入强制审计动作，提示词与接入桩同步。
     const auditContract = (String(fm.to_lane || '').toLowerCase() === 'audit')
       ? (isZh
-          ? `\n（⚠️ 审计动作契约 · to_lane=audit）：审计方（【${toRole}】）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明）。`
+          ? `\n（⚠️ 审计动作契约 · to_lane=audit）：审计方（[${toRole}]）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明）。`
           : `\n(⚠️ Audit Action Contract · to_lane=audit): The auditor ([${toRole}]) MUST NOT merely read code statically — all verification and test commands in "Acceptance Criteria" MUST be executed independently in the terminal. Never rely on self-reported claims in the receipt.`)
       : '';
 
     if (isZh) {
       console.log(`📋 仓内交接 (${id}) · workspace=${ws}:`);
-      console.log(`   主题: ${title}`);
+      console.log(`   主题: ${cleanTitle}`);
       console.log(`\n## 交接提示词\n`);
       console.log(`> 直接复制下方提示词，发送给接收方 Agent 接单：\n`);
       console.log(`\`\`\`text`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
-        console.log(`【身份警示：你是接收方 ${toRole}，请勿切换角色】请【${toRole}】在隔离工作树（${wtRel}）接单 [${id}]：${display}（${title}）`);
+        console.log(`请 [${toRole}] 在隔离工作树接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工作树路径] ${wtRel}\n[工单编号] [${id}]\n[工单路径] ${display}`);
       } else {
-        console.log(`【身份警示：你是接收方 ${toRole}，请勿切换角色】请【${toRole}】接单 [${id}]：${display}（${title}）`);
+        console.log(`请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${id}]\n[工单路径] ${display}`);
       }
       console.log(`\`\`\`\n`);
       if (ws === 'worktree') {
@@ -3256,15 +3289,15 @@ function cmdPrompt(args) {
       if (auditContract) console.log(auditContract);
     } else {
       console.log(`📋 Intra-Repo Baton (${id}) · workspace=${ws}:`);
-      console.log(`   Title: ${title}`);
+      console.log(`   Title: ${cleanTitle}`);
       console.log(`\n## Baton Pass Prompt\n`);
       console.log(`> Copy the prompt below to pass to the receiver Agent:\n`);
       console.log(`\`\`\`text`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
-        console.log(`【ROLE NOTICE: You are assignee ${toRole}, do not switch roles】Please [${toRole}] take handoff [${id}] in isolated worktree (${wtRel}): ${display} (${title})`);
+        console.log(`Please [${toRole}] take handoff in isolated worktree:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Worktree] ${wtRel}\n[Ticket ID] [${id}]\n[Ticket Path] ${display}`);
       } else {
-        console.log(`【ROLE NOTICE: You are assignee ${toRole}, do not switch roles】Please [${toRole}] take handoff [${id}]: ${display} (${title})`);
+        console.log(`Please [${toRole}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${id}]\n[Ticket Path] ${display}`);
       }
       console.log(`\`\`\`\n`);
       if (ws === 'worktree') {
@@ -3312,22 +3345,27 @@ function cmdPrompt(args) {
   }
 
   const targetLabel = pTarget ? (TARGET_LABELS[pTarget] || pTarget) : (isZh ? '依赖方' : 'dependency');
+  const cleanTitle = title.replace(/\s*\((?:to_)?lane:\s*[^)]+\)/gi, '').trim();
+  const round = Number(readFM(content)?.round || 1);
+  const roundLineZh = round > 1 ? `[任务轮次] Round ${round}（第 ${round} 轮复审）\n` : '';
+  const roundLineEn = round > 1 ? `[Task Round] Round ${round} (Review Round ${round})\n` : '';
+
   if (isZh) {
     console.log(`📋 跨仓交接 (${id}) · target=${pTarget || 'unknown'}:`);
-    console.log(`   主题: ${title}`);
+    console.log(`   主题: ${cleanTitle}`);
     console.log(`\n## 交接提示词\n`);
     console.log(`> 直接复制下方提示词，发送给接收方 Agent 接单：\n`);
     console.log(`\`\`\`text`);
-    console.log(`【身份警示：你是接收方 ${targetLabel}，请勿切换角色】请收 ${targetLabel} 交接 [${id}]：${display}（${title}）`);
+    console.log(`请 [${targetLabel}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${id}]\n[工单路径] ${display}`);
     console.log(`\`\`\`\n`);
     console.log(`（若已挂起后台监听，回执登记后状态机会自动感知唤醒发起方闭环。）\n`);
   } else {
     console.log(`📋 Cross-Repo Baton (${id}) · target=${pTarget || 'unknown'}:`);
-    console.log(`   Title: ${title}`);
+    console.log(`   Title: ${cleanTitle}`);
     console.log(`\n## Baton Pass Prompt\n`);
     console.log(`> Copy the prompt below to pass to the receiver Agent:\n`);
     console.log(`\`\`\`text`);
-    console.log(`【ROLE NOTICE: You are assignee ${targetLabel}, do not switch roles】Please [${targetLabel}] take handoff [${id}]: ${display} (${title})`);
+    console.log(`Please [${targetLabel}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${id}]\n[Ticket Path] ${display}`);
     console.log(`\`\`\`\n`);
     console.log(`(If background listener is running, the state machine will automatically wake up upon receipt.)\n`);
   }

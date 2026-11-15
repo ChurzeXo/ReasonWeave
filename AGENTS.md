@@ -52,8 +52,8 @@ docs/                辅助文档与待办 (docs/backlogs/)
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:30eeac8e -->
-### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.32.0 为准）
+<!-- stub:sha256:4433c1b1 -->
+### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.33.0 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
@@ -74,7 +74,11 @@ docs/                辅助文档与待办 (docs/backlogs/)
 2. **回复收尾（交接提示词规范）**：出站回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
    ## 交接提示词
    ```text
-   【身份警示：你是接收方 <目标角色>，请勿切换角色】请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）
+   请 [<目标角色>] 接单：
+   [任务主题] <主题>
+   [任务轮次] Round <round>（第 <round> 轮复审）
+   [工单编号] [<ID>]
+   [工单路径] <交接路径>
    ```
 
 详见 `$(lab path handoffs)/AGENT-GUIDE.md` 获取完整版 Preflight。

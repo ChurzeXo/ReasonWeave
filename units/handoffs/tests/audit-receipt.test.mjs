@@ -575,13 +575,13 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.32\.0\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.33\.0\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.32\.0/);
+    assert.match(agentsContent, /v2\.33\.0/);
     assert.match(agentsContent, /--as <lane>/);
     // 接入桩正文应保持轻量韧性（小于 2800 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
@@ -720,27 +720,27 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.32.0，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.33.0，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.32.0'), '应当输出 v2.32.0');
+    assert.ok(verRes.stdout.includes('v2.33.0'), '应当输出 v2.33.0');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.32.0'), '-v 应当输出 v2.32.0');
+    assert.ok(vRes.stdout.includes('v2.33.0'), '-v 应当输出 v2.33.0');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.32.0'), 'version 应当输出 v2.32.0');
+    assert.ok(versionRes.stdout.includes('v2.33.0'), 'version 应当输出 v2.33.0');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.32.0'), '英文帮助中必须展示 v2.32.0');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.33.0'), '英文帮助中必须展示 v2.33.0');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -925,11 +925,11 @@ status: draft
 
     // 5. 验证此时使用 reject 签发的 Nonce (nonceAfterRej1) 交付能够完全通过
     fs.writeFileSync(path.join(tmpDir, 'fix.ts'), 'export const fixed = true;');
-    const receiptRes = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS\\n## 修复说明\\n- 修复完成" --audit-nonce "${nonceAfterRej1}" --evidence-paths "fix.ts" --deliver --as audit`, { HANDOFF_LANE: '' });
+    const receiptRes = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS\\n## 修复说明\\n- 修复完成" --audit-nonce "${nonceAfterRej1}" --evidence-paths "fix.ts" --deliver --as audit`, { HANDOFF_LANE: 'audit' });
     assert.equal(receiptRes.status, 0, `使用 reject 签发的 Nonce 交付必须成功: ${receiptRes.stderr}\n${receiptRes.stdout}`);
 
     // 6. 模拟第 2 次驳回 (reject #2)
-    const rej2 = runBaton(tmpDir, `reject ${idA} -n "第2轮驳回：发现性能回退" --as audit`);
+    const rej2 = runBaton(tmpDir, `reject ${idA} -n "第2轮驳回：发现性能回退" --as audit`, { HANDOFF_LANE: 'audit' });
     assert.equal(rej2.status, 0);
 
     const showAfterRej2 = runBaton(tmpDir, `show ${idA}`);
@@ -1074,16 +1074,26 @@ status: draft
     assert.match(fakeSigDeliver.stderr + fakeSigDeliver.stdout, /越界交付|AUDIT_CREDENTIAL_DENIED|缺少或伪造审计私钥签章/);
   });
 
-  it('30. [v2.32.0] 出站提示词防注入三段式与 baton lane CLI 自助管理', () => {
+  it('30. [v2.33.0] 结构化卡片提示词排版、Round 单行有标题与 baton lane CLI 自助管理', () => {
     const tmpDir = createTestRepo();
-    const resA = runBaton(tmpDir, 'new audit task "测试提示词三段式" --from arch', { HANDOFF_LANE: 'arch' });
+    const resA = runBaton(tmpDir, 'new audit task "测试提示词卡片化" --from arch', { HANDOFF_LANE: 'arch' });
     const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
 
-    // 1. 验证 baton prompt 输出包含三段式主谓宾身份声明
+    // 1. 验证 baton prompt 输出为通俗结构化卡片，去除口号式警示
     const promptRes = runBaton(tmpDir, `prompt ${idA}`, { HANDOFF_LANE: 'arch' });
     assert.equal(promptRes.status, 0);
-    assert.ok(promptRes.stdout.includes('【身份警示：你是接收方') || promptRes.stdout.includes('【ROLE NOTICE: You are assignee'), '提示词必须包含身份警示开头');
-    assert.ok(promptRes.stdout.includes('请勿切换角色') || promptRes.stdout.includes('do not switch roles'), '提示词必须警示防切换角色');
+    assert.ok(promptRes.stdout.includes('请 [Audit] 接单：') || promptRes.stdout.includes('请 [审计方] 接单：') || promptRes.stdout.includes('Please [Audit] take handoff:'), '提示词首行必须是请角色接单');
+    assert.ok(promptRes.stdout.includes('[任务主题] 测试提示词卡片化') || promptRes.stdout.includes('[Task Topic] 测试提示词卡片化'), '提示词必须包含纯净任务主题行');
+    assert.ok(promptRes.stdout.includes(`[工单编号] [${idA}]`) || promptRes.stdout.includes(`[Ticket ID] [${idA}]`), '提示词必须包含工单编号');
+    assert.ok(promptRes.stdout.includes('[工单路径]') || promptRes.stdout.includes('[Ticket Path]'), '提示词必须包含工单路径');
+    assert.ok(!promptRes.stdout.includes('【身份警示：你是接收方'), '提示词中已剥离身份警示口号');
+
+    // 1.1 验证当 Round > 1 时，[任务轮次] 单独成行且有标题
+    const hFile = path.join(tmpDir, '.handoffs', 'handoffs', `${idA}.md`);
+    const hContent = fs.readFileSync(hFile, 'utf8').replace(/round:\s*1/, 'round: 2');
+    fs.writeFileSync(hFile, hContent, 'utf8');
+    const promptRound2 = runBaton(tmpDir, `prompt ${idA}`, { HANDOFF_LANE: 'arch' });
+    assert.ok(promptRound2.stdout.includes('[任务轮次] Round 2（第 2 轮复审）') || promptRound2.stdout.includes('[Task Round] Round 2 (Review Round 2)'), 'Round 2 必须作为独立标题行呈现');
 
     // 2. 验证 baton lane 指令
     const sId = 'sess-test-' + Date.now();

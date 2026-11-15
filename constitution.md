@@ -35,6 +35,9 @@ Unit 之间保持松耦合，不得产生强环形依赖；消费方可单选任
 ### T3 — 运行态与能力库严格分离
 `units/handoffs/` 的运行态票据（handoffs、receipts、inbox、archive）属于业务落地历史痕迹，绝对禁止混入版本管理与打包分发中。
 
+### T4 — 身份确定性与禁止角色漂移 (Identity Pinning & Anti-Impersonation)
+任何参与工程流转的 Agent 严格受绑定身份约束，严禁越权代办、伪装其他角色或自我闭环；身份防御由环境/会话锁（`HANDOFF_LANE` / `baton lane`）与物理门禁强制保障，无需在日常交接提示词中堆砌口号式警示。
+
 ---
 
 ## 3. Unit 隔离与维护原则 (Unit Isolation Principles)
