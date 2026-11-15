@@ -18,9 +18,13 @@ let MODE = 'cross';
 //   --json=v2   → v2（仅 --for 时有效，新增 target 感知的 pending + counts；禁止替换 v1）
 let JSON_MODE = false;
 let JSON_V2 = false;
+let ACTIVE_ONLY = false;
+let SHOW_ALL = false;
 for (const a of process.argv) {
   if (a === '--json') JSON_MODE = true;
   else if (a === '--json=v2') { JSON_MODE = true; JSON_V2 = true; }
+  else if (a === '--active' || a === '-a') ACTIVE_ONLY = true;
+  else if (a === '--all') SHOW_ALL = true;
   else if (a === '--root') { const i = process.argv.indexOf(a); if (process.argv[i + 1]) ROOT = process.argv[i + 1]; }
   else if (a.startsWith('--root=')) { ROOT = a.slice('--root='.length); }
   else if (a === '--mode') { const i = process.argv.indexOf(a); if (process.argv[i + 1]) MODE = process.argv[i + 1]; }
@@ -28,6 +32,72 @@ for (const a of process.argv) {
 }
 const H_DIR = path.join(ROOT, 'handoffs');
 const R_DIR = path.join(ROOT, 'receipts');
+
+// ── 审计日志流水追溯（支持精准回退驳回方归属 · ADR-0008）──────────────────────────
+const journalEventsMap = (() => {
+  const map = new Map();
+  const jFile = path.join(ROOT, 'logs', 'state-journal.jsonl');
+  if (!fs.existsSync(jFile)) return map;
+  try {
+    const lines = fs.readFileSync(jFile, 'utf8').split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const item = JSON.parse(line);
+        if (item && item.id) {
+          if (!map.has(item.id)) map.set(item.id, []);
+          map.get(item.id).push(item);
+        }
+      } catch {}
+    }
+  } catch {}
+  return map;
+})();
+
+function getEffectiveRejection(r) {
+  // 1. 若工单 frontmatter 显式留存 rejected_by，直接以其为准
+  if (r.rejected_by) {
+    return {
+      rejected_by: String(r.rejected_by).toLowerCase(),
+      rejected_at: r.rejected_at || '',
+      is_rejected: true
+    };
+  }
+  // 2. 查 state-journal 最近一次 op=reject 记录
+  const events = journalEventsMap.get(r.id);
+  if (events && events.length) {
+    let lastReject = null;
+    let deliveredAfter = false;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (ev.op === 'deliver' || ev.op === 'accept') {
+        deliveredAfter = true;
+        break;
+      }
+      if (ev.op === 'reject') {
+        lastReject = ev;
+        break;
+      }
+    }
+    if (lastReject && !deliveredAfter) {
+      const by = String(lastReject.rejected_by || lastReject.lane || '').toLowerCase();
+      return {
+        rejected_by: by,
+        rejected_at: lastReject.ts || lastReject.rejected_at || r.rejected_at || '',
+        is_rejected: Boolean(by)
+      };
+    }
+  }
+  // 3. 保底回退：若工单留有 rejected_at 但流水缺失
+  if (r.rejected_at) {
+    return {
+      rejected_by: String(r.from_lane || '').toLowerCase(),
+      rejected_at: r.rejected_at,
+      is_rejected: true
+    };
+  }
+  return { rejected_by: '', rejected_at: '', is_rejected: false };
+}
 
 // ── 依赖方视角（--for <target>，跨仓）／ --for <lane>（仓内）──
 // 依赖方 agent 用「我的待办」单一入口：只列 target===<target>（或 to_lane===<lane>）且未闭环的交接。
@@ -322,6 +392,36 @@ function getReceiptMtime(id) {
   }
 }
 
+const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
+
+function isTicketActive(r) {
+  if (r.status === 'closed') return false;
+  let lastAct = 0;
+  if (r.created) {
+    const t = new Date(r.created).getTime();
+    if (!Number.isNaN(t) && t > lastAct) lastAct = t;
+  }
+  if (r.rejected_at) {
+    const t = new Date(r.rejected_at).getTime();
+    if (!Number.isNaN(t) && t > lastAct) lastAct = t;
+  }
+  if (r.delivered_at) {
+    const t = new Date(r.delivered_at).getTime();
+    if (!Number.isNaN(t) && t > lastAct) lastAct = t;
+  }
+  const rMtime = getReceiptMtime(r.id);
+  if (rMtime > lastAct) lastAct = rMtime;
+  const hFile = path.join(H_DIR, `${r.id}.md`);
+  try {
+    if (fs.existsSync(hFile)) {
+      const hMtime = fs.statSync(hFile).mtimeMs;
+      if (hMtime > lastAct) lastAct = hMtime;
+    }
+  } catch {}
+  if (!lastAct) return true;
+  return (Date.now() - lastAct) < SEVEN_DAYS_MS;
+}
+
 function isReceivedIdle(r) {
   if (r.status !== 'received') return false;
   if (r.delivered_at) return false;
@@ -338,18 +438,29 @@ function isReceivedIdle(r) {
   // 依据回执修改时间判定回执草稿停滞，而非工单创建时间
   const rMtime = getReceiptMtime(r.id);
   if (!rMtime) return false;
-  return (Date.now() - rMtime) >= 10 * 60 * 1000;
+  const idleMs = Date.now() - rMtime;
+  // 超过 7 天属于历史陈旧工单，不作为高频空转告警刷屏（避免高频多窗口排障被历史噪声淹没）
+  if (idleMs > SEVEN_DAYS_MS) return false;
+  return idleMs >= 10 * 60 * 1000;
 }
 
 function getRejectionSummary(r) {
-  if (!r.rejected_at) return '';
   const rFile = path.join(R_DIR, `${r.id}-resp.md`);
-  if (!fs.existsSync(rFile)) return '';
-  try {
-    const raw = fs.readFileSync(rFile, 'utf8');
-    const m = raw.match(/理由[：:]\s*([^\n]+)/);
-    if (m) return m[1].trim();
-  } catch {}
+  if (fs.existsSync(rFile)) {
+    try {
+      const raw = fs.readFileSync(rFile, 'utf8');
+      const m = raw.match(/理由[：:]\s*([^\n]+)/);
+      if (m) return m[1].trim();
+    } catch {}
+  }
+  const events = journalEventsMap.get(r.id);
+  if (events) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].op === 'reject' && events[i].note) {
+        return events[i].note;
+      }
+    }
+  }
   return '';
 }
 
@@ -361,7 +472,8 @@ function formatRowLine(r, isZh) {
   const idle = isReceivedIdle(r);
   const idleAlert = idle ? (isZh ? '  ⚠️ [空转告警: received 超 10m 未 deliver]' : '  ⚠️ [空转告警 / Idle Warning: received >10m without deliver]') : '';
   let rejPart = '';
-  if (r.rejected_at && (r.status === 'forwarded' || r.status === 'draft')) {
+  const effRej = getEffectiveRejection(r);
+  if (effRej.is_rejected && (r.status === 'forwarded' || r.status === 'draft')) {
     const reason = getRejectionSummary(r);
     rejPart = isZh
       ? `  ⚠️ [已驳回退回 · 待整改${reason ? '：' + reason.slice(0, 40) : ''}]`
@@ -507,7 +619,8 @@ function nextStepFor(r) {
         ? '已终态交付，等发起 lane 独立实测后 close'
         : 'Delivered, awaiting initiator verification to close';
     }
-    if (r.rejected_at && (r.status === 'forwarded' || r.status === 'draft')) {
+    const eff = getEffectiveRejection(r);
+    if (eff.is_rejected && (r.status === 'forwarded' || r.status === 'draft')) {
       return isZh
         ? `【驳回重做】查看回执 receipts/${r.id}-resp.md 驳回记录完成整改 → 更新回执并 baton deliver`
         : `【Rejected/Rework】Revise per receipts/${r.id}-resp.md rejection record → update receipt & baton deliver`;
@@ -540,22 +653,24 @@ if (FOR) {
   // 依赖方视角：只列 target===FOR（跨仓）或 to_lane===FOR（仓内）且未闭环；pending 按角色语义过滤（isPendingFor）。
   const laneMatch = (r) => {
     if (MODE === 'intra-repo') {
+      const eff = getEffectiveRejection(r);
       if (r.to_lane === FOR) {
         // 我已驳回退回给对方的项在等待对方整改，不计入我方待办
-        return r.rejected_by !== FOR;
+        return eff.is_rejected ? eff.rejected_by !== FOR : true;
       }
       // 对方驳回给我的项（我是发起方），落入我方整改待办
-      if (r.from_lane === FOR && r.rejected_by && r.rejected_by !== FOR) {
+      if (r.from_lane === FOR && eff.is_rejected && eff.rejected_by !== FOR) {
         return true;
       }
       return false;
     }
     return r.target === FOR;
   };
-  const mine = rows.filter(r => laneMatch(r) && r.status !== 'closed');
+  const mineAll = rows.filter(r => laneMatch(r) && r.status !== 'closed');
+  const mine = ACTIVE_ONLY ? mineAll.filter(isTicketActive) : mineAll;
   if (JSON_MODE) {
     if (JSON_V2) {
-      const pending = mine.filter(r => isPendingFor(FOR, r.status) && r.rejected_by !== FOR).map(r => ({
+      const pending = mine.filter(r => isPendingFor(FOR, r.status) && (!getEffectiveRejection(r).is_rejected || getEffectiveRejection(r).rejected_by !== FOR)).map(r => ({
         handoff_id: r.id,
         status: r.status,
         path: r.file,
@@ -573,17 +688,24 @@ if (FOR) {
     }
     process.exit(0);
   }
-  const todo = mine.filter(r => isPendingFor(FOR, r.status) && r.rejected_by !== FOR);
+  const todo = mine.filter(r => isPendingFor(FOR, r.status) && (!getEffectiveRejection(r).is_rejected || getEffectiveRejection(r).rejected_by !== FOR));
   const recv = mine.filter(r => r.status === 'received');
   const isRecvBlocked = (r) => (r.needs === true) || (receipts[r.id] && receipts[r.id].needs === true) || isVerdictRejected(getReceiptConclusion(r.id)) || isVerdictBlocked(getReceiptConclusion(r.id));
   const recvBlocked = recv.filter(isRecvBlocked);
   const recvReady = recv.filter(r => !isRecvBlocked(r));
   const deliv = mine.filter(r => r.status === 'delivered');
+
   const rejectedByMe = (MODE === 'intra-repo')
-    ? rows.filter(r => (r.rejected_by ? r.rejected_by === FOR : r.from_lane === FOR) && r.status !== 'closed' && r.rejected_at && (r.status === 'forwarded' || r.status === 'draft'))
+    ? rows.filter(r => {
+        const eff = getEffectiveRejection(r);
+        return eff.is_rejected && eff.rejected_by === FOR && r.status !== 'closed' && (r.status === 'forwarded' || r.status === 'draft');
+      })
     : [];
   const rejectedToMe = (MODE === 'intra-repo')
-    ? rows.filter(r => r.rejected_by && r.rejected_by !== FOR && r.from_lane === FOR && r.status !== 'closed' && r.rejected_at && (r.status === 'forwarded' || r.status === 'draft'))
+    ? rows.filter(r => {
+        const eff = getEffectiveRejection(r);
+        return eff.is_rejected && eff.rejected_by !== FOR && r.from_lane === FOR && r.status !== 'closed' && (r.status === 'forwarded' || r.status === 'draft');
+      })
     : [];
   const lines = [];
   if (isZh) {
@@ -713,20 +835,39 @@ if (JSON_MODE) {
 }
 
 const lines = [];
+let openDisplay = open;
+let foldedCount = 0;
+if (ACTIVE_ONLY) {
+  openDisplay = open.filter(isTicketActive);
+  foldedCount = open.length - openDisplay.length;
+} else if (!SHOW_ALL && open.length > 5) {
+  openDisplay = open.filter(isTicketActive);
+  foldedCount = open.length - openDisplay.length;
+}
+
+const byStatusDisplay = {};
+for (const r of openDisplay) (byStatusDisplay[r.status] = byStatusDisplay[r.status] || []).push(r);
+
 if (isZh) {
-  lines.push(`[交接追踪 · ${ROOT}] 进行中 ${open.length} 项 / 总计 ${rows.length} 项`);
+  if (ACTIVE_ONLY) {
+    lines.push(`[交接追踪 · ${ROOT}] 进行中 ${openDisplay.length} 项活跃（已聚焦折叠 ${foldedCount} 项历史沉睡工单 / 累计 ${open.length} 项）/ 总计 ${rows.length} 项`);
+  } else if (foldedCount > 0) {
+    lines.push(`[交接追踪 · ${ROOT}] 进行中 ${open.length} 项（当前展示活跃 ${openDisplay.length} 项 / 已聚焦折叠 ${foldedCount} 项）/ 总计 ${rows.length} 项`);
+  } else {
+    lines.push(`[交接追踪 · ${ROOT}] 进行中 ${open.length} 项 / 总计 ${rows.length} 项`);
+  }
   if (rows.length === 0) {
     lines.push('✅ 公共交接目录为空（或已全部闭环）。');
   } else {
     const buckets = MODE === 'intra-repo'
       ? [
-          ['待执行', open.filter(r => r.status === 'draft' || r.status === 'forwarded')],
-          ['已收回执', byStatus.received || []],
-          ...[...new Set(open.map(r => r.status))].sort()
+          ['待执行', openDisplay.filter(r => r.status === 'draft' || r.status === 'forwarded')],
+          ['已收回执', byStatusDisplay.received || []],
+          ...[...new Set(openDisplay.map(r => r.status))].sort()
             .filter(st => !['draft', 'forwarded', 'received'].includes(st))
-            .map(st => [STATUS_LABEL[st] || st, byStatus[st]]),
+            .map(st => [STATUS_LABEL[st] || st, byStatusDisplay[st]]),
         ].filter(([, arr]) => arr.length)
-      : [...new Set(open.map(r => r.status))].sort().map(st => [STATUS_LABEL[st] || st, byStatus[st]]);
+      : [...new Set(openDisplay.map(r => r.status))].sort().map(st => [STATUS_LABEL[st] || st, byStatusDisplay[st]]);
     for (const [label, arr] of buckets) {
       lines.push(`- ${label}（${arr.length}）:`);
       for (const r of arr) {
@@ -734,6 +875,9 @@ if (isZh) {
         const step = nextStep(r);
         if (step) lines.push(`      → 下一步：${step}`);
       }
+    }
+    if (foldedCount > 0) {
+      lines.push(`\nℹ️ [看板聚焦] 已折叠 ${foldedCount} 个超过 7 天未更新的历史工单（可使用 baton status --all 展开全量）。`);
     }
     if (receiptButStale.length) {
       lines.push(MODE === 'intra-repo'
@@ -747,19 +891,25 @@ if (isZh) {
     for (const w of warnings) lines.push(`  - ${w}`);
   }
 } else {
-  lines.push(`[Baton Status · ${ROOT}] In Progress: ${open.length} / Total: ${rows.length}`);
+  if (ACTIVE_ONLY) {
+    lines.push(`[Baton Status · ${ROOT}] In Progress: ${openDisplay.length} active (${foldedCount} folded / ${open.length} total ongoing) / Total: ${rows.length}`);
+  } else if (foldedCount > 0) {
+    lines.push(`[Baton Status · ${ROOT}] In Progress: ${open.length} (Showing Active: ${openDisplay.length} / Folded: ${foldedCount}) / Total: ${rows.length}`);
+  } else {
+    lines.push(`[Baton Status · ${ROOT}] In Progress: ${open.length} / Total: ${rows.length}`);
+  }
   if (rows.length === 0) {
     lines.push('✅ Hub directory is empty (or all handoffs are closed).');
   } else {
     const buckets = MODE === 'intra-repo'
       ? [
-          ['Pending Execution', open.filter(r => r.status === 'draft' || r.status === 'forwarded')],
-          ['Receipt Submitted', byStatus.received || []],
-          ...[...new Set(open.map(r => r.status))].sort()
+          ['Pending Execution', openDisplay.filter(r => r.status === 'draft' || r.status === 'forwarded')],
+          ['Receipt Submitted', byStatusDisplay.received || []],
+          ...[...new Set(openDisplay.map(r => r.status))].sort()
             .filter(st => !['draft', 'forwarded', 'received'].includes(st))
-            .map(st => [STATUS_LABEL[st] || st, byStatus[st]]),
+            .map(st => [STATUS_LABEL[st] || st, byStatusDisplay[st]]),
         ].filter(([, arr]) => arr.length)
-      : [...new Set(open.map(r => r.status))].sort().map(st => [STATUS_LABEL[st] || st, byStatus[st]]);
+      : [...new Set(openDisplay.map(r => r.status))].sort().map(st => [STATUS_LABEL[st] || st, byStatusDisplay[st]]);
     for (const [label, arr] of buckets) {
       lines.push(`- ${label} (${arr.length}):`);
       for (const r of arr) {
@@ -767,6 +917,9 @@ if (isZh) {
         const step = nextStep(r);
         if (step) lines.push(`      → Next step: ${step}`);
       }
+    }
+    if (foldedCount > 0) {
+      lines.push(`\nℹ️ [View Focus] Folded ${foldedCount} dormant tickets older than 7 days (use baton status --all to display all).`);
     }
     if (receiptButStale.length) {
       lines.push(MODE === 'intra-repo'

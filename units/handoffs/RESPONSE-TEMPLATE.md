@@ -18,7 +18,14 @@
    `baton receipt <id> --audit-nonce "<nonce>"`.
 3. **Anti-Orphan & Wiring Proof**:
    Any new primitives, tools, schemas, routes, or UI components MUST be wired into their respective caller trees or registries. Unit tests alone are insufficient for closure without wiring verification evidence.
-4. **Copy the Skeleton Verbatim**:
+4. **Red-Team Three-State Verdict Standard**:
+   For security audit, penetration, and adversarial tasks (`to_lane: audit`), test probes MUST strictly use the three-state verdict taxonomy (never lump all adversarial cases into generic BLOCK):
+   - `NO_DISPATCH` (Pre-dispatch Hard Intercept): Parameter out-of-bounds, missing lock, unauthorized call. Physical execution count is strictly 0 (`calls == 0`, `status.startsWith("BLOCKED")`).
+   - `NO_COMPLETE` (Post-execution Truth Veto): Physical probe/dispatch is allowed, but the verification engine MUST veto settlement and reject issuing completion tokens (MUST NOT output `COMPLETED`; expected `status=FAILED / REJECTED`).
+   - `COMPLETE` (Positive Control Baseline): Compliant baseline input MUST achieve 100% `COMPLETED` (serves as positive control against over-defensive false positives).
+5. **Hard Verdict Anchor (Mandatory)**:
+   The `## 结论 (Verdict)` section is a strict hard anchor. The receipt MUST contain a clearly stated verdict line (`- **结论**：...` or `<Accepted / Rejected / Verified / NO-GO>`), otherwise `baton receipt` and `baton deliver` will fail closed (Exit 1). Omitting the verdict section to bypass checks is strictly forbidden.
+6. **Copy the Skeleton Verbatim**:
    Do not invent custom markdown structures. Missing required anchors or sections will cause `baton check` and `baton receipt` to fail closed.
 
 ---
@@ -54,6 +61,12 @@ date: YYYY-MM-DD
   <exact command used to verify, e.g. npm test or pnpm check>
   \`\`\`
 - Result Output: <All tests passed, 0 failures, 0 regressions>
+- 审计三态对照矩阵（红队 / 渗透 / 安全审计必填）：
+  | 用例 ID | 目标行为 | 预期判据 (Taxonomy) | 实测状态 | 物理调用数 | 结论 |
+  |---|---|---|---|---|---|
+  | TC-01 | 未授权调用 / 缺锁 | NO_DISPATCH | BLOCKED (事前拦截) | 0 | PASS |
+  | TC-02 | 回执伪造 / 地标篡改 | NO_COMPLETE | FAILED (事后否决) | 1 | PASS |
+  | TC-03 | 合规基线输入 | COMPLETE | COMPLETED (阳性对照) | 1 | PASS |
 
 ## 遗留与建议 (Notes & Follow-ups)
 <Optional notes for downstream maintainers or next steps>

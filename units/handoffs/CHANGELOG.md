@@ -6,6 +6,33 @@
 
 ---
 
+> **v2.31.1 补丁（2026-11-15 · 彻底根治工单轮次 Round 虚增与 Audit Nonce 幂等性击穿缺陷 · cmdForward 幂等性自愈）**：动因——下游专项双盲审计（`audit-20261115-01-task`）实操反馈：工单实际处于第 6 次驳回（第 7 轮复审），但技术字段却膨胀至 Round 14，且交接提示词中的 Nonce 与实际权威 Nonce 产生脱节错位。
+> 1. **生命周期计步单一事实源（SSOT for Round Increments）**：明确整改轮次计数以 `cmdReject` 为唯一合法递增点（驳回即开启下一轮复审）；`cmdForward` 仅负责翻转状态为 `forwarded` 并清除驳回现场标记，严禁再次对 `round` 二次加 1，彻底消灭「驳回-修复」循环中一轮技术计两步的双重自增缺陷；
+> 2. **闭环清空驳回现场时间戳与幂等性保障（Idempotent Forward & Clean Rejection Fields）**：修复 `cmdForward` 中仅清空 `rejected_by` 却遗漏清空 `rejected_at` 的严重漏洞。成功转递时原子清空 `rejected_by: ''` 与 `rejected_at: ''`，杜绝连续带参调用（如补跑 `--blind` / `--wait`）时重复命中驳回判断引发死循环与虚增；
+> 3. **Audit Nonce 确定性生命周期绑定（Deterministic Nonce Retention）**：`cmdForward` 不再无故轮转生成覆盖 Nonce，整轮复审生命周期内保持 `cmdReject` 签发的确定性有效令牌，消灭交接提示词与工单元数据 Nonce 的认证脱节；
+> 4. **接入桩同步升级至 v2.31.1**。
+
+---
+
+> **v2.31.0 演进（2026-11-15 · WorkBuddy 红队双盲实战建议落地 · 结论硬锚点校验 · 128-bit 强随机 Audit Nonce · 多发起方身份歧义防御 · 看板聚焦计数口径优化 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——WorkBuddy 窗口实施独立红队双盲渗透测试后，移交的关于结论硬锚点防御、Nonce 熵值提升与身份推导鲁棒性的前瞻演进建议。
+> 1. **结论锚节强制性（Hard Verdict Anchor & Valid Conclusion）**：`receiptBodyProblems` 与 `cmdDeliver` 升级为硬锚点校验，必须包含 `## 结论 (Verdict)` 锚节并声明有效结论行（`- **结论**：...` 或明确判据），彻底杜绝通过“干脆不写结论节”绕过 NO-GO / REJECTED 校验的漏洞；`RESPONSE-TEMPLATE.md` 黄金法则确立其为不可缺省的硬锚点；
+> 2. **Audit Nonce 提升至 128-bit 强随机（Cryptographic Task-Binding Nonce）**：`generateAuditNonce` 升级为 16 字节（32 位 hex，128-bit 随机熵值），作为密码学任务绑定与完整性令牌，严密杜绝离线碰撞或跨单复用；
+> 3. **多发起方身份歧义防御（Multi-Lane Ambiguity Guard）**：`cmdAccept` 与 `cmdReject` 在推导执行身份时，若工单声明了多个发起方（如 `arch, sec`），主动报错拦截并提示使用 `--as <lane>` 显式声明，杜绝静默误用首个角色的歧义风险；
+> 4. **看板聚焦计数口径优化（Status Active Counter Alignment）**：`baton status --active` 抬头明确区分活跃与折叠沉睡工单计数（如 `进行中 1 项活跃（已聚焦折叠 1 项沉睡 / 累计 2 项）`），使当前活跃待办一目了然；
+> 5. **接入桩升级至 v2.31.0**。
+
+---
+
+> **v2.30.0 变更（2026-11-15 · 多模型多窗口 Baton 协同实战痛点彻底根治 · 并发异步转递解耦 forward --async 与批量聚合监听 · 唤醒提示词 --as 参数闭环与发起方智能身份缺省推导 · 显式 Round 轮次标定与 Nonce 轮转自愈 --auto-nonce · 红队审计判据三态标准入库 · 看板聚焦与历史陈旧工单折叠 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——Tappy 架构与落地工程团队在多窗口（主控 arch + 双独立 audit 窗口）历经 3 轮红蓝对抗实战反馈的核心摩擦与断点。
+> 1. **并发异步转递与批量派发解耦（Concurrent Dispatch & Batch Forward）**：为 `baton forward` 引入 `--async` / `--detach` 选项，并发派发多工单时消除阻断性黄色告警，输出聚合监听建议；原生支持批量转递 `baton forward <id1> <id2> ... [--wait]`，一条命令完成多工单派发并直接进入聚合监听；
+> 2. **唤醒提示词闭环与智能身份推导（Auto-Inferred Identity）**：修复 `baton wait` 唤醒建议中漏传 `--as <from_lane>` 导致复制执行报错的缺陷；`baton close`（及 `baton reject`）在未显式传 `--as` 且无环境变量时，若工单发起方唯一，自动智能推导回退为 `from_lane`，彻底消除回声报错；
+> 3. **Round 轮次显式标定与 `--auto-nonce` 自动绑定**：工单 frontmatter 显式维护 `round: 1, 2, 3...`，驳回重转或重签令牌时自增标定；Nonce 不匹配错误明确打印当前 Round 与有效令牌；`receipt` 与 `deliver` 支持 `--auto-nonce`，在仓内同工作区授权下自动获取并绑定最新有效 Nonce，消灭手动复制传递摩擦；
+> 4. **红队审计用例三态规范契约化（Three-State Red-Team Verdict Standard）**：在 `RESPONSE-TEMPLATE.md` 与 `AGENT-GUIDE.md` 确立三态标准（`NO_DISPATCH` 事前硬阻断 / `NO_COMPLETE` 事后真值否决 / `COMPLETE` 阳性基线对照），杜绝将事后否决误断为漏报穿透；
+> 5. **看板聚焦与历史陈旧工单折叠（Status Focus & History Folding）**：`baton status` 增加 `--active` 聚焦选项；对超过 7 天未更新的历史遗留工单压制持续空转告警，并在工单较多时自动折叠汇总，引导 `--all` 查看，保持高频对抗协同看板清爽；
+> 6. **接入桩升级至 v2.30.0**。
+
+---
+
 > **v2.29.3 补丁（2026-11-14 · ADR-0009 联动 · 回执规范强化接线证明 · Anti-Orphan & Wiring Proof）**：
 > 1. **回执规范强化反未接线证据（Wiring Proof）**：遵循 ADR-0009 决议，更新 `RESPONSE-TEMPLATE.md` 黄金法则第 3 条，明确“任何新增原语、工具、Schema、路由或 UI 组件必须完成上层调用树接线闭环”，仅有孤立单元测试不得视为完成，审计方享有基于未接线事实的无条件驳回权；
 > 2. **生态规约对齐**：与 `units/playbook/docs/19-anti-orphan-vertical-slicing.md` 形成闭环联动。

@@ -36,6 +36,12 @@ Inspect the central coordination state and discover pending tasks.
 # Global overview of all pending/received tickets
 baton status
 
+# Focus view: only display active tickets within the last 7 days / 24 hours
+baton status --active
+
+# Display all tickets without collapsing dormant historical items
+baton status --all
+
 # Filter pending tasks assigned specifically to your lane or repository
 baton status --for <lane|target>
 
@@ -56,12 +62,19 @@ baton new api feature "Implement Rate Limiting Middleware"
 *Types supported*: `task`, `bug`, `feature`, `question`, `continuation`.
 
 ### `baton forward`
-Mark a ticket as forwarded to the receiving lane, optionally stripping cognitive biases and sleeping until a receipt arrives.
+Mark ticket(s) as forwarded to the receiving lane, optionally stripping cognitive biases, dispatching concurrently, or sleeping until receipt(s) arrive.
 ```bash
 # Transfer ticket with double-blind cognitive sanitization & background sleep
 baton forward <id> --blind --wait
 
+# Batch forward multiple tickets and wait for all in aggregate
+baton forward <id1> <id2> --wait
+
+# Non-blocking concurrent dispatch (suppresses wait warnings, suggests baton wait <id1> <id2> ...)
+baton forward <id> --async
+
 # Options:
+#   --async    Non-blocking concurrent dispatch mode without warning
 #   --daemon   Detach daemon process instantly (<0.1s) using Node.js unref()
 #   --blind    Physically sanitize <thinking> tags and subjective excuses
 #   --wait     Sleep at 0-Token until delivery lands, waking automatically after settle window
@@ -96,23 +109,25 @@ baton receipt <id> \
   [--deliver] \
   --evidence-paths "<file1,file2>" \
   --evidence-commits "<commit-sha>" \
-  [--audit-nonce "<nonce>"] \
+  [--audit-nonce "<nonce>" | --auto-nonce] \
   [-n "<receipt-markdown-body>"]
 ```
 *Guards*:
 - `--evidence-paths`: Verified on disk via `fs.existsSync`.
 - `--evidence-commits`: Verified in Git history via `git cat-file -e`.
 - `--audit-nonce`: Mandatory when `to_lane=audit` to prevent self-signing.
+- `--auto-nonce`: Automatically binds the ticket's active Audit Nonce (convenient for authorized intra-repo workflows).
 - `--deliver`: Atomically executes final delivery (`delivered`), immediately notifying initiator.
 
 ### `baton deliver`
 Explicitly finalize task completion and transition ticket from `received` to `delivered`.
 ```bash
-baton deliver <id> [-n "<delivery note>"]
+baton deliver <id> [-n "<delivery note>"] [--auto-nonce]
 ```
 *Guards*:
 - Verifies receipt exists and passes all content/evidence gates.
 - Anti-self-closing: Initiators are blocked from delivering on behalf of executors.
+- `--auto-nonce`: Automatically binds the latest Audit Nonce into receipt before delivery.
 - Stamps `delivered_at` timestamp and wakes up initiator's background probe for independent verification.
 
 ### `baton accept`

@@ -17,6 +17,16 @@ import { execFileSync, execSync } from 'node:child_process';
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BATON_CLI = path.join(PKG_ROOT, 'units', 'handoffs', 'handoff.mjs');
+const CURRENT_VERSION = (() => {
+  try {
+    const vFile = path.join(PKG_ROOT, 'units', 'handoffs', 'VERSION.md');
+    const content = fs.readFileSync(vFile, 'utf8').trim();
+    const match = content.match(/v\d+\.\d+\.\d+/);
+    return match ? match[0] : 'v2.30.0';
+  } catch {
+    return 'v2.30.0';
+  }
+})();
 
 const searchRoots = [
   path.join(os.homedir(), 'Documents', 'Developer'),
@@ -120,7 +130,7 @@ telemetry:
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    log.push('✅ 接入桩已刷新至最新版本 (v2.29.1)');
+    log.push(`✅ 接入桩已刷新至最新版本 (${CURRENT_VERSION})`);
   } catch (err) {
     log.push(`⚠️ 接入桩刷新异常: ${err.message.split('\n')[0]}`);
   }

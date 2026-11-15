@@ -206,12 +206,13 @@ describe('Agent Baton: Audit Receipt & Nonce Lifecycle Test Suite', () => {
     const newNonce = runBaton(tmpDir, `show ${id} --nonce`).stdout.trim();
     assert.notEqual(newNonce, initialNonce, 'reject 必须轮转并生成新的 audit_nonce');
 
-    // impl 完成整改后重新 forward，清除 rejected_by 锁并重回 audit 待办
+    // impl 执行 forward（如挂起监听），在尚未完成交付前，绝不可误入待 audit 处理
     const reforwardRes = runBaton(tmpDir, `forward ${id} --no-wait`, { HANDOFF_LANE: 'impl' });
     assert.equal(reforwardRes.status, 0);
 
     const statusAfterReforward = runBaton(tmpDir, 'status --for audit');
-    assert.match(statusAfterReforward.stdout, /(?:待 audit 处理|Pending for audit)/i);
+    assert.match(statusAfterReforward.stdout, /(?:我方已驳回退回|My rejections awaiting revision)/i);
+    assert.doesNotMatch(statusAfterReforward.stdout, /(?:待 audit 处理|Pending for audit)/i);
   });
 
   it('5. baton check <id> 单工单定向校验与 --fix 历史漂移自愈', () => {
@@ -568,13 +569,13 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.29\.0\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.31\.1\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.29\.0/);
+    assert.match(agentsContent, /v2\.31\.1/);
     assert.match(agentsContent, /--as <lane>/);
     // 接入桩正文应保持轻量韧性（小于 2500 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
@@ -713,27 +714,27 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.29.0，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.31.1，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.29.0'), '应当输出 v2.29.0');
+    assert.ok(verRes.stdout.includes('v2.31.1'), '应当输出 v2.31.1');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.29.0'), '-v 应当输出 v2.29.0');
+    assert.ok(vRes.stdout.includes('v2.31.1'), '-v 应当输出 v2.31.1');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.29.0'), 'version 应当输出 v2.29.0');
+    assert.ok(versionRes.stdout.includes('v2.31.1'), 'version 应当输出 v2.31.1');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.29.0'), '英文帮助中必须展示 v2.29.0');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.31.1'), '英文帮助中必须展示 v2.31.1');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -781,5 +782,203 @@ status: draft
     const waitRes = runBaton(tmpDir, `wait ${id} --settle 100ms`);
     assert.equal(waitRes.status, 0, `wait 应成功退出: ${waitRes.stderr}\n${waitRes.stdout}`);
     assert.ok(/交付已就绪|处于终态/i.test(waitRes.stdout), '回执到达后应秒级唤醒');
+  });
+
+  it('23. [v2.30.0] 多模型多窗口协同实战加固（forward --async并发解耦、批量派发、智能推导--as闭环、--auto-nonce自动绑定、Round自增与status --active聚焦）', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 测试并发创建与批量转递 / --async 选项
+    const resA = runBaton(tmpDir, 'new audit task "审计工单A" --from arch');
+    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const resB = runBaton(tmpDir, 'new audit task "审计工单B" --from arch');
+    const idB = resB.stdout.match(/(audit-\d+-\d+-task)/)[1];
+
+    // 工单初始 round 应当为 1
+    const showInitA = runBaton(tmpDir, `show ${idA}`);
+    assert.ok(showInitA.stdout.includes('- round: 1'), '初始工单 round 应为 1');
+
+    // 2. baton forward --async：不报阻断性安全黄色告警，输出异步聚合监听建议
+    const fwdAsyncRes = runBaton(tmpDir, `forward ${idA} --async`, { CI: 'false', BATON_AGENT_HOST: 'antigravity' });
+    assert.equal(fwdAsyncRes.status, 0);
+    assert.ok(fwdAsyncRes.stdout.includes('异步并发派发模式') || fwdAsyncRes.stdout.includes('Async Dispatch Mode'), '应进入异步并发派发模式');
+    assert.ok(!fwdAsyncRes.stdout.includes('⚠️  [安全警示: 必须挂起监听]'), '--async 严禁输出阻断性安全黄色警告');
+    assert.ok(fwdAsyncRes.stdout.includes(`baton wait ${idA}`), '应建议后续运行 baton wait 进行聚合监听');
+
+    // 3. 批量转递：baton forward <idA> <idB> --async 一次性转递多张工单
+    const fwdBatchRes = runBaton(tmpDir, `forward ${idA} ${idB} --async`);
+    assert.equal(fwdBatchRes.status, 0);
+    assert.ok(fwdBatchRes.stdout.includes(`已标记转递: ${idA}`));
+    assert.ok(fwdBatchRes.stdout.includes(`已标记转递: ${idB}`));
+
+    // 4. 测试 --auto-nonce：审计方无需手动复制 Nonce，直接 --auto-nonce 自动绑定最新令牌并成功交付
+    const receiptRes = runBaton(tmpDir, `receipt ${idA} -n "## 状态 / 结论\\n- **结论**：PASS" --evidence-note "红队用例全通" --auto-nonce --deliver --as audit`, { HANDOFF_LANE: '' });
+    assert.equal(receiptRes.status, 0, `receipt --auto-nonce 应该成功: ${receiptRes.stderr}\n${receiptRes.stdout}`);
+    assert.ok(receiptRes.stdout.includes('--auto-nonce'), '应当触发 --auto-nonce 自动绑定');
+
+    // 5. 测试智能身份推导闭环（修复回声报错）：发起方未传 --as 且环境变量为空时，智能推导为 from_lane 成功闭环
+    const closeRes = runBaton(tmpDir, `close ${idA} -n "实测核验证讫"`, { HANDOFF_LANE: '' });
+    assert.equal(closeRes.status, 0, `close 未传 --as 应智能推导发起方身份成功闭环: ${closeRes.stderr}\n${closeRes.stdout}`);
+    assert.ok(closeRes.stdout.includes('智能推导执行身份') || closeRes.stdout.includes('Auto Identity'), '应当输出智能推导提示');
+
+    // 6. 测试驳回后 round 自动自增标定与轮转
+    const resReject = runBaton(tmpDir, `reject ${idB} -n "用例 TC-02 未阻断" --as audit`);
+    assert.equal(resReject.status, 0);
+    const showRejectedB = runBaton(tmpDir, `show ${idB}`);
+    assert.ok(showRejectedB.stdout.includes('- round: 2'), '驳回后工单 round 应当自动自增为 2');
+
+    // 7. 测试 status --active 聚焦模式
+    const statusActiveRes = runBaton(tmpDir, 'status --active');
+    assert.equal(statusActiveRes.status, 0);
+    assert.ok(statusActiveRes.stdout.includes(idB), '活跃工单应当展示在 status --active 中');
+  });
+
+  it('24. [v2.31.0] WorkBuddy 红队双盲实战建议加固（结论硬锚点校验、128-bit 强随机 Nonce、多发起方身份歧义防御、status --active 抬头口径）', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 验证 128-bit 强随机 Nonce (32 字符 hex)
+    const resA = runBaton(tmpDir, 'new audit task "测试128位Nonce" --from arch');
+    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const showNonceRes = runBaton(tmpDir, `show ${idA} --nonce`);
+    assert.equal(showNonceRes.status, 0);
+    const nonce = showNonceRes.stdout.trim();
+    assert.ok(nonce.startsWith('AUDIT-'), '应当为标准 Audit Nonce 格式');
+    const hexPart = nonce.split('-').pop();
+    assert.equal(hexPart.length, 32, 'Nonce 随机熵应为 32 字符 hex (128-bit)');
+
+    // 2. 验证结论硬锚点校验：仅有 ## 修复状态 却缺少 ## 结论 / Verdict 时，拒绝落盘与交付
+    const noConclRes = runBaton(tmpDir, `receipt ${idA} -n "## 修复状态\\n- 已完成修复" --as audit --evidence-note "说明"`);
+    assert.notEqual(noConclRes.status, 0, '缺少结论锚节及结论行应当硬拦截落盘');
+    assert.match(noConclRes.stderr + noConclRes.stdout, /缺明确结论行/);
+
+    // 3. 正确写入结论后允许落盘并交付
+    const okReceiptRes = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS\\n## 修复状态\\n- 修复完成" --as audit --auto-nonce --deliver --evidence-note "说明"`);
+    assert.equal(okReceiptRes.status, 0, `带明确结论的回执应当成功交付: ${okReceiptRes.stderr}\n${okReceiptRes.stdout}`);
+
+    // 4. 验证多发起方身份歧义防御：声明了多个发起方（如 from_lane: "arch, sec"）时，禁止静默推导，强制使用 --as <lane>
+    const hFilePath = path.join(tmpDir, '.handoffs', 'handoffs', `${idA}.md`);
+    let hContent = fs.readFileSync(hFilePath, 'utf8');
+    hContent = hContent.replace(/from_lane:\s*arch/, 'from_lane: arch, sec');
+    fs.writeFileSync(hFilePath, hContent, 'utf8');
+
+    const ambiguousClose = runBaton(tmpDir, `close ${idA} -n "闭环"`, { HANDOFF_LANE: '' });
+    assert.notEqual(ambiguousClose.status, 0, '多发起方存在歧义时应拦截推导');
+    assert.match(ambiguousClose.stderr + ambiguousClose.stdout, /身份歧义/);
+
+    const explicitClose = runBaton(tmpDir, `close ${idA} -n "闭环" --as arch`, { HANDOFF_LANE: '' });
+    assert.equal(explicitClose.status, 0, `显式声明 --as arch 应当成功闭环: ${explicitClose.stderr}\n${explicitClose.stdout}`);
+
+    // 5. 验证 status --active 聚焦抬头口径
+    const statusRes = runBaton(tmpDir, 'status --active');
+    assert.equal(statusRes.status, 0);
+    assert.ok(statusRes.stdout.includes('项活跃') || statusRes.stdout.includes('active'), '应当使用活跃聚焦口径');
+  });
+
+  it('25. [v2.31.1] 工单轮次 round 计步单一事实源与 baton forward 幂等性自愈（消除双重计步与 Nonce 覆盖错位）', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 创建 audit 工单，初始状态 round = 1
+    const resA = runBaton(tmpDir, 'new audit task "测试工单轮次单一事实源与幂等性" --from impl');
+    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const initialNonce = runBaton(tmpDir, `show ${idA} --nonce`).stdout.trim();
+
+    const showInit = runBaton(tmpDir, `show ${idA}`);
+    assert.ok(showInit.stdout.includes('- round: 1'), '初始 round 应为 1');
+
+    // 2. 审计方驳回第 1 次 (reject #1)：开启 Round 2 并轮转 Nonce
+    const rej1 = runBaton(tmpDir, `reject ${idA} -n "第1轮驳回：用例未覆盖边界" --as audit`);
+    assert.equal(rej1.status, 0);
+
+    const showAfterRej1 = runBaton(tmpDir, `show ${idA}`);
+    assert.ok(showAfterRej1.stdout.includes('- round: 2'), '驳回后工单应自增为 Round 2');
+    assert.ok(showAfterRej1.stdout.includes('- rejected_by: audit'), '工单应记录 rejected_by: audit');
+    const nonceAfterRej1 = runBaton(tmpDir, `show ${idA} --nonce`).stdout.trim();
+    assert.notEqual(nonceAfterRej1, initialNonce, '驳回必须签发全新 Audit Nonce');
+
+    // 3. 执行方修复后调用 baton forward：
+    // 核心断言：round 必须严格保持为 2（严禁双重计步二次 +1 变成 3）
+    // 核心断言：audit_nonce 必须严格保持为驳回时签发的 nonceAfterRej1（严禁再次轮转覆盖导致与提示词错位）
+    // 核心断言：rejected_by 和 rejected_at 必须被闭环清空
+    const fwd1 = runBaton(tmpDir, `forward ${idA} --no-wait`, { HANDOFF_LANE: 'impl' });
+    assert.equal(fwd1.status, 0);
+
+    const hFilePath = path.join(tmpDir, '.handoffs', 'handoffs', `${idA}.md`);
+    const hContent1 = fs.readFileSync(hFilePath, 'utf8');
+    assert.match(hContent1, /round:\s*2/, 'forward 后 round 必须保持为 2，严禁虚增为 3');
+    assert.match(hContent1, new RegExp(`audit_nonce:\\s*${nonceAfterRej1}`), 'forward 后 Nonce 必须保持驳回时签发的令牌，严禁覆盖');
+    assert.match(hContent1, /rejected_by:\s*['"]?['"]?\n/, 'forward 必须清空 rejected_by');
+    assert.match(hContent1, /rejected_at:\s*['"]?['"]?\n/, 'forward 必须清空 rejected_at');
+
+    // 4. 执行方由于参数修正连续多次调用 baton forward（幂等性验证）：
+    const fwdRetry = runBaton(tmpDir, `forward ${idA} --no-wait`, { HANDOFF_LANE: 'impl' });
+    assert.equal(fwdRetry.status, 0);
+
+    const hContentRetry = fs.readFileSync(hFilePath, 'utf8');
+    assert.match(hContentRetry, /round:\s*2/, '连续多次 forward 后 round 依然严格保持为 2（幂等性）');
+    assert.match(hContentRetry, new RegExp(`audit_nonce:\\s*${nonceAfterRej1}`), '连续多次 forward 后 Nonce 依然保持不变（幂等性）');
+
+    // 5. 验证此时使用 reject 签发的 Nonce (nonceAfterRej1) 交付能够完全通过
+    fs.writeFileSync(path.join(tmpDir, 'fix.ts'), 'export const fixed = true;');
+    const receiptRes = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS\\n## 修复说明\\n- 修复完成" --audit-nonce "${nonceAfterRej1}" --evidence-paths "fix.ts" --deliver --as audit`, { HANDOFF_LANE: '' });
+    assert.equal(receiptRes.status, 0, `使用 reject 签发的 Nonce 交付必须成功: ${receiptRes.stderr}\n${receiptRes.stdout}`);
+
+    // 6. 模拟第 2 次驳回 (reject #2)
+    const rej2 = runBaton(tmpDir, `reject ${idA} -n "第2轮驳回：发现性能回退" --as audit`);
+    assert.equal(rej2.status, 0);
+
+    const showAfterRej2 = runBaton(tmpDir, `show ${idA}`);
+    assert.ok(showAfterRej2.stdout.includes('- round: 3'), '第2次驳回后工单应自增为 Round 3');
+    const nonceAfterRej2 = runBaton(tmpDir, `show ${idA} --nonce`).stdout.trim();
+    assert.notEqual(nonceAfterRej2, nonceAfterRej1, '第2次驳回必须签发全新 Round 3 Nonce');
+
+    // 7. 再次 forward：依然保持 Round 3 与当前 Nonce
+    const fwd2 = runBaton(tmpDir, `forward ${idA} --no-wait`, { HANDOFF_LANE: 'impl' });
+    assert.equal(fwd2.status, 0);
+
+    const hContent2 = fs.readFileSync(hFilePath, 'utf8');
+    assert.match(hContent2, /round:\s*3/, '第2次驳回后 forward 依然严格保持为 Round 3，严禁虚增');
+    assert.match(hContent2, new RegExp(`audit_nonce:\\s*${nonceAfterRej2}`), '第2次驳回后 forward Nonce 保持 Round 3 令牌');
+  });
+
+  it('26. [v2.31.1] cmdForward 写入流水追溯与 handoff status 驳回归属确定性回退（消除被驳回工单因 forward 误入待审计待办）', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 创建 audit 工单，from_lane: impl, to_lane: audit
+    const resA = runBaton(tmpDir, 'new audit task "测试驳回后重新转递归属与流水" --from impl');
+    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+
+    // 2. 审计方驳回工单
+    const rejRes = runBaton(tmpDir, `reject ${idA} -n "专项双盲用例未覆盖" --as audit`);
+    assert.equal(rejRes.status, 0);
+
+    // 3. 验证 status --for audit：工单出现在我方已驳回中，不在待 audit 处理中
+    const stAudit1 = runBaton(tmpDir, 'status --for audit');
+    assert.equal(stAudit1.status, 0);
+    assert.ok(stAudit1.stdout.includes(idA), '工单应列出在 status --for audit 中');
+    assert.ok(stAudit1.stdout.includes('我方已驳回退回') || stAudit1.stdout.includes('My rejections awaiting revision'), '应当归入我方已驳回退回');
+    assert.ok(!stAudit1.stdout.includes(`待 audit 处理（1）`) && !stAudit1.stdout.includes(`Pending for audit (1)`), '绝对不可错分至待 audit 处理待办');
+
+    // 4. 执行方（或发起方）执行 baton forward（模拟整改后重转或挂起后台监听）
+    const fwdRes = runBaton(tmpDir, `forward ${idA} --no-wait`, { HANDOFF_LANE: 'impl' });
+    assert.equal(fwdRes.status, 0);
+
+    // 4.1 核心断言：state-journal.jsonl 必须新增一条 op: 'forward' 记录，且具备可追溯性
+    const journalPath = path.join(tmpDir, '.handoffs', 'logs', 'state-journal.jsonl');
+    assert.ok(fs.existsSync(journalPath), 'state-journal.jsonl 必须存在');
+    const journalLines = fs.readFileSync(journalPath, 'utf8').trim().split('\n').map(JSON.parse);
+    const forwardEvents = journalLines.filter(ev => ev.id === idA && ev.op === 'forward');
+    assert.ok(forwardEvents.length >= 1, 'state-journal 必须记录 forward 事件流水');
+    assert.equal(forwardEvents[forwardEvents.length - 1].to_status, 'forwarded');
+
+    // 4.2 核心断言：即使工单被 forward 清除了 rejected_by，status --for audit 依然能通过流水回溯归属！
+    // 严禁错分到「待 audit 处理」，必须坚守在「我方已驳回退回」中！
+    const stAudit2 = runBaton(tmpDir, 'status --for audit');
+    assert.equal(stAudit2.status, 0);
+    assert.ok(stAudit2.stdout.includes('我方已驳回退回') || stAudit2.stdout.includes('My rejections awaiting revision'), 'forward 后依然必须判定为我方已驳回退回（等待对方整改交付）');
+    assert.ok(!stAudit2.stdout.includes(`待 audit 处理（1）`) && !stAudit2.stdout.includes(`Pending for audit (1)`), 'forward 后严禁误入待 audit 处理待办！');
+
+    // 4.3 核心断言：status --for impl 必须正确归入「收到驳回待整改」
+    const stImpl = runBaton(tmpDir, 'status --for impl');
+    assert.equal(stImpl.status, 0);
+    assert.ok(stImpl.stdout.includes('收到驳回待整改') || stImpl.stdout.includes('Rejections received awaiting revision'), '发起方视角必须归入收到驳回待整改');
   });
 });
