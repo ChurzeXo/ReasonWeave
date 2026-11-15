@@ -575,18 +575,18 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.33\.0\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.34\.0\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.33\.0/);
+    assert.match(agentsContent, /v2\.34\.0/);
     assert.match(agentsContent, /--as <lane>/);
-    // 接入桩正文应保持轻量韧性（小于 2800 字符，去恐吓化）
+    // 接入桩正文应保持轻量韧性（小于 3200 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
     assert.ok(stubMatch, '必须找到接入桩标记');
-    assert.ok(stubMatch[1].length < 2800, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
+    assert.ok(stubMatch[1].length < 3200, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
   });
 
   it('18. 连续多轮驳回历史无损继承与防冲刷（防模板空标题冲刷、精准小节定位追加）', () => {
@@ -720,27 +720,27 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.33.0，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.34.0，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.33.0'), '应当输出 v2.33.0');
+    assert.ok(verRes.stdout.includes('v2.34.0'), '应当输出 v2.34.0');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.33.0'), '-v 应当输出 v2.33.0');
+    assert.ok(vRes.stdout.includes('v2.34.0'), '-v 应当输出 v2.34.0');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.33.0'), 'version 应当输出 v2.33.0');
+    assert.ok(versionRes.stdout.includes('v2.34.0'), 'version 应当输出 v2.34.0');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.33.0'), '英文帮助中必须展示 v2.33.0');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.34.0'), '英文帮助中必须展示 v2.34.0');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -804,18 +804,21 @@ status: draft
     const showInitA = runBaton(tmpDir, `show ${idA}`);
     assert.ok(showInitA.stdout.includes('- round: 1'), '初始工单 round 应为 1');
 
-    // 2. baton forward --async：不报阻断性安全黄色告警，输出异步聚合监听建议
+    // 2. 单工单使用 --async 逃逸监听在 Agent 环境下必须被 Fail-Closed 拦截并提示原子步骤
     const fwdAsyncRes = runBaton(tmpDir, `forward ${idA} --async`, { CI: 'false', BATON_AGENT_HOST: 'antigravity' });
-    assert.equal(fwdAsyncRes.status, 0);
-    assert.ok(fwdAsyncRes.stdout.includes('异步并发派发模式') || fwdAsyncRes.stdout.includes('Async Dispatch Mode'), '应进入异步并发派发模式');
-    assert.ok(!fwdAsyncRes.stdout.includes('⚠️  [安全警示: 必须挂起监听]'), '--async 严禁输出阻断性安全黄色警告');
-    assert.ok(fwdAsyncRes.stdout.includes(`baton wait ${idA}`), '应建议后续运行 baton wait 进行聚合监听');
+    assert.notEqual(fwdAsyncRes.status, 0, '单工单严禁使用 --async 逃逸监听');
+    assert.match(fwdAsyncRes.stderr + fwdAsyncRes.stdout, /(?:单工单严禁使用 --async 逃逸监听|prohibited for single ticket)/);
+    // 前置门禁防御断言：被拦截时工单状态不得被脏写为 forwarded，依然保持 draft 态
+    const showAfterBlock = runBaton(tmpDir, `show ${idA}`);
+    assert.match(showAfterBlock.stdout, /status:\s*draft/);
 
-    // 3. 批量转递：baton forward <idA> <idB> --async 一次性转递多张工单
-    const fwdBatchRes = runBaton(tmpDir, `forward ${idA} ${idB} --async`);
+    // 3. 批量转递：baton forward <idA> <idB> --async 一次性转递多张工单（多工单合法放行并发）
+    const fwdBatchRes = runBaton(tmpDir, `forward ${idA} ${idB} --async`, { BATON_AGENT_HOST: '' });
     assert.equal(fwdBatchRes.status, 0);
     assert.ok(fwdBatchRes.stdout.includes(`已标记转递: ${idA}`));
     assert.ok(fwdBatchRes.stdout.includes(`已标记转递: ${idB}`));
+    assert.ok(fwdBatchRes.stdout.includes('异步并发派发模式') || fwdBatchRes.stdout.includes('Async Dispatch Mode'), '应进入异步并发派发模式');
+    assert.ok(fwdBatchRes.stdout.includes(`baton wait`), '应建议后续运行 baton wait 进行聚合监听平账');
 
     // 4. 测试 --auto-nonce：审计方无需手动复制 Nonce，直接 --auto-nonce 自动绑定最新令牌并成功交付
     const receiptRes = runBaton(tmpDir, `receipt ${idA} -n "## 状态 / 结论\\n- **结论**：PASS" --evidence-note "红队用例全通" --auto-nonce --deliver --as audit`, { HANDOFF_LANE: '', BATON_SESSION_ID: 'audit-actor-session' });
@@ -1118,5 +1121,62 @@ status: draft
     const parsedAfter = JSON.parse(viewAfterClear.stdout);
     assert.equal(parsedAfter.session_lane, null);
     assert.equal(parsedAfter.effective_lane, 'unbound');
+  });
+
+  it('31. [v2.34.0] 单工单严禁 --async 逃逸监听硬门禁、转递前置门禁防御与未监听借据系统（Unwatched Debt Guard）', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 创建单份工单
+    const resA = runBaton(tmpDir, 'new audit task "审计单单A" --from impl');
+    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+
+    // 2. 在 Agent 托管环境下裸调用 forward（未指定 --wait、--async、--no-wait），必须物理门禁拦截退出 1，且工单不得被脏写
+    const bareFwd = runBaton(tmpDir, `forward ${idA}`, { BATON_AGENT_HOST: 'antigravity' });
+    assert.notEqual(bareFwd.status, 0, 'Agent 环境下裸 forward 必须拦截');
+    assert.match(bareFwd.stderr + bareFwd.stdout, /必须挂起监听探针|Background Listener Required/);
+    const showBare = runBaton(tmpDir, `show ${idA}`);
+    assert.match(showBare.stdout, /status:\s*draft/, '前置门禁拦截时严禁脏写工单状态为 forwarded');
+
+    // 3. 在 Agent 托管环境下对单工单使用 --async 逃逸，必须物理拦截退出 1
+    const singleAsync = runBaton(tmpDir, `forward ${idA} --async`, { BATON_AGENT_HOST: 'antigravity' });
+    assert.notEqual(singleAsync.status, 0, '单工单严禁使用 --async');
+    assert.match(singleAsync.stderr + singleAsync.stdout, /单工单严禁使用 --async 逃逸监听|prohibited for single ticket/);
+    const showAsync = runBaton(tmpDir, `show ${idA}`);
+    assert.match(showAsync.stdout, /status:\s*draft/, '前置门禁拦截时严禁脏写工单状态为 forwarded');
+
+    // 4. 创建第二份工单，测试批量并发派发（ids.length > 1）：合法放行并记入借据
+    const resB = runBaton(tmpDir, 'new audit task "审计单单B" --from impl');
+    const idB = resB.stdout.match(/(audit-\d+-\d+-task)/)[1];
+
+    const batchRes = runBaton(tmpDir, `forward ${idA} ${idB} --async`, { BATON_AGENT_HOST: 'antigravity' });
+    assert.equal(batchRes.status, 0, '多工单允许使用 --async 并发派发');
+    assert.match(batchRes.stdout, /异步并发派发模式|Async Dispatch Mode/);
+
+    // 验证借据文件 unwatched_debt.json 已落盘
+    const debtFile = path.join(tmpDir, '.handoffs', '.watch', 'unwatched_debt.json');
+    assert.ok(fs.existsSync(debtFile), '未监听借据文件必须存在');
+    const debtData = JSON.parse(fs.readFileSync(debtFile, 'utf8'));
+    assert.ok(debtData.some(d => d.id === idA), '借据中必须包含 idA');
+    assert.ok(debtData.some(d => d.id === idB), '借据中必须包含 idB');
+
+    // 5. 在借据未平账时，若试图再次 forward 新工单，必须实施未清偿借据门禁拦截
+    const resC = runBaton(tmpDir, 'new audit task "审计单单C" --from impl');
+    const idC = resC.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const blockedByDebt = runBaton(tmpDir, `forward ${idC} --wait`, { BATON_AGENT_HOST: 'antigravity' });
+    assert.notEqual(blockedByDebt.status, 0, '存在未清偿借据时必须拦截后续派发');
+    assert.match(blockedByDebt.stderr + blockedByDebt.stdout, /未清偿监听借据拦截|Unwatched Debt Gate Blocked/);
+
+    // 6. 验证 reportUnwatchedPending / baton check 输出一键平账命令
+    const checkRes = runBaton(tmpDir, 'check');
+    assert.match(checkRes.stdout, /一键启动后台监听平账|Start background listener/);
+
+    // 7. 模拟通过 mock watcher 启动监听接管并核销平账
+    const watchDir = path.join(tmpDir, '.handoffs', '.watch');
+    fs.writeFileSync(path.join(watchDir, `${idA}.json`), JSON.stringify({ id: idA, pid: process.pid, started_at: new Date().toISOString() }), 'utf8');
+    fs.writeFileSync(path.join(watchDir, `${idB}.json`), JSON.stringify({ id: idB, pid: process.pid, started_at: new Date().toISOString() }), 'utf8');
+
+    // 再次派发 idC 带 --no-wait：此时 activeDebts 已被活跃 watcher 自动平账，顺利放行
+    const passAfterDebtCleared = runBaton(tmpDir, `forward ${idC} --no-wait`, { BATON_AGENT_HOST: 'antigravity' });
+    assert.equal(passAfterDebtCleared.status, 0, '借据平账后派发顺利放行');
   });
 });

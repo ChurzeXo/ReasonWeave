@@ -6,6 +6,21 @@
 
 ---
 
+> **v2.34.0 变更（2026-11-15 · 单工单严禁使用 --async 逃逸监听硬门禁 · 派发前置门禁防御 · 未监听借据系统 Unwatched Debt Guard · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户反馈本地 Agent 在 `forward` 派发时，常出于对长时间同步挂住的恐惧而下意识使用 `--async` 改状态却严重漏掉挂起后台监听（漏掉 `baton wait`，导致工单沦为无人唤醒的死局与违规道歉）。
+> 1. **单工单严禁使用 `--async` 逃逸监听（Single-Ticket Fail-Closed Gate）**：
+>    - 在 Agent 托管环境下，派发 1 份工单时严禁使用 `--async` 将操作拆分为「先 --async 后 wait」，物理拦截退出 1；
+>    - 确立出站唯一标准动作：直接作为宿主后台任务（如 `WaitMsBeforeAsync: 500`）运行 `baton forward <id> --wait`（原子一步到位：秒级打印提示词 + 自动挂起后台监听 + 回执到达秒级唤醒）；
+> 2. **前置门禁防御（Pre-mutation Gate Validation）**：
+>    - `cmdForward` 在执行任何文件写入或翻转 `forwarded` 状态前先行校验监听方式，杜绝“门禁报错但文件状态已被脏写”的非原子半成品缺陷；
+> 3. **未监听借据硬约束（Unwatched Debt Guard）**：
+>    - 多单并发派发（`ids.length > 1`）合法放行 `--async`，但原子记入未监听借据（`unwatched_debt.json`）；
+>    - 若未挂起监听平账即尝试后续转递，实施借据拦截；`cmdWait` 启动时自动核销平账；
+> 4. **体检与一键平账指令**：
+>    - `reportUnwatchedPending` 输出可直接复制的一键后台监听平账指令 `baton wait <ids> --all`，支持 `BATON_STRICT_WATCH=1` 严格门禁；
+> 5. **接入桩与指纹同步升级至 v2.34.0**。
+
+---
+
 > **v2.33.0 变更（2026-11-15 · 提示词人机协作卡片化重构 · 身份警示入宪解耦 · 独立 Round 标题行 · 发起方自动身份锁与 Agent 无监听裸转递硬拦截 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——人类操作员反馈提示词结构过度充斥机器术语、括号混乱、长路径打断认知心流；且多 Agent 协作时存在未锁冷启动夺舍隐患与 Agent 托管环境下跳过监听问题。
 > 1. **出站提示词结构化卡片重构（Human-Centric Structured Card）**：
 >    - 确立人类自然认知黄金顺序：`谁接单 → 任务主题 → 轮次（若有）→ 工单ID → 长路径`；

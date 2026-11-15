@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.33.0';
+const BATON_VERSION = '2.34.0';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -288,6 +288,7 @@ function isAgentEnvironment() {
   if (process.env.BATON_MANAGED_MODE === '1') return true;
   return Boolean(
     process.env.ANTIGRAVITY_AGENT ||
+    process.env.BATON_AGENT_HOST ||
     process.env.CLAUDE_CODE ||
     process.env.CURSOR_AGENT ||
     process.env.WORKBUDDY_AGENT ||
@@ -2327,12 +2328,114 @@ function spawnDaemonWait(idOrIds, extraArgs = []) {
   }
 }
 
+// ── 未监听借据管理（Unwatched Debt Guard · v2.34.0）────────────────────────
+// 病根：Agent 在派发工单时恐惧长时间同步等待，容易盲目使用 --async 逃逸监听；
+// 导致工单状态已变为 forwarded，却未挂起任何后台 wait 探针，沦为无人唤醒的死局。
+// 治法：
+// 1. 单工单在 Agent 环境下严禁使用 --async（物理拦截退出 1，强制原子化一步到位运行 forward <id> --wait）；
+// 2. 多单并发派发（ids.length > 1）合法放行 --async，但必须记录未监听借据（unwatched_debt.json）；
+// 3. 借据未平账前，若再次尝试非 wait 转递，实施借据拦截；
+// 4. 当 baton wait 启动并接管工单时，自动核销平账。
+
+function getUnwatchedDebtFile() {
+  return path.join(ROOT, '.watch', 'unwatched_debt.json');
+}
+
+function loadUnwatchedDebt() {
+  const f = getUnwatchedDebtFile();
+  if (!fs.existsSync(f)) return [];
+  try {
+    const raw = fs.readFileSync(f, 'utf8');
+    const data = JSON.parse(raw);
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveUnwatchedDebt(debts) {
+  const watchDir = path.join(ROOT, '.watch');
+  try { fs.mkdirSync(watchDir, { recursive: true }); } catch {}
+  const f = getUnwatchedDebtFile();
+  if (!debts || !debts.length) {
+    try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch {}
+    return;
+  }
+  try {
+    fs.writeFileSync(f, JSON.stringify(debts, null, 2), 'utf8');
+  } catch {}
+}
+
+function recordUnwatchedDebt(ids) {
+  const existing = loadUnwatchedDebt();
+  const existingIds = new Set(existing.map(d => d.id));
+  const now = new Date().toISOString();
+  const sessionLane = getSessionLane() || '';
+  for (const id of ids) {
+    if (!existingIds.has(id)) {
+      existing.push({
+        id,
+        created_at: now,
+        from_lane: sessionLane
+      });
+      existingIds.add(id);
+    }
+  }
+  saveUnwatchedDebt(existing);
+}
+
+function clearUnwatchedDebt(ids) {
+  const removeSet = new Set(ids);
+  const existing = loadUnwatchedDebt();
+  const filtered = existing.filter(d => !removeSet.has(d.id));
+  if (filtered.length !== existing.length) {
+    saveUnwatchedDebt(filtered);
+  }
+}
+
+function getActiveUnwatchedDebt() {
+  const existing = loadUnwatchedDebt();
+  if (!existing.length) return [];
+  const watchDir = path.join(ROOT, '.watch');
+  const valid = [];
+  for (const d of existing) {
+    const hFile = path.join(H_DIR, `${d.id}.md`);
+    if (!fs.existsSync(hFile)) continue;
+    try {
+      const fm = readFM(fs.readFileSync(hFile, 'utf8'));
+      if (!fm || fm.status !== 'forwarded') continue; // 已交付或已闭环
+    } catch {
+      continue;
+    }
+    // 检查是否存在存活的 watcher
+    const wFile = path.join(watchDir, `${d.id}.json`);
+    let isWatching = false;
+    if (fs.existsSync(wFile)) {
+      try {
+        const wData = JSON.parse(fs.readFileSync(wFile, 'utf8'));
+        if (wData && wData.pid) {
+          process.kill(wData.pid, 0);
+          isWatching = true;
+        }
+      } catch {}
+    }
+    if (!isWatching) {
+      valid.push(d);
+    }
+  }
+  if (valid.length !== existing.length) {
+    saveUnwatchedDebt(valid);
+  }
+  return valid;
+}
+
 async function cmdForward(args) {
   assertWorkspaceJail('forward');
   const isDaemon = args.includes('--daemon') || args.includes('-d');
   const shouldWait = args.includes('--wait') || args.includes('-w');
   const isAsync = args.includes('--async') || args.includes('--detach');
   const isBlind = args.includes('--blind') || args.includes('-b');
+  const noWaitExplicit = args.includes('--no-wait');
   const valFlags = ['--timeout', '-t', '--interval', '-i'];
   const valueIdx = new Set();
   for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
@@ -2344,6 +2447,64 @@ async function cmdForward(args) {
   }
 
   const isZh = detectLang() === 'zh';
+
+  // ── 前置门禁校验（Fail-Closed · v2.34.0）：在变更任何工单状态前实施硬校验 ──
+  if (isAgentEnvironment() && !noWaitExplicit) {
+    if (!shouldWait && !isDaemon && !isAsync) {
+      if (isZh) {
+        console.error(`\n❌ [物理门禁拦截: 必须挂起监听探针] 检测到在 Agent 环境下转递未带 --wait 监听！`);
+        console.error(`   真相提醒：Baton 是基于本地文件系统内核事件（fs.watch）的总线。对方一旦 deliver 立即毫秒级唤醒。`);
+        console.error(`   严禁以为「外部客户端等不到」或担心长任务而跳过监听（跳过监听会导致工单沦为无人唤醒的孤儿）！`);
+        console.error(`   👉 唯一标准姿势（一步到位）：请以宿主后台任务方式运行原子命令：`);
+        console.error(`      baton forward ${ids.join(' ')} --wait`);
+        console.error(`      （在 AI 宿主中配置 WaitMsBeforeAsync: 500 或后台任务运行，即可秒级打印交接提示词并自动挂起后台监听，回执到达时秒级唤醒）`);
+        console.error(`   👉 多单并发：若需一次性派发多个工单，请运行 'baton forward <id1> <id2> ... --async' 解耦，最后统一运行 'baton wait ...' 监听`);
+        console.error(`   （如确有特殊原因本次无需监听，请显式追加 --no-wait 声明豁免）\n`);
+      } else {
+        console.error(`\n❌ [Physical Gate Blocked: Background Listener Required] Detected 'forward' without '--wait' in an Agent environment!`);
+        console.error(`   Never skip waiting assuming external clients cannot wake you up.`);
+        console.error(`   👉 Standard approach: Run 'baton forward ${ids.join(' ')} --wait' as a host background task.`);
+        console.error(`   👉 Concurrent batch: 'baton forward <id1> <id2> ... --async', then 'baton wait ...'`);
+        console.error(`   (To explicitly bypass listener, pass --no-wait)\n`);
+      }
+      process.exit(1);
+    }
+    if (isAsync && ids.length === 1) {
+      if (isZh) {
+        console.error(`\n❌ [物理门禁拦截: 单工单严禁使用 --async 逃逸监听]`);
+        console.error(`   检测到仅派发 1 份工单 (${ids[0]})。严禁使用 --async 将单工单派发拆分为「先 --async 后 wait」（该模式 100% 导致漏开监听）！`);
+        console.error(`   👉 唯一标准姿势（一步到位）：请以宿主后台任务方式直接运行原子命令：`);
+        console.error(`      baton forward ${ids[0]} --wait`);
+        console.error(`      （在 AI 宿主中配置 WaitMsBeforeAsync: 500 或宿主后台任务运行，即可秒级打印交接提示词并自动挂起后台监听，回执到达时秒级唤醒）`);
+        console.error(`   （如确系无需任何监听，请显式追加 --no-wait 声明豁免）\n`);
+      } else {
+        console.error(`\n❌ [Physical Gate Blocked: --async prohibited for single ticket]`);
+        console.error(`   Detected only 1 ticket (${ids[0]}). Splitting single ticket into '--async' then 'wait' is strictly prohibited!`);
+        console.error(`   👉 Standard approach: Run 'baton forward ${ids[0]} --wait' as a host background task.`);
+        console.error(`   (To explicitly bypass listener, pass --no-wait)\n`);
+      }
+      process.exit(1);
+    }
+
+    // 检查历史未清偿借据（防止 Agent 连续多次 --async 派发却从不开监听）：
+    const debts = getActiveUnwatchedDebt();
+    if (debts.length > 0) {
+      const debtIds = debts.map(d => d.id);
+      if (isZh) {
+        console.error(`\n❌ [未清偿监听借据拦截: 存在未挂起监听的已派发工单]`);
+        console.error(`   检测到之前派发了 ${debtIds.length} 份工单但尚未挂起后台监听（严禁只改状态不挂监听）！`);
+        console.error(`   未监听工单: ${debtIds.join(', ')}`);
+        console.error(`   👉 唯一平账动作：请以宿主后台任务方式运行聚合监听：`);
+        console.error(`      baton wait ${debtIds.join(' ')} --all`);
+        console.error(`   （如确需豁免，请显式追加 --no-wait）\n`);
+      } else {
+        console.error(`\n❌ [Unwatched Debt Gate Blocked: Pending tickets without listener]`);
+        console.error(`   Previous dispatched tickets have no active watcher: ${debtIds.join(', ')}`);
+        console.error(`   👉 Please start aggregate listener:\n      baton wait ${debtIds.join(' ')} --all\n`);
+      }
+      process.exit(1);
+    }
+  }
 
   for (const id of ids) {
     const file = path.join(H_DIR, `${id}.md`);
@@ -2460,41 +2621,21 @@ async function cmdForward(args) {
       await cmdWait([...ids, ...waitArgs]);
     }
   } else if (isAsync) {
+    recordUnwatchedDebt(ids);
     if (isZh) {
-      console.log(`\n🔄 [异步并发派发模式] 已转递 ${ids.length} 份工单（无阻断秒退）。`);
-      console.log(`   可在派发完本轮所有工单后，启动后台聚合监听：`);
+      console.log(`\n🔄 [异步并发派发模式] 已转递 ${ids.length} 份工单（无阻断秒退，已记录未监听借据）。`);
+      console.log(`   可在派发完本轮所有工单后，启动后台聚合监听平账：`);
       console.log(`   👉 baton wait ${ids.join(' ')} [--all|--any] （请作为后台任务/Background Task 运行）\n`);
     } else {
-      console.log(`\n🔄 [Async Dispatch Mode] Forwarded ${ids.length} ticket(s) (non-blocking).`);
-      console.log(`   After dispatching all tickets, start aggregate background listener:`);
+      console.log(`\n🔄 [Async Dispatch Mode] Forwarded ${ids.length} ticket(s) (non-blocking, unwatched debt recorded).`);
+      console.log(`   After dispatching all tickets, start aggregate background listener to clear debt:`);
       console.log(`   👉 baton wait ${ids.join(' ')} [--all|--any] (run as background task)\n`);
     }
   } else {
-    const noWaitExplicit = args.includes('--no-wait');
-    if (isAgentEnvironment() && !noWaitExplicit) {
-      if (isZh) {
-        console.error(`\n❌ [物理门禁拦截: 必须挂起监听探针] 检测到在 Agent 环境下转递未带 --wait 监听！`);
-        console.error(`   真相提醒：Baton 是基于本地文件系统内核事件（fs.watch）的总线。对方一旦 deliver 立即毫秒级唤醒。`);
-        console.error(`   严禁以为「外部客户端等不到」或担心长任务而跳过监听（跳过监听会导致工单沦为无人唤醒的孤儿）！`);
-        console.error(`   👉 推荐动作（转递并监听）：运行 'baton forward ${ids.join(' ')} --wait' 作为后台任务运行（如 run_command 带 WaitMsBeforeAsync）`);
-        console.error(`   👉 推荐动作（后台独立监听）：调用平台后台任务能力运行 'baton wait ${ids.join(' ')}'`);
-        console.error(`   👉 并发派发：若需先派发多个工单，请运行 'baton forward ${ids.join(' ')} --async' 解耦，最后统一运行 'baton wait ...' 监听`);
-        console.error(`   （如确有特殊原因本次无需监听，请显式追加 --no-wait 声明豁免）\n`);
-      } else {
-        console.error(`\n❌ [Physical Gate Blocked: Background Listener Required] Detected 'forward' without '--wait' in an Agent environment!`);
-        console.error(`   Never skip waiting assuming external clients cannot wake you up.`);
-        console.error(`   👉 Recommended: Run 'baton forward ${ids.join(' ')} --wait' as a background task`);
-        console.error(`   👉 Or run: 'baton wait ${ids.join(' ')}' in background`);
-        console.error(`   👉 Or concurrent: 'baton forward ${ids.join(' ')} --async', then 'baton wait ...'`);
-        console.error(`   (To explicitly bypass listener, pass --no-wait)\n`);
-      }
-      process.exit(1);
+    if (isZh) {
+      console.log(`\n👉 提示: 请立即启动后台监听: baton forward ${ids.join(' ')} --wait（由 AI 宿主托管或阻塞等待），以便在回执到达时自动唤醒。`);
     } else {
-      if (isZh) {
-        console.log(`\n👉 提示: 请立即启动后台监听: baton forward ${ids.join(' ')} --wait（由 AI 宿主托管或阻塞等待），以便在回执到达时自动唤醒。`);
-      } else {
-        console.log(`\n👉 Notice: Please start background listener immediately: baton forward ${ids.join(' ')} --wait (managed by agent host or blocking wait) to auto-wake upon receipt.`);
-      }
+      console.log(`\n👉 Notice: Please start background listener immediately: baton forward ${ids.join(' ')} --wait (managed by agent host or blocking wait) to auto-wake upon receipt.`);
     }
   }
 }
@@ -2663,7 +2804,7 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.33.0 为准）
+const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.34.0 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
@@ -2679,9 +2820,10 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
    - **实测未过（NO-GO/受阻）**：享有安全下车通道，直接运行 \`baton reject <id> -n "<理由/缺失条件>" --as <本方 lane>\` 退回整改。
 4. **收尾自检**：运行 \`baton check [id]\`（若有数据漂移可加 \`--fix\` 自动修复）。
 
-**出站工作流（派发 · 监听）**
-1. **建单与转递**：\`baton new <target|lane> <type> "<标题>"\`，填写正文后执行 \`baton forward <id> --wait\`（多单并发可用 \`--async\` 解耦，派发后运行 \`baton wait <id1> <id2> ... --all\` 聚合监听）。
-2. **回复收尾（交接提示词规范）**：出站回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
+**出站工作流（派发 · 监听 · 严禁漏开监听）**
+1. **建单与转递（单工单原子闭环 · 99%场景）**：\`baton new <target|lane> <type> "<标题>"\`，填写正文后直接作为宿主后台任务（如 \`WaitMsBeforeAsync: 500\`）运行 \`baton forward <id> --wait\`（原子一步到位：秒级打印提示词 + 自动挂起后台监听 + 回执秒级唤醒；单工单严禁使用 \`--async\` 拆分两步！）。
+2. **多单并发派发（仅限一次性派发多单）**：\`baton forward <id1> <id2> ... --async\`，派发后必须立即作为后台任务运行 \`baton wait <id1> <id2> ... --all\` 聚合监听平账。
+3. **回复收尾（交接提示词规范）**：出站回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
    ## 交接提示词
    \`\`\`text
    请 [<目标角色>] 接单：
@@ -2695,7 +2837,7 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.33.0 · Details in $(lab path handoffs)/README.md)
+const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.34.0 · Details in $(lab path handoffs)/README.md)
 
 **Core Guards & Identity (Mandatory)**
 - **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.
@@ -2712,8 +2854,9 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
 4. **Wrap-up Check**: Run \`baton check [id]\` (supports \`--fix\` for auto-repair).
 
 **Outbound Workflow (Create · Forward · Wait)**
-1. **Create & Forward**: \`baton new <target|lane> <type> "<Title>"\`, fill body, then run \`baton forward <id> --wait\` (for concurrent dispatch, use \`baton forward <id> --async\` then aggregate wait with \`baton wait <id1> <id2> ... --all\`).
-2. **Tail Block (Baton Pass Prompt Standard)**: End outbound replies with a dedicated code block for one-click human copying (no text after this block):
+1. **Create & Forward (Single Ticket Atomic · 99% cases)**: \`baton new <target|lane> <type> "<Title>"\`, fill body, then run \`baton forward <id> --wait\` as a host background task (atomic one-shot: instant prompt card + auto-background listen + wake on delivery; single-ticket \`--async\` split is strictly prohibited!).
+2. **Concurrent Batch Dispatch (Multiple tickets only)**: \`baton forward <id1> <id2> ... --async\`, then immediately run \`baton wait <id1> <id2> ... --all\` as a host background task to clear debt.
+3. **Tail Block (Baton Pass Prompt Standard)**: End outbound replies with a dedicated code block for one-click human copying (no text after this block):
    ## Baton Pass Prompt
    \`\`\`text
    Please [<Target Role>] take handoff:
@@ -3217,9 +3360,19 @@ function reportUnwatchedPending() {
     }
   }
   if (!rows.length) return;
-  console.log(`⚠️  未挂起后台监听（已转递但无存活 wait 探针 · v2.23.0）：${rows.length} 份`);
+  const isZh = detectLang() === 'zh';
+  console.log(`⚠️  未挂起后台监听（已转递但无存活 wait 探针 · v2.34.0）：${rows.length} 份`);
   for (const id of rows) console.log(`   handoffs/${id}.md → [⚠️ 无监听]`);
-  console.log(`   提示：Baton 为本地文件系统事件总线（fs.watch）。无论执行方是外部客户端还是独立终端，deliver 均可自动唤醒。请运行: baton wait <ID>`);
+  if (isZh) {
+    console.log(`   提示：Baton 为本地文件系统事件总线（fs.watch）。无论执行方是外部客户端还是独立终端，deliver 均可自动唤醒。`);
+    console.log(`   👉 一键启动后台监听平账：baton wait ${rows.join(' ')} --all\n`);
+  } else {
+    console.log(`   Notice: Baton is a local fs.watch event bus. Wakeup is automatic upon delivery.`);
+    console.log(`   👉 Start background listener: baton wait ${rows.join(' ')} --all\n`);
+  }
+  if (process.env.BATON_STRICT_WATCH === '1') {
+    process.exit(1);
+  }
 }
 
 /** 当前工作区归属哪个仓库（用于方向自检）。
@@ -4383,6 +4536,7 @@ async function cmdWait(args) {
   if (mode === 'any') {
     const ready = getReadyTickets();
     if (ready.length > 0) {
+      clearUnwatchedDebt(ids);
       console.log(`✅ [就绪] 聚合监听（模式: ANY）已有工单处于终态: ${ready[0].id} (${ready[0].status})`);
       printWaitWakeupSummary(ready[0].id, ready[0].hFile, ready[0].rFile, ready[0].hFm);
       process.exit(0);
@@ -4390,6 +4544,7 @@ async function cmdWait(args) {
   } else {
     const ready = getReadyTickets();
     if (ready.length === ids.length) {
+      clearUnwatchedDebt(ids);
       console.log(`✅ [全部就绪] 聚合监听（模式: ALL）全部 ${ids.length} 份工单均已处于交付终态！`);
       for (const t of ready) {
         printWaitWakeupSummary(t.id, t.hFile, t.rFile, t.hFm);
@@ -4537,6 +4692,7 @@ async function cmdWait(args) {
         fs.writeFileSync(watchFile, JSON.stringify(payload, null, 2), 'utf8');
       } catch {}
     }
+    clearUnwatchedDebt(ids);
   };
 
   const cleanupWatchRegistry = () => {
