@@ -5,14 +5,14 @@
 
 ---
 
-## 0. 当前版本快照（2026-11-14）
+## 0. 当前版本快照（2026-11-15）
 
 | 组件 | 版本 | 备注 |
 |---|---|---|
-| **Agent Baton / handoffs** | **v2.29.1** | 接入桩 sha `ca438a6f`；Hub 注册 lab 跨仓 target；跨仓/仓内工作流中枢 |
+| **Agent Baton / handoffs** | **v2.32.0** | 接入桩 sha `30eeac8e`；ADR-0010 身份防御、会话锁、密码学审计凭据与防注入提示词；Hub 注册 lab 跨仓 target；跨仓/仓内工作流中枢 |
 | **spec-guard / drift-gate** | **v2.2.0** | 架构规约与物理接线守卫（ADR-064 机器信任根验签、三维热力表、约定阈值解耦、增量感知门禁） |
-| **preflight** | **v2.2.0** | 仓库不变量探针（A1~A5 配置化对账防漂移、工程落地指引） |
-| **orphan** | v1.1.0 | 死代码与孤儿资产清道夫（S1–S3 求解器、增量提交门禁） |
+| **preflight** | **v1.1.0** | 仓库不变量探针（A1~A5 配置化对账防漂移、工程落地指引） |
+| **orphan** | **v1.2.1** | 死代码与孤儿资产清道夫、反未接线联邦门禁（ADR-0009、S1–S3 求解器、分栈 Fast Gate 提交门禁） |
 | **worktree** | v0.1.0 | 多 Agent 物理工作树隔离调度 |
 | **review-gate** | v1.1.0 | SAST + 双盲审计独立重跑器 |
 | **adr / backlog / playbook** | v1.0 / v1.2.0 / — | 架构记忆、待办捕获、AEF 执行手册 |
@@ -48,7 +48,7 @@ npm link
 | CLI | 作用 |
 |---|---|
 | `lab` | 能力库总管、路径动态解析、环境体检、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、`orphan` / `spec-guard` 转发 |
-| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、防伪回执、事件驱动唤醒（v2.29.1） |
+| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、会话锁、密码学防伪回执、事件驱动唤醒（v2.32.0） |
 | `baton-worktree` | 为工单分配 / 回收独立物理工作树 |
 | `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执 |
 | `lab-orphan` | 死代码与孤儿资产清道夫（也可 `lab orphan <cmd>`） |
@@ -84,7 +84,7 @@ baton --help      # 确认交接引擎可用
 baton check       # 交接 / 回执合规自检（exit 0 = 合规）
 ```
 
-`baton doctor` 期望输出：`✅ [桩版本一致] ... 桩版本 == 引擎版本 (v2.29.0)`。
+`baton doctor` 期望输出：`✅ [桩版本一致] ... 桩版本 == 引擎版本 (v2.32.0)`。
 仓内还有全量回归自检：`npm test`（Node 内置 test runner，无额外依赖）。
 
 ---
@@ -106,7 +106,7 @@ lab sync-consumers /path/to/parent_dir
 ### 4.1 为什么必须做两件事（手动逐仓升级原理）
 
 1. **重跑 `npm link`**：本轮新增了 `agent-baton`、`lab-orphan`、`spec-guard`、`drift-gate` 等 bin。全局 bin shim 只在 `npm link` 时生成，旧的软链不会凭空多出新命令。
-2. **重跑 `baton install`**：v2.23.0 → v2.29.0 每个版本都改了接入桩正文（`STUB_BODY`），桩 sha 从 `1d843498` 变为 `ca438a6f`。旧桩留在 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `README.md` 及全局载体里，`baton link --check` 会判「桩版本漂移」并 **exit 1**，Agent 也会继续按过期工作流行动。
+2. **重跑 `baton install`**：接入桩正文已演进至最新版本（契约 v2.32.0），桩 sha 为 `30eeac8e`。旧桩留在 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `README.md` 及全局载体里，`baton link --check` 会判「桩版本漂移」并 **exit 1**，Agent 也会继续按过期工作流行动。
 
 > 对比 v2.22.0 那次「下游零文件改动」：那轮没动桩正文；**这轮动了，所以逐仓重刷是硬要求**。
 
@@ -124,7 +124,7 @@ npm test                  # 可选：全量回归，确认引擎无损
 
 ```bash
 baton install             # 幂等：刷新项目载体 + 全局载体的接入桩
-baton link --check        # 必须 RC=0，且显示 v2.29.0 桩版本一致
+baton link --check        # 必须 RC=0，且显示 v2.32.0 桩版本一致
 baton check               # 本仓交接 / 回执合规自检
 ```
 
@@ -160,17 +160,18 @@ lab zspec add-unit <端名>       # 新增工程端
 lab zspec guide                 # 面向 Agent 的 ZSpec 实施规范
 ```
 
-### 5.2 交接中枢 `baton`（别名 `handoff`，v2.29.1）
+### 5.2 交接中枢 `baton`（别名 `handoff`，v2.32.0）
 
 ```bash
-baton status [--for <lane|target> | --as <lane|target>]   # 待办入口（两者等价）
+baton status [--for <lane|target> | --as <lane|target>]   # 待办入口（两者等价；加 --active 聚焦活跃）
+baton lane [<lane>|--clear]     # 绑定/清空当前终端会话身份锁，防跨角色漂移
 baton show <id> [--nonce]       # triage 摘要；审计工单取防伪令牌
 baton new <target|lane> <type> "<标题>" [--workspace worktree]
-baton forward <id> --wait       # 转递并 0-Token 挂起监听（严禁以「外部客户端等不到」为由跳过）
+baton forward <id> [--async] [--wait] # 转递并挂起监听；支持多工单批量派发与聚合监听
 baton wait <id1> [id2 ...] [--any|--all]                  # 多工单聚合监听
-baton receipt <id> -n "<正文>" --deliver --as <lane> --evidence-paths "真实文件,..."
-baton deliver <id> --as <lane> # 终态交付（唤醒发起方独立验收）
-baton reject <id> -n "<理由>" --as <lane>                # 受阻 / NO-GO 安全下车
+baton receipt <id> -n "<正文>" --deliver --as <lane> --evidence-paths "真实文件,..." [--auto-nonce]
+baton deliver <id> --as <lane> # 终态交付（唤醒发起方独立验收，校验结论硬锚点与 HMAC 凭据）
+baton reject <id> -n "<理由>" --as <lane>                # 受阻 / NO-GO 安全下车（轮次唯一自增点）
 baton accept <id> -n "<结论>" --as <lane>                # 发起方独立实测后闭环
 baton reopen <id> -n "<理由>"  # 误闭环重开
 baton nonce <id> [--reissue]   # 查看 / 重签 Audit Nonce

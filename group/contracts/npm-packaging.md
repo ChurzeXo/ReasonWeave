@@ -9,9 +9,12 @@
 
 | 命令 | 对应执行入口 | 功能角色 |
 |---|---|---|
-| `lab` | `bin/lab.mjs` | 能力库总管命令（`lab list`, `lab path <unit>`, `lab doctor`） |
-| `handoff` | `units/handoffs/handoff.mjs` | 工作流交接与回执闭环引擎 |
-| `spec-guard` | `units/spec-guard/bin/spec-guard.mjs` | 架构规约与漂移守卫 CLI (别名: `drift-gate`) |
+| `lab` | `bin/lab.mjs` | 能力库总管命令（`lab list`, `lab path <unit>`, `lab doctor`, `lab sync-consumers`） |
+| `baton` / `handoff` / `agent-baton` | `units/handoffs/handoff.mjs` | 工作流交接与回执闭环引擎（v2.32.0，身份防御、会话锁与密码学防伪凭据） |
+| `baton-worktree` | `units/worktree/worktree.mjs` | 多 Agent 物理工作树隔离调度引擎 |
+| `baton-audit-runner` | `units/review-gate/clean-runner.mjs` | 双盲审计自动化独立重跑器 |
+| `lab-orphan` | `units/orphan/bin/lab-orphan.mjs` | 全局死代码与孤儿资产清道夫、反未接线联邦门禁 |
+| `spec-guard` / `drift-gate` | `units/spec-guard/bin/spec-guard.mjs` | 架构规约与物理接线守卫 CLI（ADR 机器信任根验签、三维热力表） |
 | `adr-init` | `units/adr/scripts/adr-init.sh` | 架构决策记录引导初始化 |
 
 ## 3. 消费方集成模式
