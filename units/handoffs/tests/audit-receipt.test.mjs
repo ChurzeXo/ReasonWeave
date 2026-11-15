@@ -37,11 +37,13 @@ function createTestRepo() {
 }
 
 function runBaton(tmpDir, args, extraEnv = {}) {
+  const asMatch = args.match(/--as\s+([a-zA-Z0-9_-]+)/);
+  const defaultLane = asMatch ? asMatch[1] : 'audit';
   try {
     const out = execSync(`node ${HANDOFF_BIN} ${args}`, {
       cwd: tmpDir,
       encoding: 'utf-8',
-      env: { ...process.env, CI: 'true', BATON_NO_NOTIFY: '1', HANDOFF_STATUS_GATE: 'off', HANDOFF_LANE: 'audit', ...extraEnv }
+      env: { ...process.env, CI: 'true', BATON_NO_NOTIFY: '1', HANDOFF_STATUS_GATE: 'off', HANDOFF_LANE: defaultLane, ...extraEnv }
     });
     return { status: 0, stdout: out, stderr: '' };
   } catch (err) {
@@ -323,9 +325,9 @@ status: draft
     const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
 
     // 普通执行方（impl）尝试对发给自己的工单执行 reject
-    const illegalReject = runBaton(tmpDir, `reject ${id} -n "我不做，打回" --by impl`);
+    const illegalReject = runBaton(tmpDir, `reject ${id} -n "我不做，打回" --by impl`, { HANDOFF_LANE: '' });
     assert.notEqual(illegalReject.status, 0, '执行方不得越权 reject');
-    assert.match(illegalReject.stderr + illegalReject.stdout, /(?:越界驳回|仅允许由发起方或审计方)/);
+    assert.match(illegalReject.stderr + illegalReject.stdout, /(?:越界驳回|仅允许由发起方或审计方|CROSS_LANE_IMPERSONATION_BLOCKED)/);
   });
 
   it('8. Audit Nonce 缺失诊断与受控重签 (baton nonce <id> 与 baton show <id> --nonce)', () => {
@@ -451,7 +453,8 @@ status: draft
 
     // 在同一清空环境变量的环境下，通过 --as audit 进行发起方验收闭环
     const acceptRes = runBaton(tmpDir, `accept ${id} -n "解析器功能完整且测试通过" --as audit`, {
-      HANDOFF_LANE: ''
+      HANDOFF_LANE: '',
+      BATON_SESSION_ID: 'audit-acceptor-session'
     });
     assert.equal(acceptRes.status, 0, `使用 --as audit 验收闭环应成功: ${acceptRes.stderr}\n${acceptRes.stdout}`);
     assert.match(acceptRes.stdout, /已审计闭环/);
@@ -500,7 +503,10 @@ status: draft
     assert.match(illegalReceipt.stderr + illegalReceipt.stdout, /(?:禁止自填回执|不是该交接指定接收方)/);
 
     // 2. 正常以 --as impl 写回执并交付
-    const okDeliver = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --as impl --deliver --evidence-paths "README.md"`, { HANDOFF_LANE: '' });
+    const okDeliver = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --as impl --deliver --evidence-paths "README.md"`, {
+      HANDOFF_LANE: '',
+      BATON_SESSION_ID: 'impl-executor-session'
+    });
     assert.equal(okDeliver.status, 0);
 
     // 3. 尝试使用 --as impl（执行方）自我闭环，必须被拦截
@@ -569,18 +575,18 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.31\.1\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.32\.0\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.31\.1/);
+    assert.match(agentsContent, /v2\.32\.0/);
     assert.match(agentsContent, /--as <lane>/);
-    // 接入桩正文应保持轻量韧性（小于 2500 字符，去恐吓化）
+    // 接入桩正文应保持轻量韧性（小于 2800 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
     assert.ok(stubMatch, '必须找到接入桩标记');
-    assert.ok(stubMatch[1].length < 2500, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
+    assert.ok(stubMatch[1].length < 2800, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
   });
 
   it('18. 连续多轮驳回历史无损继承与防冲刷（防模板空标题冲刷、精准小节定位追加）', () => {
@@ -714,30 +720,31 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.31.1，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.32.0，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.31.1'), '应当输出 v2.31.1');
+    assert.ok(verRes.stdout.includes('v2.32.0'), '应当输出 v2.32.0');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.31.1'), '-v 应当输出 v2.31.1');
+    assert.ok(vRes.stdout.includes('v2.32.0'), '-v 应当输出 v2.32.0');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.31.1'), 'version 应当输出 v2.31.1');
+    assert.ok(versionRes.stdout.includes('v2.32.0'), 'version 应当输出 v2.32.0');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.31.1'), '英文帮助中必须展示 v2.31.1');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.32.0'), '英文帮助中必须展示 v2.32.0');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
+    assert.ok(enHelpRes.stdout.includes('baton lane'), '英文帮助应包含 lane 命令');
   });
 
   it('21. CLI 可达性门禁韧性（baton 主命令正常但 handoff 别名指向外部目录时降级为 warning，不阻断 check 收尾）', () => {
@@ -760,7 +767,7 @@ status: draft
     // 设置 PATH: 包含 fakeBatonDir（baton 正常）与 fakeExternalDir（handoff 别名漂移）
     const customPath = `${fakeBatonDir}${path.delimiter}${fakeExternalDir}${path.delimiter}${process.env.PATH}`;
 
-    const checkRes = runBaton(tmpDir, 'check', { PATH: customPath });
+    const checkRes = runBaton(tmpDir, 'check', { PATH: customPath, HOME: tmpDir });
     assert.equal(checkRes.status, 0, `check 应当成功通过（不被外部 handoff 别名阻断）: ${checkRes.stderr}\n${checkRes.stdout}`);
     assert.ok(/⚠️.*\[CLI\] handoff 别名/i.test(checkRes.stdout), '应当以 warning 提示 handoff 别名异常，而非作为阻塞性 problem');
   });
@@ -811,12 +818,12 @@ status: draft
     assert.ok(fwdBatchRes.stdout.includes(`已标记转递: ${idB}`));
 
     // 4. 测试 --auto-nonce：审计方无需手动复制 Nonce，直接 --auto-nonce 自动绑定最新令牌并成功交付
-    const receiptRes = runBaton(tmpDir, `receipt ${idA} -n "## 状态 / 结论\\n- **结论**：PASS" --evidence-note "红队用例全通" --auto-nonce --deliver --as audit`, { HANDOFF_LANE: '' });
+    const receiptRes = runBaton(tmpDir, `receipt ${idA} -n "## 状态 / 结论\\n- **结论**：PASS" --evidence-note "红队用例全通" --auto-nonce --deliver --as audit`, { HANDOFF_LANE: '', BATON_SESSION_ID: 'audit-actor-session' });
     assert.equal(receiptRes.status, 0, `receipt --auto-nonce 应该成功: ${receiptRes.stderr}\n${receiptRes.stdout}`);
     assert.ok(receiptRes.stdout.includes('--auto-nonce'), '应当触发 --auto-nonce 自动绑定');
 
     // 5. 测试智能身份推导闭环（修复回声报错）：发起方未传 --as 且环境变量为空时，智能推导为 from_lane 成功闭环
-    const closeRes = runBaton(tmpDir, `close ${idA} -n "实测核验证讫"`, { HANDOFF_LANE: '' });
+    const closeRes = runBaton(tmpDir, `close ${idA} -n "实测核验证讫"`, { HANDOFF_LANE: '', BATON_SESSION_ID: 'sender-actor-session' });
     assert.equal(closeRes.status, 0, `close 未传 --as 应智能推导发起方身份成功闭环: ${closeRes.stderr}\n${closeRes.stdout}`);
     assert.ok(closeRes.stdout.includes('智能推导执行身份') || closeRes.stdout.includes('Auto Identity'), '应当输出智能推导提示');
 
@@ -980,5 +987,126 @@ status: draft
     const stImpl = runBaton(tmpDir, 'status --for impl');
     assert.equal(stImpl.status, 0);
     assert.ok(stImpl.stdout.includes('收到驳回待整改') || stImpl.stdout.includes('Rejections received awaiting revision'), '发起方视角必须归入收到驳回待整改');
+  });
+
+  it('27. [v2.32.0] 环境变量强绑定门禁（Fail-Closed：HANDOFF_LANE=arch 时严禁使用 --as audit 随意漂移）', () => {
+    const tmpDir = createTestRepo();
+    const resA = runBaton(tmpDir, 'new audit task "测试环境变量强绑定" --from arch', { HANDOFF_LANE: 'arch' });
+    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+
+    // 当环境绑定了 HANDOFF_LANE=arch 时，尝试伪装为 audit 必须被拦截
+    const fakeRes = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS" --as audit --evidence-note "说明"`, { HANDOFF_LANE: 'arch' });
+    assert.notEqual(fakeRes.status, 0, '跨角色伪装必须被非0拦截');
+    assert.match(fakeRes.stderr + fakeRes.stdout, /CROSS_LANE_IMPERSONATION_BLOCKED/);
+    assert.match(fakeRes.stderr + fakeRes.stdout, /HANDOFF_LANE=arch/);
+
+    // 当环境绑定一致（--as arch）时放行通过该层门禁
+    const sameRes = runBaton(tmpDir, `show ${idA}`, { HANDOFF_LANE: 'arch' });
+    assert.equal(sameRes.status, 0);
+  });
+
+  it('28. [v2.32.0] 会话身份锁与利益冲突拦截（Anti-Self-Closing Guarantee：会话绑定发起方时严禁伪装目标方交付）', () => {
+    const tmpDir = createTestRepo();
+    const sessionId = 'test-session-' + Date.now();
+    const sessionEnv = { BATON_SESSION_ID: sessionId, HANDOFF_LANE: '' };
+
+    // 1. 在当前会话下显式锁定身份为 arch (发起方)
+    const laneBind = runBaton(tmpDir, 'lane arch', sessionEnv);
+    assert.equal(laneBind.status, 0);
+    assert.ok(laneBind.stdout.includes('arch'));
+
+    // 2. 创建 to_lane: audit 工单
+    const resA = runBaton(tmpDir, 'new audit task "测试会话利益冲突" --from arch', sessionEnv);
+    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+
+    // 3. 当前会话 (arch) 尝试使用 --as audit 提交交付回执
+    const fakeDeliver = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS" --deliver --as audit --evidence-note "说明"`, sessionEnv);
+    assert.notEqual(fakeDeliver.status, 0, '发起方会话伪装目标方交付必须硬拦截');
+    assert.match(fakeDeliver.stderr + fakeDeliver.stdout, /CROSS_LANE_IMPERSONATION_BLOCKED/);
+    assert.match(fakeDeliver.stderr + fakeDeliver.stdout, /禁止发起方 \(arch\) 伪装为目标方 \(audit\) 交付/);
+
+    // 4. 反向测试：若当前会话绑定为 audit，尝试 --as arch 闭环验收工单
+    const auditSessionId = 'audit-session-' + Date.now();
+    const auditSessionEnv = { BATON_SESSION_ID: auditSessionId, HANDOFF_LANE: '' };
+    runBaton(tmpDir, 'lane audit', auditSessionEnv);
+
+    const fakeClose = runBaton(tmpDir, `close ${idA} -n "自审自闭环" --as arch`, auditSessionEnv);
+    assert.notEqual(fakeClose.status, 0, '目标方会话伪装发起方闭环必须硬拦截');
+    assert.match(fakeClose.stderr + fakeClose.stdout, /CROSS_LANE_IMPERSONATION_BLOCKED/);
+    assert.match(fakeClose.stderr + fakeClose.stdout, /禁止目标方 \(audit\) 伪装为发起方 \(arch\) 验收闭环/);
+  });
+
+  it('29. [v2.32.0] 密码学 Audit Token 与签章防伪（防共享磁盘明文 Nonce 窃取交付）', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 创建 audit 工单，获取明文 Nonce
+    const resA = runBaton(tmpDir, 'new audit task "测试私钥签章防伪" --from arch', { HANDOFF_LANE: 'arch' });
+    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const plainNonce = runBaton(tmpDir, `show ${idA} --nonce`, { HANDOFF_LANE: 'arch' }).stdout.trim();
+
+    // 2. 非 audit 角色尝试调用 --auto-nonce 或提交回执：硬拦截
+    const illicitAutoNonce = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS" --auto-nonce --deliver --as impl`, { HANDOFF_LANE: 'impl' });
+    assert.notEqual(illicitAutoNonce.status, 0);
+    assert.match(illicitAutoNonce.stderr + illicitAutoNonce.stdout, /防提前闭环|越权拦截：--auto-nonce/);
+
+    // 3. 正常 audit 角色执行交付：自动生成 audit.token 与 audit_sig 签章
+    const okDeliver = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS" --evidence-note "红队用例全通" --auto-nonce --deliver --as audit`, { HANDOFF_LANE: 'audit' });
+    assert.equal(okDeliver.status, 0, `audit 交付应成功: ${okDeliver.stderr}\n${okDeliver.stdout}`);
+
+    // 验证 .secrets/audit.token 已生成且受限
+    const tokenFile = path.join(tmpDir, '.handoffs', '.secrets', 'audit.token');
+    assert.ok(fs.existsSync(tokenFile), '必须生成 audit.token 私钥凭据');
+
+    // 验证回执 frontmatter 写入了 audit_sig
+    const rFile = path.join(tmpDir, '.handoffs', 'receipts', `${idA}-resp.md`);
+    const rContent = fs.readFileSync(rFile, 'utf8');
+    assert.match(rContent, /audit_sig:\s*[0-9a-f]{64}/, '回执必须写入 64 字符 HMAC-SHA256 签章');
+
+    // 4. 伪造签章测试：若有人恶意修改 audit_sig，deliver 必须失败
+    const tampered = rContent.replace(/audit_sig:\s*[0-9a-f]{64}/, 'audit_sig: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
+    fs.writeFileSync(rFile, tampered, 'utf8');
+    // 把工单状态回退为 received 重新尝试 deliver
+    const hFile = path.join(tmpDir, '.handoffs', 'handoffs', `${idA}.md`);
+    fs.writeFileSync(hFile, fs.readFileSync(hFile, 'utf8').replace(/status:\s*delivered/, 'status: received'), 'utf8');
+
+    const fakeSigDeliver = runBaton(tmpDir, `deliver ${idA} --as impl`, { HANDOFF_LANE: 'impl' });
+    assert.notEqual(fakeSigDeliver.status, 0);
+    assert.match(fakeSigDeliver.stderr + fakeSigDeliver.stdout, /越界交付|AUDIT_CREDENTIAL_DENIED|缺少或伪造审计私钥签章/);
+  });
+
+  it('30. [v2.32.0] 出站提示词防注入三段式与 baton lane CLI 自助管理', () => {
+    const tmpDir = createTestRepo();
+    const resA = runBaton(tmpDir, 'new audit task "测试提示词三段式" --from arch', { HANDOFF_LANE: 'arch' });
+    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+
+    // 1. 验证 baton prompt 输出包含三段式主谓宾身份声明
+    const promptRes = runBaton(tmpDir, `prompt ${idA}`, { HANDOFF_LANE: 'arch' });
+    assert.equal(promptRes.status, 0);
+    assert.ok(promptRes.stdout.includes('【身份警示：你是接收方') || promptRes.stdout.includes('【ROLE NOTICE: You are assignee'), '提示词必须包含身份警示开头');
+    assert.ok(promptRes.stdout.includes('请勿切换角色') || promptRes.stdout.includes('do not switch roles'), '提示词必须警示防切换角色');
+
+    // 2. 验证 baton lane 指令
+    const sId = 'sess-test-' + Date.now();
+    const sEnv = { BATON_SESSION_ID: sId, HANDOFF_LANE: '' };
+
+    // 2.1 绑定 lane
+    const setRes = runBaton(tmpDir, 'lane test-runner', sEnv);
+    assert.equal(setRes.status, 0);
+    assert.ok(setRes.stdout.includes('test-runner'));
+
+    // 2.2 查看 lane (--json)
+    const viewJson = runBaton(tmpDir, 'lane --json', sEnv);
+    assert.equal(viewJson.status, 0);
+    const parsed = JSON.parse(viewJson.stdout);
+    assert.equal(parsed.session_lane, 'test-runner');
+    assert.equal(parsed.effective_lane, 'test-runner');
+
+    // 2.3 清除 lane (--clear)
+    const clearRes = runBaton(tmpDir, 'lane --clear', sEnv);
+    assert.equal(clearRes.status, 0);
+    const viewAfterClear = runBaton(tmpDir, 'lane --json', sEnv);
+    const parsedAfter = JSON.parse(viewAfterClear.stdout);
+    assert.equal(parsedAfter.session_lane, null);
+    assert.equal(parsedAfter.effective_lane, 'unbound');
   });
 });

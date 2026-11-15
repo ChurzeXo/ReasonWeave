@@ -6,6 +6,22 @@
 
 ---
 
+> **v2.32.0 变更（2026-11-15 · ADR-0010 落地 · 防跨角色伪装漂移 · 会话环境身份锁 · 同工作区审计私钥凭据与签章防伪 · 出站提示词防注入三段式 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——下游专项双盲红队审计（`audit-20261115-01-task`）在同工作区多 Agent 场景发生严重角色漂移与自我闭环事故（实现方误读提示词后通过 `--as audit` 代办交付，击穿「禁止自我闭环」铁律）。
+> 1. **环境与会话身份锁（Fail-Closed Environment & Session Lane Binding）**：
+>    - 强环境绑定门禁：若进程环境声明了 `HANDOFF_LANE=<lane>`，CLI 严格以此为准，严禁通过 `--as` 随意漂移到其他角色（违者触发 `CROSS_LANE_IMPERSONATION_BLOCKED` 拦截）；
+>    - 本地会话身份锁：引入 `baton lane [<lane>|--clear]` CLI 命令，支持通过 `ppid` 或 `BATON_SESSION_ID` 将当前会话绑定为固定角色，实现同一宿主机多 Agent 窗口的自然身份隔离；
+>    - 利益冲突硬门禁（Anti-Self-Closing Guarantee）：发起方会话严禁伪装为目标方交付，目标方会话严禁伪装为发起方验收闭环，物理守护 AEF 最高宪法级制衡原则；
+> 2. **密码学审计私钥凭据与 HMAC-SHA256 签章（Cryptographic Audit Token & Signature）**：
+>    - 根除共享磁盘读权限即拥有权限漏洞：在同工作区且 `to_lane: audit` 场景下，仅凭工单 frontmatter 中的明文 Nonce 无法完成通过性交付；
+>    - 引入专用审计私钥凭据 `.handoffs/.secrets/audit.token`（0600 权限），仅限核实为 `audit` 角色的进程访问；
+>    - 交付时强制计算并核验 HMAC-SHA256 签章（`audit_sig`），`--auto-nonce` 仅授权 `audit` 角色调用；
+> 3. **出站提示词防文本注入三段式（Three-Section Prompt Protection）**：
+>    - 消除角色语义诱导歧义：骨架标题由 `# <TITLE> (lane: <LANE>)` 修正为 `# <TITLE> (to_lane: <LANE>)`；
+>    - 出站提示词代码块首行固定强制注入显式主谓宾身份声明：`【身份警示：你是接收方 <目标角色>，请勿切换角色】`，根治跨客户端复制时 LLM 主谓倒置的误解；
+> 4. **接入桩同步升级至 v2.32.0**。
+
+---
+
 > **v2.31.1 补丁（2026-11-15 · 彻底根治工单轮次 Round 虚增与 Audit Nonce 幂等性击穿缺陷 · cmdForward 幂等性自愈）**：动因——下游专项双盲审计（`audit-20261115-01-task`）实操反馈：工单实际处于第 6 次驳回（第 7 轮复审），但技术字段却膨胀至 Round 14，且交接提示词中的 Nonce 与实际权威 Nonce 产生脱节错位。
 > 1. **生命周期计步单一事实源（SSOT for Round Increments）**：明确整改轮次计数以 `cmdReject` 为唯一合法递增点（驳回即开启下一轮复审）；`cmdForward` 仅负责翻转状态为 `forwarded` 并清除驳回现场标记，严禁再次对 `round` 二次加 1，彻底消灭「驳回-修复」循环中一轮技术计两步的双重自增缺陷；
 > 2. **闭环清空驳回现场时间戳与幂等性保障（Idempotent Forward & Clean Rejection Fields）**：修复 `cmdForward` 中仅清空 `rejected_by` 却遗漏清空 `rejected_at` 的严重漏洞。成功转递时原子清空 `rejected_by: ''` 与 `rejected_at: ''`，杜绝连续带参调用（如补跑 `--blind` / `--wait`）时重复命中驳回判断引发死循环与虚增；

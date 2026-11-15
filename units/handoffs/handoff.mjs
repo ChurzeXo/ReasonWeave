@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.31.1';
+const BATON_VERSION = '2.32.0';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -640,7 +640,7 @@ const H_BODY = `
 
 // 仓内模式交接骨架（intra-repo）：去掉跨仓转递语境，强调同工作区归属纪律与「执行方不 accept/reject」
 const H_BODY_INTRA = `
-# <TITLE> (lane: <LANE>)
+# <TITLE> (to_lane: <LANE>)
 
 ## 目标（1–3 行）
 <要做成什么样。背景 / 根因 / 论证一律写 reviews/ 或设计文档，此处只放路径 + 一句结论。>
@@ -827,6 +827,201 @@ function generateAuditNonce(id) {
   const rand = crypto.randomBytes(16).toString('hex');
   const slug = id ? id.split('-')[0] : 'audit';
   return `AUDIT-${ymd}-${slug}-${rand}`;
+}
+
+// ── 会话环境身份锁与审计私钥签名凭据（ADR-0010 · 防伪装漂移与私钥签名凭据） ──
+const SESSIONS_DIR = path.join(ROOT, '.sessions');
+const SECRETS_DIR = path.join(ROOT, '.secrets');
+
+function getSessionId() {
+  const envKey = process.env.BATON_SESSION_ID || process.env.TERM_SESSION_ID || process.env.SESSION_ID;
+  if (envKey) return String(envKey).replace(/[^a-zA-Z0-9_-]/g, '_');
+  const ppid = process.ppid || 'global';
+  return `ppid-${ppid}`;
+}
+
+function getSessionLane() {
+  try {
+    const k = getSessionId();
+    const f = path.join(SESSIONS_DIR, `${k}.json`);
+    if (fs.existsSync(f)) {
+      const data = JSON.parse(fs.readFileSync(f, 'utf8'));
+      if (data && data.lane) return String(data.lane).toLowerCase();
+    }
+  } catch {}
+  return '';
+}
+
+function setSessionLane(lane) {
+  if (!lane) return;
+  try {
+    if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    const k = getSessionId();
+    const f = path.join(SESSIONS_DIR, `${k}.json`);
+    fs.writeFileSync(f, JSON.stringify({ lane: String(lane).toLowerCase(), ppid: process.ppid, ts: new Date().toISOString() }, null, 2), 'utf8');
+  } catch {}
+}
+
+function clearSessionLane() {
+  try {
+    const k = getSessionId();
+    const f = path.join(SESSIONS_DIR, `${k}.json`);
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+  } catch {}
+}
+
+/** 获取或生成审计私钥凭据（.handoffs/.secrets/audit.token 或 BATON_AUDIT_TOKEN） */
+function getAuditSecretToken(opts = {}) {
+  const { requireAuditLane = false, currentLane = '' } = opts;
+  if (requireAuditLane && currentLane !== 'audit') {
+    return null;
+  }
+  if (process.env.BATON_AUDIT_TOKEN) {
+    return process.env.BATON_AUDIT_TOKEN.trim();
+  }
+  try {
+    if (!fs.existsSync(SECRETS_DIR)) {
+      fs.mkdirSync(SECRETS_DIR, { recursive: true, mode: 0o700 });
+      try { fs.writeFileSync(path.join(SECRETS_DIR, '.gitignore'), '*\n', 'utf8'); } catch {}
+    }
+    const tokenFile = path.join(SECRETS_DIR, 'audit.token');
+    if (fs.existsSync(tokenFile)) {
+      const content = fs.readFileSync(tokenFile, 'utf8').trim();
+      if (content) return content;
+    }
+    const generated = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(tokenFile, generated + '\n', { encoding: 'utf8', mode: 0o600 });
+    return generated;
+  } catch {
+    return '';
+  }
+}
+
+/** 计算审计私钥密码学签章 */
+function computeAuditSignature(token, ticketId, round, nonce) {
+  if (!token || !ticketId || !nonce) return '';
+  return crypto.createHmac('sha256', token).update(`${ticketId}:${round || 1}:${nonce}`).digest('hex');
+}
+
+/**
+ * 确定性解析当前执行身份，并执行环境锁与利益冲突门禁校验
+ * @param {string} asInput - 命令行传入的 --as / --by 参数
+ * @param {object} ctx - 上下文 { fromLane, toLane, op, ticketId }
+ */
+function resolveExecutionLane(asInput, ctx = {}) {
+  const envLane = (process.env.HANDOFF_LANE || '').toLowerCase().trim();
+  const sessionLane = getSessionLane();
+  const reqLane = (asInput || '').toLowerCase().trim();
+  const { fromLane = '', toLane = '', op = '', ticketId = '' } = ctx;
+  const fromLanes = fromLane.split(/[,/]/).map(s => s.trim().toLowerCase()).filter(Boolean);
+  const targetToLane = toLane.toLowerCase().trim();
+
+  // 1. 环境变量强绑定门禁（Fail-Closed）：
+  // 若环境设置了 HANDOFF_LANE，必须严格以环境变量为准，严禁通过 --as 随意漂移到其他角色
+  if (envLane) {
+    if (reqLane && reqLane !== envLane) {
+      console.error(`❌ 跨角色伪装拦截 (CROSS_LANE_IMPERSONATION_BLOCKED): 当前环境已绑定身份 HANDOFF_LANE=${envLane}，严禁使用 --as ${reqLane} 伪装其他角色执行操作！`);
+      console.error(`   👉 若需切换角色，请先在终端中显式 export HANDOFF_LANE=${reqLane}`);
+      process.exit(1);
+    }
+    return envLane;
+  }
+
+  // 2. 会话身份锁与利益冲突门禁：
+  if (reqLane) {
+    // 利益冲突硬门禁（Anti-Self-Closing Guarantee）：
+    // 若当前会话此前已绑定为发起方 (fromLane)，执行敏感交付命令（deliver / receipt 且正向或 --deliver）时，严禁伪装为 toLane
+    if (sessionLane && sessionLane !== reqLane) {
+      if (fromLanes.includes(sessionLane) && reqLane === targetToLane) {
+        if (op === 'deliver' || op === 'receipt') {
+          console.error(`❌ 跨角色伪装拦截 (CROSS_LANE_IMPERSONATION_BLOCKED): 禁止发起方 (${sessionLane}) 伪装为目标方 (${targetToLane}) 交付！`);
+          console.error(`   👉 这是 AEF 最高宪法级门禁（禁止自我闭环）。当前会话已绑定为发起方，严禁越权代办审计或验收交付。`);
+          process.exit(1);
+        }
+      }
+      if (targetToLane && sessionLane === targetToLane && fromLanes.includes(reqLane)) {
+        if (op === 'accept') {
+          console.error(`❌ 跨角色伪装拦截 (CROSS_LANE_IMPERSONATION_BLOCKED): 禁止目标方 (${sessionLane}) 伪装为发起方 (${reqLane}) 验收闭环！`);
+          console.error(`   👉 这是 AEF 最高宪法级门禁（禁止自我闭环）。当前会话已绑定为执行方，严禁自审自闭环。`);
+          process.exit(1);
+        }
+      }
+    }
+    setSessionLane(reqLane);
+    return reqLane;
+  }
+
+  // 3. 未传 --as，使用当前会话绑定身份
+  if (sessionLane) {
+    return sessionLane;
+  }
+
+  return '';
+}
+
+/** 会话身份锁 CLI 管理命令（ADR-0010） */
+function cmdLane(args) {
+  const isZh = detectLang() === 'zh';
+  const isClear = args.includes('--clear') || args.includes('-c');
+  const isJson = args.includes('--json');
+  const targetLane = args.find(a => !a.startsWith('-'));
+
+  if (isClear) {
+    clearSessionLane();
+    if (isJson) {
+      console.log(JSON.stringify({ ok: true, cleared: true }));
+    } else {
+      console.log(isZh ? '✅ 已清除当前会话身份锁。' : '✅ Cleared current session lane binding.');
+    }
+    return;
+  }
+
+  if (targetLane) {
+    const laneNorm = targetLane.toLowerCase().trim();
+    setSessionLane(laneNorm);
+    if (isJson) {
+      console.log(JSON.stringify({ ok: true, session_id: getSessionId(), lane: laneNorm }));
+    } else {
+      console.log(isZh ? `✅ 当前会话身份已锁定为: ${laneNorm}` : `✅ Current session lane bound to: ${laneNorm}`);
+    }
+    return;
+  }
+
+  // 查看当前身份状态
+  const envLane = (process.env.HANDOFF_LANE || '').toLowerCase().trim();
+  const sessionLane = getSessionLane();
+  const sessionId = getSessionId();
+  const effectiveLane = envLane || sessionLane || 'unbound';
+
+  if (isJson) {
+    console.log(JSON.stringify({
+      session_id: sessionId,
+      env_lane: envLane || null,
+      session_lane: sessionLane || null,
+      effective_lane: effectiveLane
+    }, null, 2));
+    return;
+  }
+
+  if (isZh) {
+    console.log(`🔐 Agent Baton 会话身份状态:`);
+    console.log(`   Session ID:     ${sessionId}`);
+    console.log(`   环境绑定:       ${envLane ? envLane + ' (HANDOFF_LANE)' : '未设置'}`);
+    console.log(`   会话锁 (本地):  ${sessionLane || '未绑定'}`);
+    console.log(`   当前生效角色:   ${effectiveLane}`);
+    console.log(`\n💡 提示:`);
+    console.log(`   锁定当前身份:   baton lane <lane>`);
+    console.log(`   清除会话锁:     baton lane --clear`);
+  } else {
+    console.log(`🔐 Agent Baton Session Lane Status:`);
+    console.log(`   Session ID:     ${sessionId}`);
+    console.log(`   Environment:    ${envLane ? envLane + ' (HANDOFF_LANE)' : 'unset'}`);
+    console.log(`   Session Lock:   ${sessionLane || 'unbound'}`);
+    console.log(`   Effective Lane: ${effectiveLane}`);
+    console.log(`\n💡 Tip:`);
+    console.log(`   Bind session:   baton lane <lane>`);
+    console.log(`   Clear session:  baton lane --clear`);
+  }
 }
 
 /** 物理脱敏清洗：剥离 <thinking> 标签、<thought> 标签以及主观自辩小节 */
@@ -1173,21 +1368,12 @@ function cmdAccept(args) {
     const content = fs.readFileSync(file, 'utf8');
     const fm = readFM(content);
     const st = fm?.status;
-    // 状态转换合法性内联（v2.18 · 五态流转）：闭环只允许 delivered → closed（或历史存量 received → closed，须经独立验收）
-    if (st === 'draft' || st === 'forwarded') {
-      console.error(`❌ 交接 ${id} 当前为 ${st}，尚未完成交付（delivered），不能闭环。请等待执行方: baton deliver ${id}（或 baton receipt ${id} --deliver）`);
-      process.exit(1);
-    }
-    if (st === 'closed') {
-      console.log(`↩️ ${id} 已闭环，跳过。`);
-      return;
-    }
 
     // 身份门禁（P0-3 修复 / ADR-0008 Phase 2 显式声明）：闭环（accept）是发起方的特权，执行方禁止自审自闭环
     if (MODE === 'intra-repo') {
       const fromLaneRaw = String(fm?.from_lane || '').toLowerCase();
       const fromLanes = fromLaneRaw.split(/[,/]/).map(s => s.trim()).filter(Boolean);
-      let cur = (asLane || process.env.HANDOFF_LANE || '').toLowerCase();
+      let cur = resolveExecutionLane(asLane, { fromLane: fm?.from_lane, toLane: fm?.to_lane, op: 'accept', ticketId: id });
       if (!cur) {
         if (fromLanes.length === 1) {
           cur = fromLanes[0];
@@ -1207,6 +1393,16 @@ function cmdAccept(args) {
         console.error(`❌ 越界闭环：当前执行身份 lane=${cur} 不是发起方 from_lane=${fromLaneRaw}。执行方禁止自审自闭环。`);
         process.exit(1);
       }
+    }
+
+    // 状态转换合法性内联（v2.18 · 五态流转）：闭环只允许 delivered → closed（或历史存量 received → closed，须经独立验收）
+    if (st === 'draft' || st === 'forwarded') {
+      console.error(`❌ 交接 ${id} 当前为 ${st}，尚未完成交付（delivered），不能闭环。请等待执行方: baton deliver ${id}（或 baton receipt ${id} --deliver）`);
+      process.exit(1);
+    }
+    if (st === 'closed') {
+      console.log(`↩️ ${id} 已闭环，跳过。`);
+      return;
     }
 
     // P0-a：闭环前置内容门禁——delivered/received 必有回执，且该回执须过「锚节 + 转递提示词 + evidence」，否则拒绝闭环。
@@ -1346,7 +1542,7 @@ function cmdReject(args) {
     const st = hFm?.status;
 
     // 身份门禁：允许发起方驳回执行方交付，亦允许审计方（to_lane=audit）对被审工单给出驳回裁决
-    let cur = (asArg || byArg || process.env.HANDOFF_LANE || '').toLowerCase();
+    let cur = resolveExecutionLane(asArg || byArg, { fromLane: hFm?.from_lane, toLane: hFm?.to_lane, op: 'reject', ticketId: id });
     let isFromLane = false;
     let isAuditor = false;
     if (MODE === 'intra-repo') {
@@ -1467,6 +1663,15 @@ function cmdReject(args) {
       audit_nonce: updateReject.audit_nonce
     });
     console.log(`✅ 已驳回退回: ${id} → forwarded（驳回理由已写入回执文件）`);
+    if (MODE === 'intra-repo') {
+      const isZh = detectLang() === 'zh';
+      const toRole = resolveLaneRole(hFm?.from_lane) || hFm?.from_lane || (isZh ? '实现方' : 'Implementer');
+      const fromRole = resolveLaneRole(cur) || cur || (isZh ? '驳回方' : 'Rejector');
+      console.log(`\n📋 可复制驳回提示词（防混淆三段式 · 复制给实现方 Agent）:`);
+      console.log(`\`\`\`text`);
+      console.log(`【身份警示：你是实现方 ${toRole}，请勿切换角色】工单 [${id}] 已被【${fromRole}】驳回退回整改（理由：${note}）。请完成整改后重新转递。`);
+      console.log(`\`\`\`\n`);
+    }
   });
 }
 
@@ -1610,9 +1815,9 @@ function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
     const fromRole = resolveLaneRole(fromLane) || fromLane || (isZh ? '本方' : 'Executor');
     if (isDelivered) {
       console.log(`\n✅ 仓内终态交付已生效 [${ticketId}]（状态推进为 delivered，后台监听已自动感知平息并唤醒发起方/审计方进行独立验收闭环）。`);
-      console.log(`📋 可复制交付提示词（同对话多工单精准对齐）:`);
+      console.log(`📋 可复制交付提示词（防混淆三段式 · 同对话多工单精准对齐）:`);
       console.log(`\`\`\`text`);
-      console.log(`请【${toRole}】查收【${fromRole}】回执 [${ticketId}]：${display}（已交付 · 需发起方改动：${flag}）`);
+      console.log(`【身份警示：你是发起方 ${toRole}，请勿切换角色】请查收【${fromRole}】提交的回执 [${ticketId}]：${display}（已交付 · 需发起方改动：${flag}）`);
       console.log(`\`\`\`\n`);
     } else {
       const waitNotice = needsChange
@@ -1659,7 +1864,7 @@ function cmdReceipt(args) {
     const hFm = readFM(fs.readFileSync(hFile, 'utf8'));
     const st = hFm?.status;
     // 防提前闭环（v2.13 / v2.25 P0-3 强化 / ADR-0008 Phase 2 显式声明）：发起方禁止自填回执，且仓内模式强制校验执行身份
-    const cur = (asInput || process.env.HANDOFF_LANE || '').toLowerCase();
+    const cur = resolveExecutionLane(asInput, { fromLane: hFm?.from_lane, toLane: hFm?.to_lane, op: shouldDeliver ? 'deliver' : 'receipt', ticketId: id });
     if (MODE === 'intra-repo') {
       const toLane = String(hFm?.to_lane || '').toLowerCase();
       const fromLane = String(hFm?.from_lane || '').toLowerCase();
@@ -1735,6 +1940,7 @@ function cmdReceipt(args) {
     // 1. 若结论为 PASS / 正向结论，或显式触发交付（shouldDeliver），必须核验 Audit Nonce；
     // 2. 若结论为受阻 / NO-GO / INCOMPLETE，或未通过草稿，允许无阻碍登记，畅通下车通道。
     let finalAuditNonce = auditNonceInput || (existingRFm && existingRFm.audit_nonce) || '';
+    let finalAuditSig = (existingRFm && existingRFm.audit_sig) || '';
     if (MODE === 'intra-repo' && String(hFm?.to_lane || '').toLowerCase() === 'audit') {
       let expectedNonce = hFm.audit_nonce;
       if (!expectedNonce) {
@@ -1744,6 +1950,10 @@ function cmdReceipt(args) {
         console.log(`ℹ️ 补发审计防伪令牌 (Audit Nonce): ${expectedNonce}`);
       }
       if (isAutoNonce) {
+        if (cur !== 'audit') {
+          console.error(`❌ 越权拦截：--auto-nonce 自动绑定令牌仅限目标审计方 (to_lane=audit) 授权使用。当前执行身份 lane=${cur || '未声明'} 禁止调用！`);
+          process.exit(1);
+        }
         finalAuditNonce = expectedNonce;
         const isZh = detectLang() === 'zh';
         console.log(isZh
@@ -1767,6 +1977,15 @@ function cmdReceipt(args) {
           console.error(`   👉 一键自愈：追加 --audit-nonce "${expectedNonce}"（或在同工作区授权下直接追加 --auto-nonce 自动绑定最新令牌）。`);
           process.exit(1);
         }
+
+        // 私钥签章（ADR-0010）：必须由持有 audit.token 的 audit 角色完成私钥签章
+        const auditToken = getAuditSecretToken({ requireAuditLane: true, currentLane: cur });
+        if (!auditToken) {
+          console.error(`❌ 审计私钥访问拒绝 (AUDIT_CREDENTIAL_DENIED): 仅允许持有审计私钥凭据的 audit 角色生成签章。当前角色 (${cur || '未声明'}) 无权使用 audit.token！`);
+          console.error(`   严禁发起方或其他角色仅凭工单明文 Nonce 冒充签章通过验收。`);
+          process.exit(1);
+        }
+        finalAuditSig = computeAuditSignature(auditToken, id, hFm.round || 1, expectedNonce);
       } else {
         // 负向结论（NO-GO / 受阻）或未通过草稿：若提供了 Nonce 则校验防跨工单伪造；未提供则友情提示并放行
         if (finalAuditNonce && finalAuditNonce !== expectedNonce) {
@@ -1779,6 +1998,7 @@ function cmdReceipt(args) {
         if (!finalAuditNonce) {
           console.log(`ℹ️ [防伪提示] 当前为未通过/受阻回执（${concl || '未就绪'}），已豁免 Nonce 登记。后续通过验收并交付前需补齐 Audit Nonce (${expectedNonce})。`);
         }
+        finalAuditSig = '';
       }
     }
 
@@ -1794,6 +2014,7 @@ function cmdReceipt(args) {
         ...evFM
       };
       if (finalAuditNonce) rFm.audit_nonce = finalAuditNonce;
+      if (finalAuditSig) rFm.audit_sig = finalAuditSig;
       if (hFm.blind) rFm.blind = true;
       // 记录撰写方 lane（防提前闭环的耐久证据）：闭环/check 侧可据此核验回执确由接收方撰写，非发起方自填。
       if (cur) rFm.author_lane = cur;
@@ -1880,7 +2101,7 @@ function cmdDeliver(args) {
     const rFm = readFM(rRaw) || {};
 
     // 防提前闭环与越界交付（P0-3 修复 / ADR-0008 Phase 2 显式声明）
-    const cur = (asInput || process.env.HANDOFF_LANE || '').toLowerCase();
+    const cur = resolveExecutionLane(asInput, { fromLane: hFm?.from_lane, toLane: hFm?.to_lane, op: 'deliver', ticketId: id });
     if (MODE === 'intra-repo') {
       const toLane = String(hFm?.to_lane || '').toLowerCase();
       const fromLane = String(hFm?.from_lane || '').toLowerCase();
@@ -1928,11 +2149,15 @@ function cmdDeliver(args) {
       process.exit(1);
     }
 
-    // 审计防伪门禁 (Audit Nonce Gate · ADR-0008 交付闸门)：to_lane=audit 交付前必须携带有效匹配的 Audit Nonce
+    // 审计防伪门禁 (Audit Nonce Gate & Signature · ADR-0008 / ADR-0010 交付闸门)：to_lane=audit 交付前必须携带有效匹配的 Audit Nonce 与审计私钥签章
     if (MODE === 'intra-repo' && String(hFm?.to_lane || '').toLowerCase() === 'audit') {
       const expectedNonce = hFm.audit_nonce;
       let actualNonce = rFm.audit_nonce;
       if (args.includes('--auto-nonce') && expectedNonce) {
+        if (cur !== 'audit') {
+          console.error(`❌ 越权拦截：--auto-nonce 自动绑定令牌仅限目标审计方 (to_lane=audit) 授权使用。当前执行身份 lane=${cur || '未声明'} 禁止调用！`);
+          process.exit(1);
+        }
         actualNonce = expectedNonce;
         rFm.audit_nonce = expectedNonce;
         const isZh = detectLang() === 'zh';
@@ -1951,6 +2176,25 @@ function cmdDeliver(args) {
           console.error(`   请运行: baton nonce ${id} --reissue 重新签发有效令牌。`);
         }
         process.exit(1);
+      }
+
+      // 私钥签章校验（ADR-0010 交付闸门）
+      const auditToken = getAuditSecretToken({ requireAuditLane: true, currentLane: cur });
+      if (!auditToken) {
+        console.error(`❌ 审计私钥访问拒绝 (AUDIT_CREDENTIAL_DENIED): 仅允许持有审计私钥凭据的 audit 角色进行终态交付。当前身份 lane=${cur || '未声明'} 无权访问 audit.token！`);
+        console.error(`   严禁发起方或其他角色凭工单明文 Nonce 冒充签章交付。`);
+        process.exit(1);
+      }
+      const expectedSig = computeAuditSignature(auditToken, id, hFm.round || 1, expectedNonce);
+      if (!rFm.audit_sig || rFm.audit_sig !== expectedSig) {
+        if (cur === 'audit') {
+          rFm.audit_sig = expectedSig;
+          setFM(rFile, { audit_sig: expectedSig });
+        } else {
+          console.error(`❌ 审计防伪门禁：缺少或伪造审计私钥签章 (audit_sig)。`);
+          console.error(`   在同工作区模式下，通过验收必须使用 audit 角色专用私钥凭据签章交付，禁止发起方仅凭工单明文 Nonce 冒充签章！`);
+          process.exit(1);
+        }
       }
     }
 
@@ -2388,38 +2632,40 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.31.1 为准）
+const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.32.0 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
-- **命令形态与显式身份**：一律 \`baton <op>\` 或 \`handoff <op>\`。全面支持 \`--as <lane>\` 显式声明执行身份，同一会话内可无缝切换角色并发处理多工单。
-- **确定性自愈**：校验细节（Nonce、证据路径、数据一致性）由 CLI 运行时精准拦截；若命令报错，末尾 100% 打印可直接复制的一键自愈命令，按提示执行即可恢复。
+- **命令形态与显式身份**：一律 \`baton <op>\` 或 \`handoff <op>\`。全面支持 \`--as <lane>\` 显式声明身份，同一会话无缝切换多工单。
+- **会话身份锁与凭证防伪**：支持 \`baton lane <lane>\` 锁定会话身份；环境绑定优先级 \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`；审计交付必须持有 \`audit.token\` 密码学签章，禁止发起方跨角色自我闭环。
+- **确定性自愈**：校验细节（Nonce、证据路径、数据一致性）由 CLI 运行时精准拦截；若命令报错，末尾 100% 打印可直接复制的一键自愈命令。
 
 **入站工作流（接单 · 交付 · 退回）**
 1. **查待办**：运行 \`baton status --as <本方 lane|target>\`（直取本方未闭环待办工单，或全量 \`baton status\`）。
 2. **读工单**：运行 \`baton show <id>\`，根据验收判据改动本 lane 范围代码并实测。
 3. **交付或退回（实测为唯一准绳）**：
-   - **实测通过**：照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` 骨架 → 运行 \`baton receipt <id> -n "<正文>" --deliver --as <本方 lane> --evidence-paths "<真实文件路径>"\`（审计工单附 \`--audit-nonce "<nonce>"\` 或同工作区授权下使用 \`--auto-nonce\` 自动绑定最新令牌；红队用例严格遵循 NO_DISPATCH / NO_COMPLETE / COMPLETE 三态标准）。
-   - **实测未过（NO-GO/受阻）**：享有【无条件安全下车通道】，直接运行 \`baton reject <id> -n "<驳回理由/缺失条件>" --as <本方 lane>\` 退回整改（中间受阻回执亦可直接无阻碍登记）。
+   - **实测通过**：照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` 骨架 → 运行 \`baton receipt <id> -n "<正文>" --deliver --as <本方 lane> --evidence-paths "<路径>"\`（审计工单附 \`--audit-nonce "<nonce>"\` 或同工作区授权下使用 \`--auto-nonce\` 自动绑定最新令牌；红队用例严格遵循 NO_DISPATCH / NO_COMPLETE / COMPLETE 三态标准）。
+   - **实测未过（NO-GO/受阻）**：享有安全下车通道，直接运行 \`baton reject <id> -n "<理由/缺失条件>" --as <本方 lane>\` 退回整改。
 4. **收尾自检**：运行 \`baton check [id]\`（若有数据漂移可加 \`--fix\` 自动修复）。
 
 **出站工作流（派发 · 监听）**
-1. **建单与转递**：\`baton new <target|lane> <type> "<标题>"\`，填写正文后执行 \`baton forward <id> --wait\`（多单并发可使用 \`baton forward <id> --async\` 解耦，派发后运行 \`baton wait <id1> <id2> ... --all\` 聚合监听；交付完成并平息后自动唤醒验收）。
+1. **建单与转递**：\`baton new <target|lane> <type> "<标题>"\`，填写正文后执行 \`baton forward <id> --wait\`（多单并发可用 \`--async\` 解耦，派发后运行 \`baton wait <id1> <id2> ... --all\` 聚合监听）。
 2. **回复收尾（交接提示词规范）**：出站回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
    ## 交接提示词
    \`\`\`text
-   请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）
+   【身份警示：你是接收方 <目标角色>，请勿切换角色】请【<目标角色>】接单 [<ID>]：<交接路径>（<主题>）
    \`\`\`
 
 详见 \`$(lab path handoffs)/AGENT-GUIDE.md\` 获取完整版 Preflight。`;
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.31.1 · Details in $(lab path handoffs)/README.md)
+const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.32.0 · Details in $(lab path handoffs)/README.md)
 
 **Core Guards & Identity (Mandatory)**
 - **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.
 - **CLI Form & Explicit Identity**: Always use \`baton <op>\` or \`handoff <op>\`. Full support for \`--as <lane>\` explicit identity override, enabling multi-ticket processing within the same session.
+- **Session Lane Lock & Cryptographic Signatures**: Run \`baton lane <lane>\` to lock session identity; precedence is \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`; audit deliverables require \`audit.token\` cryptographic signatures to prevent self-closing leaks.
 - **Self-Healing Diagnostics**: Gate details (Nonce, Evidence, consistency) are evaluated by CLI runtime. Every CLI error output ends with a one-click copyable remediation command.
 
 **Inbound Workflow (Receive · Deliver · Reject)**
@@ -2435,7 +2681,7 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
 2. **Tail Block (Baton Pass Prompt Standard)**: End outbound replies with a dedicated code block for one-click human copying (no text after this block):
    ## Baton Pass Prompt
    \`\`\`text
-   Please [Target Role] take handoff [<ID>]: <path> (<topic>)
+   【ROLE NOTICE: You are assignee <Target Role>, do not switch roles】Please [<Target Role>] take handoff [<ID>]: <path> (<topic>)
    \`\`\`
 
 See \`$(lab path handoffs)/AGENT-GUIDE.md\` for full Preflight.`;
@@ -2988,9 +3234,9 @@ function cmdPrompt(args) {
       console.log(`\`\`\`text`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
-        console.log(`请【${toRole}】在隔离工作树（${wtRel}）接单 [${id}]：${display}（${title}）`);
+        console.log(`【身份警示：你是接收方 ${toRole}，请勿切换角色】请【${toRole}】在隔离工作树（${wtRel}）接单 [${id}]：${display}（${title}）`);
       } else {
-        console.log(`请【${toRole}】接单 [${id}]：${display}（${title}）`);
+        console.log(`【身份警示：你是接收方 ${toRole}，请勿切换角色】请【${toRole}】接单 [${id}]：${display}（${title}）`);
       }
       console.log(`\`\`\`\n`);
       if (ws === 'worktree') {
@@ -3016,9 +3262,9 @@ function cmdPrompt(args) {
       console.log(`\`\`\`text`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
-        console.log(`Please [${toRole}] take handoff [${id}] in isolated worktree (${wtRel}): ${display} (${title})`);
+        console.log(`【ROLE NOTICE: You are assignee ${toRole}, do not switch roles】Please [${toRole}] take handoff [${id}] in isolated worktree (${wtRel}): ${display} (${title})`);
       } else {
-        console.log(`Please [${toRole}] take handoff [${id}]: ${display} (${title})`);
+        console.log(`【ROLE NOTICE: You are assignee ${toRole}, do not switch roles】Please [${toRole}] take handoff [${id}]: ${display} (${title})`);
       }
       console.log(`\`\`\`\n`);
       if (ws === 'worktree') {
@@ -3072,7 +3318,7 @@ function cmdPrompt(args) {
     console.log(`\n## 交接提示词\n`);
     console.log(`> 直接复制下方提示词，发送给接收方 Agent 接单：\n`);
     console.log(`\`\`\`text`);
-    console.log(`请收 ${targetLabel} 交接 [${id}]：${display}（${title}）`);
+    console.log(`【身份警示：你是接收方 ${targetLabel}，请勿切换角色】请收 ${targetLabel} 交接 [${id}]：${display}（${title}）`);
     console.log(`\`\`\`\n`);
     console.log(`（若已挂起后台监听，回执登记后状态机会自动感知唤醒发起方闭环。）\n`);
   } else {
@@ -3081,7 +3327,7 @@ function cmdPrompt(args) {
     console.log(`\n## Baton Pass Prompt\n`);
     console.log(`> Copy the prompt below to pass to the receiver Agent:\n`);
     console.log(`\`\`\`text`);
-    console.log(`Please [${targetLabel}] take handoff [${id}]: ${display} (${title})`);
+    console.log(`【ROLE NOTICE: You are assignee ${targetLabel}, do not switch roles】Please [${targetLabel}] take handoff [${id}]: ${display} (${title})`);
     console.log(`\`\`\`\n`);
     console.log(`(If background listener is running, the state machine will automatically wake up upon receipt.)\n`);
   }
@@ -4507,6 +4753,7 @@ switch (cmd) {
     cmdThrottle(rest);
     break;
   case 'drift': cmdDrift(rest); break;
+  case 'lane': cmdLane(rest); break;
   default: {
     const isZh = detectLang() === 'zh';
     if (isZh) {
@@ -4519,6 +4766,7 @@ switch (cmd) {
                                                创建交接（跨仓 target / 仓内 lane / 支持 worktree 隔离）
   baton status [--json] [--for <t|lane>] [--mermaid]
                                                查看未闭环摘要（支持 --mermaid 拓扑图）
+  baton lane [<lane>|--clear]                  查看、锁定或清除当前会话身份锁（防跨角色伪装漂移）
   baton accept <id> -n "<验收结论>" [--by <lane>] [--prune-worktree]
                                                审计闭环（close 为同义别名，可选自动回收隔离工作树）
   baton reject <id> -n "<驳回理由>"            审计驳回（退回执行方继续改）
@@ -4555,6 +4803,7 @@ Usage:
                                                Create handoff (cross-repo target / intra-repo lane / support worktree isolation)
   baton status [--json] [--for <t|lane>] [--mermaid]
                                                View open handoffs summary (supports --mermaid diagram)
+  baton lane [<lane>|--clear]                  View, lock, or clear current session identity lock (prevents impersonation)
   baton accept <id> -n "<verdict>" [--by <lane>] [--prune-worktree]
                                                Audit closure (close is an alias; optional auto-prune isolated worktree)
   baton reject <id> -n "<reason>"              Audit rejection (return to executor for revision)
