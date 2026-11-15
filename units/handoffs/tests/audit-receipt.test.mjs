@@ -482,8 +482,8 @@ status: draft
     assert.equal(rejectB.status, 0);
     assert.match(rejectB.stdout, /已驳回退回/);
 
-    // 3. Agent 再次以 audit 身份对刚才交付的工单 A 执行最终验收闭环
-    const acceptA = runBaton(tmpDir, `accept ${idA} -n "审计通过" --as audit`, { HANDOFF_LANE: '' });
+    // 3. 审计方会话对刚才交付的工单 A 执行最终验收闭环（利益冲突隔离：严禁实现方会话自审自闭环）
+    const acceptA = runBaton(tmpDir, `accept ${idA} -n "审计通过" --as audit`, { HANDOFF_LANE: '', BATON_SESSION_ID: 'audit-session' });
     assert.equal(acceptA.status, 0);
     assert.match(acceptA.stdout, /已审计闭环/);
 

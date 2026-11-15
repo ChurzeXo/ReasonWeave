@@ -834,7 +834,14 @@ const SESSIONS_DIR = path.join(ROOT, '.sessions');
 const SECRETS_DIR = path.join(ROOT, '.secrets');
 
 function getSessionId() {
-  const envKey = process.env.BATON_SESSION_ID || process.env.TERM_SESSION_ID || process.env.SESSION_ID;
+  const envKey = process.env.BATON_SESSION_ID ||
+    process.env.ANTIGRAVITY_CONVERSATION_ID ||
+    process.env.CURSOR_CONVERSATION_ID ||
+    process.env.CLAUDE_CONVERSATION_ID ||
+    process.env.WORKBUDDY_CONVERSATION_ID ||
+    process.env.WINDSURF_CONVERSATION_ID ||
+    process.env.TERM_SESSION_ID ||
+    process.env.SESSION_ID;
   if (envKey) return String(envKey).replace(/[^a-zA-Z0-9_-]/g, '_');
   const ppid = process.ppid || 'global';
   return `ppid-${ppid}`;
@@ -947,7 +954,11 @@ function resolveExecutionLane(asInput, ctx = {}) {
         }
       }
     }
-    setSessionLane(reqLane);
+    // 关键加固：若当前会话此前已绑定角色，严禁通过单次命令的 --as 篡改已锁定的会话身份！
+    // 只有在未锁定的会话中，初次操作才允许自动赋锁；若要更改锁，必须显式调用 baton lane <lane>
+    if (!sessionLane) {
+      setSessionLane(reqLane);
+    }
     return reqLane;
   }
 
