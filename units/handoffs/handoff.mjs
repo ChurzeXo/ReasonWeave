@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.34.0';
+const BATON_VERSION = '2.35.0';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -203,8 +203,8 @@ const TARGET_LABELS = {
 const TYPES = new Set(['bug', 'feature', 'breaking', 'question']);
 // 仓内模式类型（提案 §5.1）：task/bug/feature/question/continuation（continuation = 续接新窗口，后继会话闭环）
 const INTRA_TYPES = new Set(['task', 'bug', 'feature', 'question', 'continuation']);
-const INTRA_ID_RE = /^([A-Za-z0-9_-]+)-\d{8}-\d{2}-(task|bug|feature|question|continuation)\.md$/;
-const INTRA_RESP_RE = /^[A-Za-z0-9_-]+-\d{8}-\d{2}-(task|bug|feature|question|continuation)-resp\.md$/;
+const INTRA_ID_RE = /^([A-Za-z0-9_-]+)-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?))\.md$/;
+const INTRA_RESP_RE = /^[A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?))-resp\.md$/;
 
 // ── 语言与国际化侦测（Locale & i18n Detection）───────────────────────────
 function detectLang() {
@@ -691,6 +691,28 @@ function nextSeqFor(prefix, ymd) {
   return String(max + 1).padStart(2, '0');
 }
 
+// 项目代号 + 时间戳 工单 ID 生成器（v2.35.0 · 彻底消除角色倒错与跨天序号混淆）
+function generateTimestampId(prefix) {
+  const d = new Date();
+  const yyyy = String(d.getFullYear());
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const ymdhm = `${yyyy}${mm}${dd}-${hh}${min}`;
+  const baseId = `${prefix}-${ymdhm}`;
+  const baseFile = path.join(H_DIR, `${baseId}.md`);
+  if (!fs.existsSync(baseFile)) {
+    return baseId;
+  }
+  // 同一分钟内并发创建则自增追加后缀 -01, -02...
+  let seq = 1;
+  while (fs.existsSync(path.join(H_DIR, `${baseId}-${String(seq).padStart(2, '0')}.md`))) {
+    seq++;
+  }
+  return `${baseId}-${String(seq).padStart(2, '0')}`;
+}
+
 function readFM(content) {
   if (!content) return null;
   const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
@@ -1173,9 +1195,15 @@ function cmdNew(args) {
   // 方向标签不猜发送方（2026-10-18 批次七修）：旧写法写死「iggle 是发起方」，hub 发起时整条链烙错章
   // （dirLabel → 回执 authorLabel → brief intro 三处同源）。发送方以转递话术 / frontmatter 为准。
   const dirLabel = `接收方 ${TARGET_LABELS[t] || t}`;
-  const ymd = todayYMD();
-  const seq = nextSeqFor(t.toUpperCase(), ymd);
-  const id = `${t.toUpperCase()}-${ymd}-${seq}-${ty}`;
+  let id;
+  const idFormat = flagValue(args, '--id-format') || HUB_CONFIG.id_format || process.env.BATON_ID_FORMAT || 'timestamp';
+  if (idFormat === 'legacy' || args.includes('--legacy-id') || process.env.BATON_LEGACY_ID === '1') {
+    const ymd = todayYMD();
+    const seq = nextSeqFor(t.toUpperCase(), ymd);
+    id = `${t.toUpperCase()}-${ymd}-${seq}-${ty}`;
+  } else {
+    id = generateTimestampId(t.toUpperCase());
+  }
   const file = path.join(H_DIR, `${id}.md`);
   if (fs.existsSync(file)) { console.error('已存在: ' + file); process.exit(1); }
   const fm = {
@@ -1183,6 +1211,7 @@ function cmdNew(args) {
     target: t,
     type: ty,
     status: 'draft',
+    conversation_id: getSessionId(),
     round: 1,
     needs_change: false,
     needs_iggle_change: false, // 兼容历史消费方
@@ -1250,9 +1279,16 @@ function cmdNewIntra(args) {
     }
   }
   const title = restClean.join(' ').trim() || '(无标题)';
-  const ymd = todayYMD();
-  const seq = nextSeqFor(l, ymd);
-  const id = `${l}-${ymd}-${seq}-${ty}`;
+  let id;
+  const idFormat = flagValue(args, '--id-format') || HUB_CONFIG.id_format || process.env.BATON_ID_FORMAT || 'timestamp';
+  if (idFormat === 'legacy' || args.includes('--legacy-id') || process.env.BATON_LEGACY_ID === '1') {
+    const ymd = todayYMD();
+    const seq = nextSeqFor(l, ymd);
+    id = `${l}-${ymd}-${seq}-${ty}`;
+  } else {
+    const projectCode = String(HUB_CONFIG.project || path.basename(path.resolve(ROOT, '..')) || 'BATON').toUpperCase();
+    id = generateTimestampId(projectCode);
+  }
   const file = path.join(H_DIR, `${id}.md`);
   if (fs.existsSync(file)) { console.error('已存在: ' + file); process.exit(1); }
   // 审计动作契约（v2.13）：to_lane=audit 时把强制审计动作注入交接文档「给执行方」节，
@@ -1270,6 +1306,7 @@ function cmdNewIntra(args) {
     timing: 'sequential',
     type: ty,
     status: 'draft',
+    conversation_id: getSessionId(),
     round: 1,
     needs_change: false,
     created: todayISO(),
@@ -1679,15 +1716,18 @@ function cmdReject(args) {
       const isZh = detectLang() === 'zh';
       const toRole = resolveLaneRole(hFm?.from_lane) || hFm?.from_lane || (isZh ? '实现方' : 'Implementer');
       const fromRole = resolveLaneRole(cur) || cur || (isZh ? '驳回方' : 'Rejector');
+      const rawTitle = extractTitle(stripFM(rawH));
+      const cleanTitle = sanitizeTaskTopic(rawTitle);
+      const display = file.startsWith(os.homedir()) ? '~' + file.slice(os.homedir().length) : file;
       if (isZh) {
         console.log(`\n📋 可复制整改提示词（复制给实现方 Agent）:`);
         console.log(`\`\`\`text`);
-        console.log(`请 [${toRole}] 接单整改：\n[工单编号] [${id}]\n[驳回角色] ${fromRole}\n[驳回理由] ${note}\n[后续动作] 请完成整改后重新转递 (baton forward ${id} --wait)`);
+        console.log(`请 [${toRole}] 接单整改：\n[任务主题] ${cleanTitle}\n[任务轮次] Round ${nextRound}（第 ${nextRound} 轮整改）\n[工单编号] [${id}]\n[驳回角色] ${fromRole}\n[驳回理由] ${note}\n[工单路径] ${display}\n[后续动作] 请完成整改后重新转递 (baton forward ${id} --wait)`);
         console.log(`\`\`\`\n`);
       } else {
         console.log(`\n📋 Copyable Rejection Prompt (pass to implementer):`);
         console.log(`\`\`\`text`);
-        console.log(`Please [${toRole}] take ticket for remediation:\n[Ticket ID] [${id}]\n[Rejected By] ${fromRole}\n[Reason] ${note}\n[Next Step] Please remediate and re-forward (baton forward ${id} --wait)`);
+        console.log(`Please [${toRole}] take ticket for remediation:\n[Task Topic] ${cleanTitle}\n[Task Round] Round ${nextRound} (Remediation Round ${nextRound})\n[Ticket ID] [${id}]\n[Rejected By] ${fromRole}\n[Reason] ${note}\n[Ticket Path] ${display}\n[Next Step] Please remediate and re-forward (baton forward ${id} --wait)`);
         console.log(`\`\`\`\n`);
       }
     }
@@ -2536,6 +2576,7 @@ async function cmdForward(args) {
         forwardUpdates.rejected_at = '';
       }
       if (!fm?.round) forwardUpdates.round = 1;
+      if (!fm?.conversation_id) forwardUpdates.conversation_id = getSessionId();
       if (MODE === 'intra-repo' && toLane === 'audit' && !fm?.audit_nonce) {
         forwardUpdates.audit_nonce = generateAuditNonce(id);
       }
@@ -2761,8 +2802,8 @@ function cmdShow(args) {
 const STATUSES = new Set(['draft', 'forwarded', 'received', 'delivered', 'closed']);
 // 由 TARGETS 派生（单源），避免 README/COMMANDS/正则多处枚举漂移
 const TARGET_ALT = [...TARGETS].map(t => t.toUpperCase()).join('|');
-const H_RE = new RegExp(`^(${TARGET_ALT})-(\\d{8})-(\\d{2})-(bug|feature|breaking|question)\\.md$`);
-const R_RE = new RegExp(`^(${TARGET_ALT})-(\\d{8})-(\\d{2})-(bug|feature|breaking|question)-resp\\.md$`);
+const H_RE = new RegExp(`^(${TARGET_ALT})-\\d{8}-(?:(?:\\d{2}-(?:bug|feature|breaking|question))|(?:\\d{4,6}(?:-\\d{2})?))\\.md$`);
+const R_RE = new RegExp(`^(${TARGET_ALT})-\\d{8}-(?:(?:\\d{2}-(?:bug|feature|breaking|question))|(?:\\d{4,6}(?:-\\d{2})?))-resp\\.md$`);
 /** 转递提示词（v2.8.3 一行式 · 2026-09-10 与回执方向「请收」一行式对称）。
  *
  * 演进史：~24 行（内联步骤）→ 3 行指针版（v2.8）→ 散文 Path 定向版（2026-09-10）→ 一行式（v2.8.3）。
@@ -2804,10 +2845,11 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.34.0 为准）
+const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.35.0 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
+- **一单到底与主题恒定**：工单 ID（形如 <PROJECT>-YYYYMMDD-HHMM）创建后全程唯一恒定，所有轮次（Round 1..N）在原单同一 ID 下流转闭环，严禁轮次变异；任务主题全生命周期保持一致，严禁追加轮次噪音。
 - **命令形态与显式身份**：一律 \`baton <op>\` 或 \`handoff <op>\`。全面支持 \`--as <lane>\` 显式声明身份，同一会话无缝切换多工单。
 - **会话身份锁与凭证防伪**：支持 \`baton lane <lane>\` 锁定会话身份；环境绑定优先级 \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`；审计交付必须持有 \`audit.token\` 密码学签章，禁止发起方跨角色自我闭环。
 - **确定性自愈**：校验细节（Nonce、证据路径、数据一致性）由 CLI 运行时精准拦截；若命令报错，末尾 100% 打印可直接复制的一键自愈命令。
@@ -2837,10 +2879,11 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.34.0 · Details in $(lab path handoffs)/README.md)
+const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.35.0 · Details in $(lab path handoffs)/README.md)
 
 **Core Guards & Identity (Mandatory)**
 - **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.
+- **Single Ticket Lifecycle & Invariant Topic**: Ticket ID (<PROJECT>-YYYYMMDD-HHMM) is strictly immutable throughout its lifecycle across all rounds (Round 1..N); task topic remains constant with zero round noise suffixing.
 - **CLI Form & Explicit Identity**: Always use \`baton <op>\` or \`handoff <op>\`. Full support for \`--as <lane>\` explicit identity override, enabling multi-ticket processing within the same session.
 - **Session Lane Lock & Cryptographic Signatures**: Run \`baton lane <lane>\` to lock session identity; precedence is \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`; audit deliverables require \`audit.token\` cryptographic signatures to prevent self-closing leaks.
 - **Self-Healing Diagnostics**: Gate details (Nonce, Evidence, consistency) are evaluated by CLI runtime. Every CLI error output ends with a one-click copyable remediation command.
@@ -2930,6 +2973,16 @@ function checkStubCarrier() {
 function extractTitle(body) {
   const m = body.match(/^# (.+)$/m);
   return m ? m[1].trim() : '(无标题)';
+}
+
+// 任务主题全生命周期恒定净化（v2.35.0）：强力剥离任何形式的轮次噪音，确保主题恒定
+function sanitizeTaskTopic(rawTitle) {
+  if (!rawTitle) return '(无标题)';
+  let title = rawTitle.replace(/\s*\((?:to_)?lane:\s*[^)]+\)/gi, '').trim();
+  // 匹配任何形式的轮次声明及其后续附加噪音（例如 · Round 2、[Round 2]、(第 2 轮复审) 及其后面可能跟随的修复补充说明）
+  title = title.replace(/\s*([·•\-–]\s*)?(?:\[|【|\()?\s*(?:第\s*\d+\s*轮(?:\s*复审|\s*整改)?|Round\s*\d+)(?:[^\n]*)$/gi, '').trim();
+  title = title.replace(/[·•\-–]\s*$/g, '').trim();
+  return title || rawTitle;
 }
 
 function cmdCheck(args = []) {
@@ -3124,6 +3177,13 @@ function cmdCheckIntra(args = []) {
       setFM(p, { audit_nonce: fixedNonce });
       logStateJournal(id, 'repair', { note: 'Issue missing audit_nonce', audit_nonce: fixedNonce });
       console.log(`🔧 已安全补发缺失的 Audit Nonce: ${id} → ${fixedNonce}`);
+    }
+
+    if (isFix && !fm.conversation_id) {
+      const fixedConv = getSessionId();
+      setFM(p, { conversation_id: fixedConv });
+      logStateJournal(id, 'repair', { note: 'Backfill missing conversation_id', conversation_id: fixedConv });
+      console.log(`🔧 已安全补齐缺失的 conversation_id: ${id} → ${fixedConv}`);
     }
 
     // 状态机语义不变量校验（v2.25 · P1-1 修复）
@@ -3411,7 +3471,7 @@ function cmdPrompt(args) {
     const fm = readFM(content) || {};
     const ws = fm.workspace || 'same';
     const toRole = resolveLaneRole(fm.to_lane) || fm.to_lane || (isZh ? '执行方' : 'Executor');
-    const cleanTitle = title.replace(/\s*\((?:to_)?lane:\s*[^)]+\)/gi, '').trim();
+    const cleanTitle = sanitizeTaskTopic(title);
     const round = Number(fm.round || 1);
     const roundLineZh = round > 1 ? `[任务轮次] Round ${round}（第 ${round} 轮复审）\n` : '';
     const roundLineEn = round > 1 ? `[Task Round] Round ${round} (Review Round ${round})\n` : '';
@@ -3509,7 +3569,7 @@ function cmdPrompt(args) {
   }
 
   const targetLabel = pTarget ? (TARGET_LABELS[pTarget] || pTarget) : (isZh ? '依赖方' : 'dependency');
-  const cleanTitle = title.replace(/\s*\((?:to_)?lane:\s*[^)]+\)/gi, '').trim();
+  const cleanTitle = sanitizeTaskTopic(title);
   const round = Number(readFM(content)?.round || 1);
   const roundLineZh = round > 1 ? `[任务轮次] Round ${round}（第 ${round} 轮复审）\n` : '';
   const roundLineEn = round > 1 ? `[Task Round] Round ${round} (Review Round ${round})\n` : '';
@@ -3663,7 +3723,9 @@ function cmdLink(args) {
     let stubChecked = 0;
     for (const t of checkTargets) {
       const content = fs.readFileSync(t, 'utf8');
-      const m = content.match(/契约 v(\d+\.\d+\.\d+)/) || content.match(/Contract v(\d+\.\d+\.\d+)/);
+      const stubMatch = content.match(/<!-- handoff-stub:v\d+(?:\.\d+)? begin -->([\s\S]*?)<!-- handoff-stub:v\d+(?:\.\d+)? end -->/);
+      const targetContent = stubMatch ? stubMatch[1] : content;
+      const m = targetContent.match(/契约 v(\d+\.\d+\.\d+)/) || targetContent.match(/Contract v(\d+\.\d+\.\d+)/);
       if (m) {
         stubChecked++;
         const stubVer = m[1];
@@ -3776,7 +3838,9 @@ function cmdLink(args) {
   let hasDrift = false;
   for (const t of projectTargets) {
     const content = fs.readFileSync(t, 'utf8');
-    const m = content.match(/契约 v(\d+\.\d+\.\d+)/) || content.match(/Contract v(\d+\.\d+\.\d+)/);
+    const stubMatch = content.match(/<!-- handoff-stub:v\d+(?:\.\d+)? begin -->([\s\S]*?)<!-- handoff-stub:v\d+(?:\.\d+)? end -->/);
+    const targetContent = stubMatch ? stubMatch[1] : content;
+    const m = targetContent.match(/契约 v(\d+\.\d+\.\d+)/) || targetContent.match(/Contract v(\d+\.\d+\.\d+)/);
     if (m && m[1] !== BATON_VERSION) {
       hasDrift = true;
       break;

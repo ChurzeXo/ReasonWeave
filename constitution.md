@@ -38,6 +38,9 @@ Unit 之间保持松耦合，不得产生强环形依赖；消费方可单选任
 ### T4 — 身份确定性与禁止角色漂移 (Identity Pinning & Anti-Impersonation)
 任何参与工程流转的 Agent 严格受绑定身份约束，严禁越权代办、伪装其他角色或自我闭环；身份防御由环境/会话锁（`HANDOFF_LANE` / `baton lane`）与物理门禁强制保障，无需在日常交接提示词中堆砌口号式警示。
 
+### T5 — 工单全生命周期单一定位与主题恒定 (Single Ticket Lifecycle & Invariant Topic)
+工单在创建时即生成全局唯一的永久标识符（形如 `<PROJECT>-YYYYMMDD-HHMM`），在全生命周期内（从 Round 1 到 Round N 及历次驳回整改）一律使用同一工单 ID 在原单中原位流转，严禁派生新单或变更 ID；任务主题（Task Topic）必须保持业务母题恒定，任何轮次状态、返工说明与临时噪音严禁污染主题字段，确保跨角色交接与追踪认知零漂移。
+
 ---
 
 ## 3. Unit 隔离与维护原则 (Unit Isolation Principles)

@@ -6,6 +6,22 @@
 
 ---
 
+> **v2.35.0 变更（2026-11-16 · 新版工单 ID 引擎 `<PROJECT>-YYYYMMDD-HHMM` · 一单到底禁止轮次变单 · 任务主题母题恒定与 `sanitizeTaskTopic` 强力过滤 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户反馈存量工单 ID（如 `audit-20261115-06-task`）以 lane/target 开头导致下游角色倒错、且同日序号重置容易撞车视觉混淆；多轮流转中任务主题频遭 Agent 误打补丁（如频频追加 `· Round 2` 或局部修复点），导致提示词主题漂移、转递混乱。
+> 1. **新版工单 ID 引擎（Timestamp Project Identifier）**：
+>    - 默认生成 `<PROJECT>-YYYYMMDD-HHMM` 格式 ID（若并发冲突自动追加 `-01` 等序列号），中立无角色偏见、抗撞车；跨仓与仓内正则全面扩展兼容存量历史工单；
+>    - 支持通过 `--legacy-id` / `BATON_LEGACY_ID=1` / `id_format: "legacy"` 回退老格式；
+> 2. **一单到底（Single Ticket Lifecycle）**：
+>    - 工单 ID 定下后全程唯一恒定，所有轮次（Round 1..N）与驳回整改均在原单原位流转，严禁新建单或变异 ID；
+> 3. **任务主题母题恒定（Task Topic Invariance）**：
+>    - 核心实现 `sanitizeTaskTopic`：在出站提示词生成（`cmdPrompt`）与驳回整改提示词（`cmdReject`）层强力清洗剥离任何轮次噪音（如 `· Round 2`、`[Round 2]`、`修复xxx` 补丁等），保持 `[任务主题]` 在全生命周期中 100% 恒定；
+> 4. **驳回整改提示词卡片化对齐**：
+>    - `baton reject` 输出结构化整改卡片，包含 `[任务主题]`、`[任务轮次]`、`[工单编号]`、`[驳回角色]`、`[驳回理由]`、`[工单路径]`；
+> 5. **宪法入规与接入桩升级**：
+>    - 最高工程宪法追加 `T5 — 工单全生命周期单一定位与主题恒定`；
+>    - 接入桩全面升级至 `v2.35.0`，指纹重新签发。
+
+---
+
 > **v2.34.0 变更（2026-11-15 · 单工单严禁使用 --async 逃逸监听硬门禁 · 派发前置门禁防御 · 未监听借据系统 Unwatched Debt Guard · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户反馈本地 Agent 在 `forward` 派发时，常出于对长时间同步挂住的恐惧而下意识使用 `--async` 改状态却严重漏掉挂起后台监听（漏掉 `baton wait`，导致工单沦为无人唤醒的死局与违规道歉）。
 > 1. **单工单严禁使用 `--async` 逃逸监听（Single-Ticket Fail-Closed Gate）**：
 >    - 在 Agent 托管环境下，派发 1 份工单时严禁使用 `--async` 将操作拆分为「先 --async 后 wait」，物理拦截退出 1；

@@ -36,6 +36,11 @@ function createTestRepo() {
   return tmpDir;
 }
 
+
+function extractTicketId(str) {
+  const m = str && str.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/);
+  return m ? m[1] : null;
+}
 function runBaton(tmpDir, args, extraEnv = {}) {
   const asMatch = args.match(/--as\s+([a-zA-Z0-9_-]+)/);
   const defaultLane = asMatch ? asMatch[1] : 'audit';
@@ -71,7 +76,7 @@ describe('Agent Baton: Audit Receipt & Nonce Lifecycle Test Suite', () => {
   it('1. 派发 audit 工单自动生成 Audit Nonce，show 与 status --for audit 可见', () => {
     const res = runBaton(tmpDir, 'new audit task "审计 Redmi 12C 驱动" --from impl');
     assert.equal(res.status, 0, `new should succeed: ${res.stderr}\n${res.stdout}`);
-    const match = res.stdout.match(/(audit-\d+-\d+-task)/);
+    const match = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/);
     assert.ok(match, '应匹配到工单 ID');
     const id = match[1];
 
@@ -94,9 +99,9 @@ describe('Agent Baton: Audit Receipt & Nonce Lifecycle Test Suite', () => {
 
   it('2. to_lane=audit 提交回执强制核验 Nonce：缺 Nonce、伪造 Nonce 或跨工单 Nonce 均硬拒', () => {
     const res1 = runBaton(tmpDir, 'new audit task "任务 1" --from impl');
-    const id1 = res1.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id1 = res1.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const res2 = runBaton(tmpDir, 'new audit task "任务 2" --from impl');
-    const id2 = res2.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id2 = res2.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     const nonce1 = runBaton(tmpDir, `show ${id1} --nonce`).stdout.trim();
     const nonce2 = runBaton(tmpDir, `show ${id2} --nonce`).stdout.trim();
@@ -123,7 +128,7 @@ describe('Agent Baton: Audit Receipt & Nonce Lifecycle Test Suite', () => {
 
   it('3. INCOMPLETE / NO-GO 审计回执状态一致性与防抢跑交付拦截', () => {
     const res = runBaton(tmpDir, 'new audit task "真机验收" --from impl');
-    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const nonce = runBaton(tmpDir, `show ${id} --nonce`).stdout.trim();
 
     // 提交受阻回执（INCOMPLETE / NO-GO，缺失真机条件）
@@ -169,7 +174,7 @@ describe('Agent Baton: Audit Receipt & Nonce Lifecycle Test Suite', () => {
 
   it('4. 审计方（to_lane=audit）可直接对 forwarded 工单执行 reject 打回整改并轮转 Nonce', () => {
     const res = runBaton(tmpDir, 'new audit task "待整改任务" --from impl');
-    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const initialNonce = runBaton(tmpDir, `show ${id} --nonce`).stdout.trim();
 
     // 先转递工单，使其确定处于 forwarded 状态
@@ -219,7 +224,7 @@ describe('Agent Baton: Audit Receipt & Nonce Lifecycle Test Suite', () => {
 
   it('5. baton check <id> 单工单定向校验与 --fix 历史漂移自愈', () => {
     const res = runBaton(tmpDir, 'new audit task "定向校验与修复" --from impl');
-    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const nonce = runBaton(tmpDir, `show ${id} --nonce`).stdout.trim();
 
     // 先写一份正常回执
@@ -258,7 +263,7 @@ describe('Agent Baton: Audit Receipt & Nonce Lifecycle Test Suite', () => {
 
   it('6. Double-Blind (物理双盲) Fail-Closed 门禁与思维链脱敏验证', () => {
     const res = runBaton(tmpDir, 'new audit task "双盲脱敏测试" --from impl');
-    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const ticketPath = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
 
     // 1. 无验收判据时运行 forward --blind，必须 Fail-Closed 报错退出
@@ -322,7 +327,7 @@ status: draft
 
   it('7. 普通实现执行方（impl 等）越权 reject 必须被严格拦截', () => {
     const res = runBaton(tmpDir, 'new impl task "实现功能模块" --from audit');
-    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 普通执行方（impl）尝试对发给自己的工单执行 reject
     const illegalReject = runBaton(tmpDir, `reject ${id} -n "我不做，打回" --by impl`, { HANDOFF_LANE: '' });
@@ -332,7 +337,7 @@ status: draft
 
   it('8. Audit Nonce 缺失诊断与受控重签 (baton nonce <id> 与 baton show <id> --nonce)', () => {
     const res = runBaton(tmpDir, 'new audit task "测试 Nonce 完整生命周期" --from impl');
-    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const ticketPath = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
 
     // 人为模拟工单缺少 audit_nonce
@@ -362,7 +367,7 @@ status: draft
 
     // 针对非 audit 工单调用 baton nonce 必须拦截
     const implRes = runBaton(tmpDir, 'new impl task "普通任务" --from audit');
-    const implId = implRes.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const implId = implRes.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const illegalNonce = runBaton(tmpDir, `nonce ${implId}`);
     assert.notEqual(illegalNonce.status, 0);
     assert.match(illegalNonce.stderr, /非审计工单/);
@@ -370,7 +375,7 @@ status: draft
 
   it('9. baton check --fix 自动补发缺失的 Audit Nonce', () => {
     const res = runBaton(tmpDir, 'new audit task "测试 check --fix 补发 Nonce" --from impl');
-    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const ticketPath = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
 
     // 人为抹除 audit_nonce
@@ -390,7 +395,7 @@ status: draft
 
   it('10. [Phase 1] 审计防伪门禁解耦：受阻/NO-GO草稿回执豁免 Nonce 登记，但交付闸门严格拦截', () => {
     const res = runBaton(tmpDir, 'new audit task "测试受阻草稿回执豁免 Nonce" --from impl');
-    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 登记未通过/受阻回执（不带 --audit-nonce 且未带 --deliver）
     const draftRes = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：INCOMPLETE / NO-GO\\n- **说明**：硬件环境缺失暂不交付" --evidence-note "环境缺失"`);
@@ -410,7 +415,7 @@ status: draft
 
   it('11. [Phase 1] 无条件安全下车通道：reject 与 reopen 永远豁免状态快照门禁', () => {
     const res = runBaton(tmpDir, 'new audit task "测试下车通道豁免" --from impl');
-    const id = res.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 显式开启 HANDOFF_STATUS_GATE=on，模拟未看 status 视图的全新冷启动环境
     const rejectRes = runBaton(tmpDir, `reject ${id} -n "发现重大缺陷立即打回" --by audit`, {
@@ -422,7 +427,7 @@ status: draft
 
   it('12. [Phase 1] 发起方（from_lane）可主动驳回/撤回已派发工单，严禁静默跳过', () => {
     const res = runBaton(tmpDir, 'new impl task "实现某模块" --from audit');
-    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 发起方（audit）主动打回已转递给 impl 的工单
     const fromReject = runBaton(tmpDir, `reject ${id} -n "需求变更有重大调整，撤回重新规划" --by audit`);
@@ -437,7 +442,7 @@ status: draft
   it('13. [Phase 2] --as <lane> 显式身份：脱离 HANDOFF_LANE 环境变量完成回执、交付与闭环', () => {
     // 创建一个 from=audit, to=impl 的工单
     const res = runBaton(tmpDir, 'new impl task "实现数据解析器" --from audit');
-    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 在完全清空 HANDOFF_LANE 环境变量的环境下，通过 --as impl 登记回执并交付
     const receiptRes = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS\\n## 交付物\\n- 完成解析器实现" --as impl --deliver --evidence-paths "README.md"`, {
@@ -466,10 +471,10 @@ status: draft
   it('14. [Phase 2] 同会话多工单并发流转：同一对话内无缝处理不同角色的多个工单', () => {
     // 同一环境下创建两个不同方向的工单
     const resA = runBaton(tmpDir, 'new impl task "工单 A: 待 impl 处理" --from audit');
-    const idA = resA.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     const resB = runBaton(tmpDir, 'new audit task "工单 B: 待 audit 审计" --from impl');
-    const idB = resB.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idB = resB.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const nonceB = runBaton(tmpDir, `show ${idB} --nonce`).stdout.trim();
 
     // 在同一个没有任何环境变量切换的环境中：
@@ -495,7 +500,7 @@ status: draft
 
   it('15. [Phase 2] --as 越权防护依然生效：冒充或非指定角色操作严密拦截', () => {
     const res = runBaton(tmpDir, 'new impl task "测试越权拦截" --from audit');
-    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 1. 尝试使用 --as audit（发起方）自填回执，必须被拦截
     const illegalReceipt = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --as audit --evidence-paths "README.md"`, { HANDOFF_LANE: '' });
@@ -517,7 +522,7 @@ status: draft
 
   it('16. [Phase 3] 同跨仓数据模型归一化：统一使用 needs_change 并无缝兼容历史 needs_iggle_change', () => {
     const res = runBaton(tmpDir, 'new impl task "测试数据模型归一化" --from audit');
-    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 登记一份正常交付回执
     const okDeliver = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --as impl --deliver --evidence-paths "README.md"`, { HANDOFF_LANE: '' });
@@ -550,7 +555,7 @@ status: draft
   it('17. [Phase 4] 运行时确定性自愈与轻量韧性接入桩（v2.29.0）', () => {
     // 1. 验证错误自愈引导：报错中必须包含明确可复制的一键自愈命令
     const res = runBaton(tmpDir, 'new impl task "测试自愈命令与轻量桩" --from audit');
-    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 1.1 内容门禁未过时的自愈引导
     const badContentReceipt = runBaton(tmpDir, `receipt ${id} -n "缺少锚节与证据" --as impl`, { HANDOFF_LANE: '' });
@@ -575,24 +580,24 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.34\.0\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.35\.0\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.34\.0/);
+    assert.match(agentsContent, /v2\.35\.0/);
     assert.match(agentsContent, /--as <lane>/);
-    // 接入桩正文应保持轻量韧性（小于 3200 字符，去恐吓化）
+    // 接入桩正文应保持轻量韧性（小于 3500 字符，远小于旧版 8000+ 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
     assert.ok(stubMatch, '必须找到接入桩标记');
-    assert.ok(stubMatch[1].length < 3200, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
+    assert.ok(stubMatch[1].length < 3500, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
   });
 
   it('18. 连续多轮驳回历史无损继承与防冲刷（防模板空标题冲刷、精准小节定位追加）', () => {
     const tmpDir = createTestRepo();
     const res = runBaton(tmpDir, 'new impl task "测试多轮驳回历史保护" --from audit');
-    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 1. 第 1 轮驳回
     const rej1 = runBaton(tmpDir, `reject ${id} -n "第1轮驳回：缺少真机用例" --as audit`);
@@ -673,7 +678,7 @@ status: draft
     // 1. 创建工单
     const res = runBaton(tmpDir, 'new impl task "测试 Windows 平台换行符" --from lead', { HANDOFF_LANE: 'lead' });
     assert.equal(res.status, 0);
-    const m = res.stdout.match(/(impl-\d+-\d+-task)/);
+    const m = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/);
     assert.ok(m, '应匹配到工单 ID');
     const id = m[1];
     const ticketPath = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
@@ -720,27 +725,27 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.34.0，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.35.0，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.34.0'), '应当输出 v2.34.0');
+    assert.ok(verRes.stdout.includes('v2.35.0'), '应当输出 v2.35.0');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.34.0'), '-v 应当输出 v2.34.0');
+    assert.ok(vRes.stdout.includes('v2.35.0'), '-v 应当输出 v2.35.0');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.34.0'), 'version 应当输出 v2.34.0');
+    assert.ok(versionRes.stdout.includes('v2.35.0'), 'version 应当输出 v2.35.0');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.34.0'), '英文帮助中必须展示 v2.34.0');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.35.0'), '英文帮助中必须展示 v2.35.0');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -775,7 +780,7 @@ status: draft
   it('22. 后台监听守护防堆叠与平息熔断（Mac / Windows 防卡顿发烫安全防护）', () => {
     const tmpDir = createTestRepo();
     const res = runBaton(tmpDir, 'new impl task "测试后台节能与防堆叠" --from audit');
-    const id = res.stdout.match(/(impl-\d+-\d+-task)/)[1];
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 1. 模拟旧的 watcher 僵死残留于 .watch/<id>.json
     const watchDir = path.join(tmpDir, '.handoffs', '.watch');
@@ -796,9 +801,9 @@ status: draft
 
     // 1. 测试并发创建与批量转递 / --async 选项
     const resA = runBaton(tmpDir, 'new audit task "审计工单A" --from arch');
-    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const resB = runBaton(tmpDir, 'new audit task "审计工单B" --from arch');
-    const idB = resB.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idB = resB.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 工单初始 round 应当为 1
     const showInitA = runBaton(tmpDir, `show ${idA}`);
@@ -847,7 +852,7 @@ status: draft
 
     // 1. 验证 128-bit 强随机 Nonce (32 字符 hex)
     const resA = runBaton(tmpDir, 'new audit task "测试128位Nonce" --from arch');
-    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const showNonceRes = runBaton(tmpDir, `show ${idA} --nonce`);
     assert.equal(showNonceRes.status, 0);
     const nonce = showNonceRes.stdout.trim();
@@ -888,7 +893,7 @@ status: draft
 
     // 1. 创建 audit 工单，初始状态 round = 1
     const resA = runBaton(tmpDir, 'new audit task "测试工单轮次单一事实源与幂等性" --from impl');
-    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const initialNonce = runBaton(tmpDir, `show ${idA} --nonce`).stdout.trim();
 
     const showInit = runBaton(tmpDir, `show ${idA}`);
@@ -954,7 +959,7 @@ status: draft
 
     // 1. 创建 audit 工单，from_lane: impl, to_lane: audit
     const resA = runBaton(tmpDir, 'new audit task "测试驳回后重新转递归属与流水" --from impl');
-    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 2. 审计方驳回工单
     const rejRes = runBaton(tmpDir, `reject ${idA} -n "专项双盲用例未覆盖" --as audit`);
@@ -995,7 +1000,7 @@ status: draft
   it('27. [v2.32.0] 环境变量强绑定门禁（Fail-Closed：HANDOFF_LANE=arch 时严禁使用 --as audit 随意漂移）', () => {
     const tmpDir = createTestRepo();
     const resA = runBaton(tmpDir, 'new audit task "测试环境变量强绑定" --from arch', { HANDOFF_LANE: 'arch' });
-    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 当环境绑定了 HANDOFF_LANE=arch 时，尝试伪装为 audit 必须被拦截
     const fakeRes = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS" --as audit --evidence-note "说明"`, { HANDOFF_LANE: 'arch' });
@@ -1020,7 +1025,7 @@ status: draft
 
     // 2. 创建 to_lane: audit 工单
     const resA = runBaton(tmpDir, 'new audit task "测试会话利益冲突" --from arch', sessionEnv);
-    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 3. 当前会话 (arch) 尝试使用 --as audit 提交交付回执
     const fakeDeliver = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS" --deliver --as audit --evidence-note "说明"`, sessionEnv);
@@ -1044,7 +1049,7 @@ status: draft
 
     // 1. 创建 audit 工单，获取明文 Nonce
     const resA = runBaton(tmpDir, 'new audit task "测试私钥签章防伪" --from arch', { HANDOFF_LANE: 'arch' });
-    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const plainNonce = runBaton(tmpDir, `show ${idA} --nonce`, { HANDOFF_LANE: 'arch' }).stdout.trim();
 
     // 2. 非 audit 角色尝试调用 --auto-nonce 或提交回执：硬拦截
@@ -1080,7 +1085,7 @@ status: draft
   it('30. [v2.33.0] 结构化卡片提示词排版、Round 单行有标题与 baton lane CLI 自助管理', () => {
     const tmpDir = createTestRepo();
     const resA = runBaton(tmpDir, 'new audit task "测试提示词卡片化" --from arch', { HANDOFF_LANE: 'arch' });
-    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 1. 验证 baton prompt 输出为通俗结构化卡片，去除口号式警示
     const promptRes = runBaton(tmpDir, `prompt ${idA}`, { HANDOFF_LANE: 'arch' });
@@ -1128,7 +1133,7 @@ status: draft
 
     // 1. 创建单份工单
     const resA = runBaton(tmpDir, 'new audit task "审计单单A" --from impl');
-    const idA = resA.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     // 2. 在 Agent 托管环境下裸调用 forward（未指定 --wait、--async、--no-wait），必须物理门禁拦截退出 1，且工单不得被脏写
     const bareFwd = runBaton(tmpDir, `forward ${idA}`, { BATON_AGENT_HOST: 'antigravity' });
@@ -1146,7 +1151,7 @@ status: draft
 
     // 4. 创建第二份工单，测试批量并发派发（ids.length > 1）：合法放行并记入借据
     const resB = runBaton(tmpDir, 'new audit task "审计单单B" --from impl');
-    const idB = resB.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idB = resB.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
 
     const batchRes = runBaton(tmpDir, `forward ${idA} ${idB} --async`, { BATON_AGENT_HOST: 'antigravity' });
     assert.equal(batchRes.status, 0, '多工单允许使用 --async 并发派发');
@@ -1161,7 +1166,7 @@ status: draft
 
     // 5. 在借据未平账时，若试图再次 forward 新工单，必须实施未清偿借据门禁拦截
     const resC = runBaton(tmpDir, 'new audit task "审计单单C" --from impl');
-    const idC = resC.stdout.match(/(audit-\d+-\d+-task)/)[1];
+    const idC = resC.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     const blockedByDebt = runBaton(tmpDir, `forward ${idC} --wait`, { BATON_AGENT_HOST: 'antigravity' });
     assert.notEqual(blockedByDebt.status, 0, '存在未清偿借据时必须拦截后续派发');
     assert.match(blockedByDebt.stderr + blockedByDebt.stdout, /未清偿监听借据拦截|Unwatched Debt Gate Blocked/);
@@ -1178,5 +1183,55 @@ status: draft
     // 再次派发 idC 带 --no-wait：此时 activeDebts 已被活跃 watcher 自动平账，顺利放行
     const passAfterDebtCleared = runBaton(tmpDir, `forward ${idC} --no-wait`, { BATON_AGENT_HOST: 'antigravity' });
     assert.equal(passAfterDebtCleared.status, 0, '借据平账后派发顺利放行');
+  });
+
+  it('32. [v2.35.0] 新版工单 ID 引擎 (<PROJECT>-YYYYMMDD-HHMM)、一单到底在多轮中 ID 恒定，与任务主题母题恒定 (sanitizeTaskTopic 强力剥离轮次噪音)', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 验证默认生成的工单 ID 格式为 <PROJECT>-YYYYMMDD-HHMM
+    const res = runBaton(tmpDir, 'new audit task "ADR-073专项C-多轨EventInbox幂等去重与防风暴双盲审计" --from impl');
+    assert.equal(res.status, 0);
+    const m = res.stdout.match(/Created Intra-Repo Baton (TEST-PROJECT-\d{8}-\d{4}(?:-\d{2})?)/);
+    assert.ok(m, '新建工单应默认生成形如 TEST-PROJECT-YYYYMMDD-HHMM 的格式');
+    const id = m[1];
+
+    // 2. 模拟工单标题被意外追加轮次噪音 (如 · Round 2、[Round 2])
+    const ticketFile = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
+    let content = fs.readFileSync(ticketFile, 'utf8');
+    content = content.replace(/# .*/, '# ADR-073专项C-多轨EventInbox幂等去重与防风暴双盲审计 · Round 2 (修复xx问题)');
+    fs.writeFileSync(ticketFile, content, 'utf8');
+
+    // 3. 验证 prompt 产出的提示词中 [任务主题] 必须纯净剔除轮次噪音
+    const promptRes = runBaton(tmpDir, `prompt ${id}`, { BATON_LANG: 'zh' });
+    assert.equal(promptRes.status, 0);
+    assert.match(promptRes.stdout, /\[任务主题\] ADR-073专项C-多轨EventInbox幂等去重与防风暴双盲审计/);
+    assert.ok(!promptRes.stdout.includes('· Round 2'), '任务主题严禁包含 · Round 2 噪音');
+    assert.ok(!promptRes.stdout.includes('修复xx问题'), '任务主题严禁包含修复噪音');
+
+    // 4. 转递工单 (Round 1)
+    const fwdRes = runBaton(tmpDir, `forward ${id} --no-wait`, { BATON_AGENT_HOST: 'antigravity' });
+    assert.equal(fwdRes.status, 0);
+
+    // 5. 审计方驳回打回整改 (进入 Round 2)
+    const rejectRes = runBaton(tmpDir, `reject ${id} -n "验收未通过，需修复幂等锁逻辑" --as audit`, { BATON_LANG: 'zh' });
+    assert.equal(rejectRes.status, 0);
+
+    // 6. 验证驳回整改提示词结构化卡片与主题恒定
+    assert.match(rejectRes.stdout, /\[任务主题\] ADR-073专项C-多轨EventInbox幂等去重与防风暴双盲审计/);
+    assert.match(rejectRes.stdout, /\[任务轮次\] Round 2/);
+    assert.match(rejectRes.stdout, /\[工单编号\] \[TEST-PROJECT-\d{8}-\d{4}(?:-\d{2})?\]/);
+    assert.match(rejectRes.stdout, /\[驳回角色\]/);
+    assert.match(rejectRes.stdout, /\[驳回理由\] 验收未通过，需修复幂等锁逻辑/);
+
+    // 7. 一单到底验证：工单文件、工单 ID 在 Round 2 保持唯一恒定
+    const showRound2 = runBaton(tmpDir, `show ${id}`);
+    assert.equal(showRound2.status, 0);
+    assert.match(showRound2.stdout, /round:\s*2/);
+    assert.match(showRound2.stdout, new RegExp(`^#\\s*${id}`, 'm'));
+
+    // 8. 验证 --legacy-id / BATON_LEGACY_ID=1 回退支持
+    const legacyRes = runBaton(tmpDir, 'new audit task "老格式兼容测试" --from impl --legacy-id');
+    assert.equal(legacyRes.status, 0);
+    assert.match(legacyRes.stdout, /Created Intra-Repo Baton audit-\d{8}-\d{2}-task/, '应成功生成老格式 ID');
   });
 });
