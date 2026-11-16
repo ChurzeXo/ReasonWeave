@@ -588,10 +588,10 @@ status: draft
     assert.match(agentsContent, /handoff-stub:v2\.1/);
     assert.match(agentsContent, /v2\.35\.0/);
     assert.match(agentsContent, /--as <lane>/);
-    // 接入桩正文应保持轻量韧性（小于 3500 字符，远小于旧版 8000+ 字符，去恐吓化）
+    // 接入桩正文应保持轻量韧性（小于 3800 字符，远小于旧版 8000+ 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
     assert.ok(stubMatch, '必须找到接入桩标记');
-    assert.ok(stubMatch[1].length < 3500, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
+    assert.ok(stubMatch[1].length < 3800, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
   });
 
   it('18. 连续多轮驳回历史无损继承与防冲刷（防模板空标题冲刷、精准小节定位追加）', () => {
@@ -1090,9 +1090,11 @@ status: draft
     // 1. 验证 baton prompt 输出为通俗结构化卡片，去除口号式警示
     const promptRes = runBaton(tmpDir, `prompt ${idA}`, { HANDOFF_LANE: 'arch' });
     assert.equal(promptRes.status, 0);
+    const fmA = fs.readFileSync(path.join(tmpDir, '.handoffs', 'handoffs', `${idA}.md`), 'utf8');
+    const promptIdA = (fmA.match(/conversation_id:\s*([^\r\n]+)/) || [])[1] || idA;
     assert.ok(promptRes.stdout.includes('请 [Audit] 接单：') || promptRes.stdout.includes('请 [审计方] 接单：') || promptRes.stdout.includes('Please [Audit] take handoff:'), '提示词首行必须是请角色接单');
     assert.ok(promptRes.stdout.includes('[任务主题] 测试提示词卡片化') || promptRes.stdout.includes('[Task Topic] 测试提示词卡片化'), '提示词必须包含纯净任务主题行');
-    assert.ok(promptRes.stdout.includes(`[工单编号] [${idA}]`) || promptRes.stdout.includes(`[Ticket ID] [${idA}]`), '提示词必须包含工单编号');
+    assert.ok(promptRes.stdout.includes(`[工单编号] [${promptIdA}]`) || promptRes.stdout.includes(`[Ticket ID] [${promptIdA}]`), '提示词必须包含工单编号');
     assert.ok(promptRes.stdout.includes('[工单路径]') || promptRes.stdout.includes('[Ticket Path]'), '提示词必须包含工单路径');
     assert.ok(!promptRes.stdout.includes('【身份警示：你是接收方'), '提示词中已剥离身份警示口号');
 
@@ -1216,12 +1218,17 @@ status: draft
     const rejectRes = runBaton(tmpDir, `reject ${id} -n "验收未通过，需修复幂等锁逻辑" --as audit`, { BATON_LANG: 'zh' });
     assert.equal(rejectRes.status, 0);
 
-    // 6. 验证驳回整改提示词结构化卡片与主题恒定
+    // 6. 验证驳回整改提示词结构化卡片（移除驳回角色与理由，工单编号统一为会话 ID，驳回理由落盘工单与回执）
     assert.match(rejectRes.stdout, /\[任务主题\] ADR-073专项C-多轨EventInbox幂等去重与防风暴双盲审计/);
     assert.match(rejectRes.stdout, /\[任务轮次\] Round 2/);
-    assert.match(rejectRes.stdout, /\[工单编号\] \[TEST-PROJECT-\d{8}-\d{4}(?:-\d{2})?\]/);
-    assert.match(rejectRes.stdout, /\[驳回角色\]/);
-    assert.match(rejectRes.stdout, /\[驳回理由\] 验收未通过，需修复幂等锁逻辑/);
+    assert.match(rejectRes.stdout, /\[工单编号\]/);
+    assert.doesNotMatch(rejectRes.stdout, /\[驳回角色\]/);
+    assert.doesNotMatch(rejectRes.stdout, /\[驳回理由\]/);
+
+    // 验证驳回理由精准写入工单与回执
+    const ticketBody = fs.readFileSync(path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`), 'utf8');
+    assert.match(ticketBody, /## 驳回记录/);
+    assert.match(ticketBody, /验收未通过，需修复幂等锁逻辑/);
 
     // 7. 一单到底验证：工单文件、工单 ID 在 Round 2 保持唯一恒定
     const showRound2 = runBaton(tmpDir, `show ${id}`);
@@ -1233,5 +1240,84 @@ status: draft
     const legacyRes = runBaton(tmpDir, 'new audit task "老格式兼容测试" --from impl --legacy-id');
     assert.equal(legacyRes.status, 0);
     assert.match(legacyRes.stdout, /Created Intra-Repo Baton audit-\d{8}-\d{2}-task/, '应成功生成老格式 ID');
+  });
+
+  it('33. [v2.35.0] 会话亲和性机制 (Session Affinity · conversation_id 固化、出站提示词锚定、状态看板打标与 --current 亲和性过滤)', () => {
+    const tmpDir = createTestRepo();
+    const sessionA = 'session-alpha-11112222';
+    const sessionB = 'session-beta-33334444';
+
+    // 1. 会话 A 发起工单 A：Frontmatter 自动固化 conversation_id
+    const resA = runBaton(tmpDir, 'new audit task "会话A的主线任务" --from impl', { BATON_SESSION_ID: sessionA });
+    assert.equal(resA.status, 0);
+    const idA = extractTicketId(resA.stdout);
+    assert.ok(idA, '工单 A 必须成功创建');
+
+    const fileA = path.join(tmpDir, '.handoffs', 'handoffs', `${idA}.md`);
+    const contentA = fs.readFileSync(fileA, 'utf8');
+    assert.match(contentA, new RegExp(`conversation_id:\\s*${sessionA}`), '工单 A frontmatter 必须固化 conversation_id');
+
+    // 2. 验证 show 包含 conversation_id
+    const showA = runBaton(tmpDir, `show ${idA}`, { BATON_SESSION_ID: sessionA });
+    assert.match(showA.stdout, new RegExp(`conversation_id:\\s*${sessionA}`));
+
+    // 3. 验证 prompt 提示词中 [工单编号] 锚定 conversation_id（消除冗余独立行）
+    const promptZh = runBaton(tmpDir, `prompt ${idA}`, { BATON_SESSION_ID: sessionA, BATON_LANG: 'zh' });
+    assert.match(promptZh.stdout, new RegExp(`\\[工单编号\\] \\[${sessionA}\\]`), '中文提示词中 [工单编号] 必须使用 conversation_id');
+
+    const promptEn = runBaton(tmpDir, `prompt ${idA}`, { BATON_SESSION_ID: sessionA, BATON_LANG: 'en' });
+    assert.match(promptEn.stdout, new RegExp(`\\[Ticket ID\\] \\[${sessionA}\\]`), '英文提示词中 [Ticket ID] 必须使用 conversation_id');
+
+    // 4. 会话 B 发起工单 B
+    const resB = runBaton(tmpDir, 'new audit task "会话B的独立任务" --from impl', { BATON_SESSION_ID: sessionB });
+    assert.equal(resB.status, 0);
+    const idB = extractTicketId(resB.stdout);
+    assert.ok(idB, '工单 B 必须成功创建');
+
+    // 5. 在会话 A 环境下执行 baton status：
+    //    工单 A 标记为 [本对话]，工单 B 明确标记为 [外部对话: sessio...]
+    const statusInA = runBaton(tmpDir, 'status', { BATON_SESSION_ID: sessionA, BATON_LANG: 'zh' });
+    assert.equal(statusInA.status, 0);
+    assert.match(statusInA.stdout, new RegExp(`${idA}[\\s\\S]*?\\[本对话\\]`), '会话A中的工单A应标记为 [本对话]');
+    assert.match(statusInA.stdout, new RegExp(`${idB}[\\s\\S]*?\\[外部对话:\\s*${sessionB.slice(0, 8)}\\]`), '异源工单B应标记为 [外部对话: 前8位]');
+
+    // 6. 验证 --current / --mine 亲和性过滤：只拉取本会话工单，彻底阻断串扰
+    const currentInA = runBaton(tmpDir, 'status --current', { BATON_SESSION_ID: sessionA, BATON_LANG: 'zh' });
+    assert.equal(currentInA.status, 0);
+    assert.ok(currentInA.stdout.includes(idA), 'status --current 必须包含本会话工单 A');
+    assert.ok(!currentInA.stdout.includes(idB), 'status --current 严禁包含外部会话工单 B');
+    assert.match(currentInA.stdout, /本会话过滤/);
+
+    const mineInA = runBaton(tmpDir, 'status --mine', { BATON_SESSION_ID: sessionA, BATON_LANG: 'zh' });
+    assert.equal(mineInA.status, 0);
+    assert.ok(mineInA.stdout.includes(idA), 'status --mine 必须包含本会话工单 A');
+    assert.ok(!mineInA.stdout.includes(idB), 'status --mine 严禁包含外部会话工单 B');
+
+    // 7. 多轮流转只读锁定：在另一会话转递工单 A，conversation_id 依然锁定为 sessionA
+    const fwdRes = runBaton(tmpDir, `forward ${idA} --no-wait`, { BATON_SESSION_ID: 'session-gamma-77778888', BATON_AGENT_HOST: 'antigravity' });
+    assert.equal(fwdRes.status, 0);
+    const contentAAfterFwd = fs.readFileSync(fileA, 'utf8');
+    assert.match(contentAAfterFwd, new RegExp(`conversation_id:\\s*${sessionA}`), '多轮流转中 conversation_id 必须只读锁定');
+
+    // 8. 存量工单自愈支持：若工单无 conversation_id，baton check --fix 自动补齐
+    const legacyFile = path.join(tmpDir, '.handoffs', 'handoffs', `${idA}.md`);
+    let legacyContent = fs.readFileSync(legacyFile, 'utf8');
+    legacyContent = legacyContent.replace(/conversation_id:.*\n/, '');
+    fs.writeFileSync(legacyFile, legacyContent, 'utf8');
+    assert.ok(!fs.readFileSync(legacyFile, 'utf8').includes('conversation_id:'), '已剥除 conversation_id 模拟存量工单');
+
+    const fixRes = runBaton(tmpDir, `check ${idA} --fix`, { BATON_SESSION_ID: sessionA });
+    assert.equal(fixRes.status, 0);
+    assert.match(fixRes.stdout, /已安全补齐缺失的 conversation_id/);
+    assert.match(fs.readFileSync(legacyFile, 'utf8'), new RegExp(`conversation_id:\\s*${sessionA}`));
+
+    // 9. 智能工单 ID 解析器双向反查：以 conversation_id 作为入参，各 CLI 子命令无感透明解析
+    const showByConv = runBaton(tmpDir, `show ${sessionA}`);
+    assert.equal(showByConv.status, 0);
+    assert.match(showByConv.stdout, new RegExp(`#\\s*${idA}`));
+
+    const promptByConv = runBaton(tmpDir, `prompt ${sessionA}`, { BATON_LANG: 'zh' });
+    assert.equal(promptByConv.status, 0);
+    assert.match(promptByConv.stdout, /会话A的主线任务/);
   });
 });

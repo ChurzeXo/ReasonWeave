@@ -6,7 +6,7 @@
 
 ---
 
-> **v2.35.0 变更（2026-11-16 · 新版工单 ID 引擎 `<PROJECT>-YYYYMMDD-HHMM` · 一单到底禁止轮次变单 · 任务主题母题恒定与 `sanitizeTaskTopic` 强力过滤 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户反馈存量工单 ID（如 `audit-20261115-06-task`）以 lane/target 开头导致下游角色倒错、且同日序号重置容易撞车视觉混淆；多轮流转中任务主题频遭 Agent 误打补丁（如频频追加 `· Round 2` 或局部修复点），导致提示词主题漂移、转递混乱。
+> **v2.35.0 变更（2026-11-16 · 新版工单 ID 引擎 `<PROJECT>-YYYYMMDD-HHMM` · 一单到底禁止轮次变单 · 任务主题母题恒定 · 会话亲和性机制 Session Affinity 防多窗口串扰 · 提示词工单编号收敛为 conversation_id · 驳回理由落盘工单消除提示词噪音 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户反馈存量工单 ID（如 `audit-20261115-06-task`）以 lane/target 开头导致下游角色倒错、且同日序号重置容易撞车视觉混淆；多轮流转中任务主题频遭 Agent 误打补丁导致主题漂移；多会话/多窗口并发下因工单缺少会话归属标记，泛化指令易导致 Agent 贪婪匹配外部会话待办造成严重串扰；且驳回提示词堆砌角色与理由冗余。
 > 1. **新版工单 ID 引擎（Timestamp Project Identifier）**：
 >    - 默认生成 `<PROJECT>-YYYYMMDD-HHMM` 格式 ID（若并发冲突自动追加 `-01` 等序列号），中立无角色偏见、抗撞车；跨仓与仓内正则全面扩展兼容存量历史工单；
 >    - 支持通过 `--legacy-id` / `BATON_LEGACY_ID=1` / `id_format: "legacy"` 回退老格式；
@@ -14,10 +14,15 @@
 >    - 工单 ID 定下后全程唯一恒定，所有轮次（Round 1..N）与驳回整改均在原单原位流转，严禁新建单或变异 ID；
 > 3. **任务主题母题恒定（Task Topic Invariance）**：
 >    - 核心实现 `sanitizeTaskTopic`：在出站提示词生成（`cmdPrompt`）与驳回整改提示词（`cmdReject`）层强力清洗剥离任何轮次噪音（如 `· Round 2`、`[Round 2]`、`修复xxx` 补丁等），保持 `[任务主题]` 在全生命周期中 100% 恒定；
-> 4. **驳回整改提示词卡片化对齐**：
->    - `baton reject` 输出结构化整改卡片，包含 `[任务主题]`、`[任务轮次]`、`[工单编号]`、`[驳回角色]`、`[驳回理由]`、`[工单路径]`；
+> 4. **会话亲和性机制（Session Affinity · RFC 四支柱）**：
+>    - **元数据扩展**：工单 Frontmatter 强制扩展 `conversation_id`，创建或首次转递时自动调用 `getSessionId()` 固化，多轮流转只读锁定；
+>    - **提示词契约升级（Prompt Contract）**：转递提示词中 `[工单编号]` 统一展示为 `[<conversation_id>]`（缺失时优雅回退为工单编号），与来源会话 1:1 锚定；移除冗余的独立行；
+>    - **驳回提示词瘦身与理由落盘（SSOT）**：驳回提示词卡片彻底剥离 `[驳回角色]` 与 `[驳回理由]`，纯化为标准接单卡片；驳回理由通过 `insertRejectionEntry` 精准写入工单 `handoffs/<id>.md` 的 `## 驳回记录` 小节及回执，实现单一事实源（SSOT）；
+>    - **智能工单 ID 解析器（resolveTicketId）**：所有 CLI 子命令（`show`, `forward`, `receipt`, `deliver`, `accept`, `reject`, `reopen`, `check`, `wait`, `nonce`, `open`）全面支持以 `conversation_id` 作为入参，双向智能反查；
+>    - **看板感知与亲和性过滤**：`baton status` 视图书写 `[本对话]` 与 `[外部对话: <id前8位>]` 亲和性标记；新增 `--current` / `--mine` 仅拉取当前会话关联工单；
+>    - **接入桩纪律守卫**：接入桩 Core Guards 增加「会话亲和性守卫」，Agent 严禁在无明确工单编号下越界抢单；
 > 5. **宪法入规与接入桩升级**：
->    - 最高工程宪法追加 `T5 — 工单全生命周期单一定位与主题恒定`；
+>    - 最高工程宪法追加 `T5 — 工单全生命周期单一定位与主题恒定` 与 `T6 — 会话亲和性与上下文隔离防串扰`；
 >    - 接入桩全面升级至 `v2.35.0`，指纹重新签发。
 
 ---

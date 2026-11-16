@@ -41,6 +41,9 @@ Unit 之间保持松耦合，不得产生强环形依赖；消费方可单选任
 ### T5 — 工单全生命周期单一定位与主题恒定 (Single Ticket Lifecycle & Invariant Topic)
 工单在创建时即生成全局唯一的永久标识符（形如 `<PROJECT>-YYYYMMDD-HHMM`），在全生命周期内（从 Round 1 到 Round N 及历次驳回整改）一律使用同一工单 ID 在原单中原位流转，严禁派生新单或变更 ID；任务主题（Task Topic）必须保持业务母题恒定，任何轮次状态、返工说明与临时噪音严禁污染主题字段，确保跨角色交接与追踪认知零漂移。
 
+### T6 — 会话亲和性与上下文隔离防串扰 (Session Affinity & Anti-Cross-Session Hijack)
+工单在创建与首次转递时强制锚定发起会话标识（`conversation_id`），显式建模 1:N 对话与工单拓扑归属；在多会话并发研发中，Agent 必须具备会话亲和性感知，人类未显式指定工单 ID 时严禁越俎代庖从全局待办中抢单或闭环异源会话工单，彻底阻断跨窗口工单串扰。
+
 ---
 
 ## 3. Unit 隔离与维护原则 (Unit Isolation Principles)

@@ -713,6 +713,37 @@ function generateTimestampId(prefix) {
   return `${baseId}-${String(seq).padStart(2, '0')}`;
 }
 
+// 智能工单 ID 解析器（支持直接工单 ID 或通过 conversation_id / 前缀双向反查）
+function resolveTicketId(id) {
+  if (!id) return id;
+  const clean = String(id).trim().replace(/\.md$/, '').replace(/-resp$/, '');
+  const direct = path.join(H_DIR, `${clean}.md`);
+  if (fs.existsSync(direct)) return clean;
+  // 支持通过 conversation_id 或 UUID 前缀反查工单 ID
+  if (fs.existsSync(H_DIR)) {
+    try {
+      const files = fs.readdirSync(H_DIR).filter(f => f.endsWith('.md') && f.toUpperCase() !== 'README.MD');
+      const matches = [];
+      for (const f of files) {
+        try {
+          const raw = fs.readFileSync(path.join(H_DIR, f), 'utf8');
+          const fm = readFM(raw);
+          if (fm && fm.conversation_id) {
+            if (fm.conversation_id === clean || fm.conversation_id.startsWith(clean)) {
+              matches.push(fm.handoff_id || f.replace(/\.md$/, ''));
+            }
+          }
+        } catch {}
+      }
+      if (matches.length > 0) {
+        matches.sort();
+        return matches[matches.length - 1];
+      }
+    } catch {}
+  }
+  return clean;
+}
+
 function readFM(content) {
   if (!content) return null;
   const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
@@ -1400,8 +1431,8 @@ function cmdAccept(args) {
   if (noteIdx !== -1) { skipIdx.add(noteIdx); skipIdx.add(noteIdx + 1); }
   if (byIdx !== -1) { skipIdx.add(byIdx); skipIdx.add(byIdx + 1); }
   if (asIdx !== -1) { skipIdx.add(asIdx); skipIdx.add(asIdx + 1); }
-  const id = args.find((a, i) => !a.startsWith('-') && !skipIdx.has(i));
-  if (!id || !note) {
+  const rawId = args.find((a, i) => !a.startsWith('-') && !skipIdx.has(i));
+  if (!rawId || !note) {
     console.error('用法: handoff accept <id> -n "<验收结论>" [--as <lane>]（close 为同义别名）');
     // 2026-10-18 修：仓内没有「依赖方 / 本仓适配」概念（双方是同仓 lane），责任描述按模式分支
     console.error(MODE === 'intra-repo'
@@ -1409,6 +1440,7 @@ function cmdAccept(args) {
       : '验收门禁：闭环必须留验收证据（核实依赖方改动 + 本仓适配 + 验证结论），无结论不允许闭环。');
     process.exit(2);
   }
+  const id = resolveTicketId(rawId);
   const file = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(file)) { console.error('找不到交接: ' + file); process.exit(1); }
   assertStatusFresh('accept');
@@ -1575,12 +1607,13 @@ function cmdReject(args) {
   if (noteIdx !== -1) { skipIdx.add(noteIdx); skipIdx.add(noteIdx + 1); }
   if (byIdx !== -1) { skipIdx.add(byIdx); skipIdx.add(byIdx + 1); }
   if (asIdx !== -1) { skipIdx.add(asIdx); skipIdx.add(asIdx + 1); }
-  const id = args.find((a, i) => !a.startsWith('-') && !skipIdx.has(i));
-  if (!id || !note) {
+  const rawId = args.find((a, i) => !a.startsWith('-') && !skipIdx.has(i));
+  if (!rawId || !note) {
     console.error('用法: handoff reject <id> -n "<驳回理由>" [--as <lane> | --by <lane>]');
     console.error('驳回门禁：审计不通过必须写清驳回理由（缺什么 / 差在哪），无理由不允许退回。');
     process.exit(2);
   }
+  const id = resolveTicketId(rawId);
   const file = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(file)) { console.error('找不到交接: ' + file); process.exit(1); }
   assertStatusFresh('reject');
@@ -1662,7 +1695,12 @@ function cmdReject(args) {
 
     const rFile = path.join(R_DIR, `${id}-resp.md`);
     let rHash = '';
+    const nextRound = (Number(hFm?.round) || 1) + 1;
     const rejEntry = `- 日期：${todayISO()}\n- 理由：${note}\n`;
+    const rejTicketEntry = `- 轮次：Round ${nextRound}（驳回方: ${cur}）\n- 日期：${todayISO()}\n- 理由：${note}\n`;
+    const updatedTicket = insertRejectionEntry(rawH, rejTicketEntry);
+    fs.writeFileSync(file, updatedTicket, 'utf8');
+
     if (fs.existsSync(rFile)) {
       const rRaw = fs.readFileSync(rFile, 'utf8');
       const rBody = stripFM(rRaw);
@@ -1682,7 +1720,6 @@ function cmdReject(args) {
 
     const rejectTime = new Date().toISOString();
     const curCount = Number(hFm?.reject_count || 0) + 1;
-    const nextRound = (Number(hFm?.round) || 1) + 1;
     const updateReject = {
       status: 'forwarded',
       delivered_at: '',
@@ -1711,23 +1748,24 @@ function cmdReject(args) {
       rejected_by: cur,
       audit_nonce: updateReject.audit_nonce
     });
-    console.log(`✅ 已驳回退回: ${id} → forwarded（驳回理由已写入回执文件）`);
+    console.log(`✅ 已驳回退回: ${id} → forwarded（驳回理由已写入工单与回执）`);
     if (MODE === 'intra-repo') {
       const isZh = detectLang() === 'zh';
       const toRole = resolveLaneRole(hFm?.from_lane) || hFm?.from_lane || (isZh ? '实现方' : 'Implementer');
-      const fromRole = resolveLaneRole(cur) || cur || (isZh ? '驳回方' : 'Rejector');
       const rawTitle = extractTitle(stripFM(rawH));
       const cleanTitle = sanitizeTaskTopic(rawTitle);
       const display = file.startsWith(os.homedir()) ? '~' + file.slice(os.homedir().length) : file;
+      const convId = hFm?.conversation_id || getSessionId();
+      const promptId = convId || id;
       if (isZh) {
         console.log(`\n📋 可复制整改提示词（复制给实现方 Agent）:`);
         console.log(`\`\`\`text`);
-        console.log(`请 [${toRole}] 接单整改：\n[任务主题] ${cleanTitle}\n[任务轮次] Round ${nextRound}（第 ${nextRound} 轮整改）\n[工单编号] [${id}]\n[驳回角色] ${fromRole}\n[驳回理由] ${note}\n[工单路径] ${display}\n[后续动作] 请完成整改后重新转递 (baton forward ${id} --wait)`);
+        console.log(`请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n[任务轮次] Round ${nextRound}（第 ${nextRound} 轮复审）\n[工单编号] [${promptId}]\n[工单路径] ${display}`);
         console.log(`\`\`\`\n`);
       } else {
         console.log(`\n📋 Copyable Rejection Prompt (pass to implementer):`);
         console.log(`\`\`\`text`);
-        console.log(`Please [${toRole}] take ticket for remediation:\n[Task Topic] ${cleanTitle}\n[Task Round] Round ${nextRound} (Remediation Round ${nextRound})\n[Ticket ID] [${id}]\n[Rejected By] ${fromRole}\n[Reason] ${note}\n[Ticket Path] ${display}\n[Next Step] Please remediate and re-forward (baton forward ${id} --wait)`);
+        console.log(`Please [${toRole}] take ticket:\n[Task Topic] ${cleanTitle}\n[Task Round] Round ${nextRound} (Review Round ${nextRound})\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`);
         console.log(`\`\`\`\n`);
       }
     }
@@ -1745,12 +1783,13 @@ function cmdReopen(args) {
   if (noteIdx !== -1) { skipIdx.add(noteIdx); skipIdx.add(noteIdx + 1); }
   if (asIdx !== -1) { skipIdx.add(asIdx); skipIdx.add(asIdx + 1); }
   if (byIdx !== -1) { skipIdx.add(byIdx); skipIdx.add(byIdx + 1); }
-  const id = args.find((a, i) => !a.startsWith('-') && !skipIdx.has(i));
-  if (!id || !note) {
+  const rawId = args.find((a, i) => !a.startsWith('-') && !skipIdx.has(i));
+  if (!rawId || !note) {
     console.error('用法: baton reopen <id> -n "<重开理由>" [--as <lane>]');
     console.error('重开门禁：误闭环重开必须写清重开理由（为何追回 / 发现了什么遗漏），无理由不允许重开。');
     process.exit(2);
   }
+  const id = resolveTicketId(rawId);
   const file = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(file)) { console.error('找不到交接: ' + file); process.exit(1); }
   assertStatusFresh('reopen');
@@ -1920,8 +1959,9 @@ function cmdReceipt(args) {
   const valFlags = ['-n', '--evidence-commits', '--evidence-paths', '--evidence-repo', '--evidence-note', '--audit-nonce', '--as', '--by'];
   const valueIdx = new Set();
   for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
-  const id = args.find((a, i) => !a.startsWith('-') && !valueIdx.has(i));
-  if (!id) { console.error('用法: handoff receipt <id> [-n "<回执正文>"] [--deliver] [--as <lane>] [--needs-change] [--no-needs-change] [--audit-nonce "<nonce>"] [--evidence-paths "a,b"] [--evidence-commits "sha"] [--evidence-repo key] [--evidence-note "..."]'); process.exit(2); }
+  const rawId = args.find((a, i) => !a.startsWith('-') && !valueIdx.has(i));
+  if (!rawId) { console.error('用法: handoff receipt <id> [-n "<回执正文>"] [--deliver] [--as <lane>] [--needs-change] [--no-needs-change] [--audit-nonce "<nonce>"] [--evidence-paths "a,b"] [--evidence-commits "sha"] [--evidence-repo key] [--evidence-note "..."]'); process.exit(2); }
+  const id = resolveTicketId(rawId);
   const hFile = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(hFile)) { console.error('找不到交接: ' + hFile); process.exit(1); }
   assertStatusFresh('receipt');
@@ -2140,12 +2180,13 @@ function cmdDeliver(args) {
   const valFlags = ['-n', '--evidence-commits', '--evidence-paths', '--evidence-repo', '--evidence-note', '--as', '--by'];
   const valueIdx = new Set();
   for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
-  const id = args.find((a, i) => !a.startsWith('-') && !valueIdx.has(i));
-  if (!id) {
+  const rawId = args.find((a, i) => !a.startsWith('-') && !valueIdx.has(i));
+  if (!rawId) {
     console.error('用法: baton deliver <id> [-n "<交付补充说明>"] [--as <lane>]');
     console.error('交付语义：由执行方在自检全过、会话收尾时显式提交终态交付，烙印 delivered_at 并通知发起方验收。');
     process.exit(2);
   }
+  const id = resolveTicketId(rawId);
   const hFile = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(hFile)) { console.error('找不到交接: ' + hFile); process.exit(1); }
   assertStatusFresh('deliver');
@@ -2479,12 +2520,13 @@ async function cmdForward(args) {
   const valFlags = ['--timeout', '-t', '--interval', '-i'];
   const valueIdx = new Set();
   for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
-  const ids = args.filter((a, i) => !a.startsWith('-') && !valueIdx.has(i));
+  const rawIds = args.filter((a, i) => !a.startsWith('-') && !valueIdx.has(i));
 
-  if (!ids.length) {
+  if (!rawIds.length) {
     console.error('用法: baton forward <id1> [id2 ...] [--wait] [--async] [--daemon] [--blind]');
     process.exit(2);
   }
+  const ids = rawIds.map(resolveTicketId);
 
   const isZh = detectLang() === 'zh';
 
@@ -2682,8 +2724,9 @@ async function cmdForward(args) {
 }
 
 function cmdOpen(args) {
-  const [id] = args;
-  if (!id) { console.error('用法: handoff open <id>'); process.exit(2); }
+  const [rawId] = args;
+  if (!rawId) { console.error('用法: handoff open <id>'); process.exit(2); }
+  const id = resolveTicketId(rawId);
   const file = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(file)) { console.error('找不到交接: ' + file); process.exit(1); }
   try { execFileSync('open', [file]); console.log('已打开: ' + file); }
@@ -2693,12 +2736,13 @@ function cmdOpen(args) {
 /** 审计防伪挑战令牌管理 (baton nonce <id> [--reissue]) */
 function cmdNonce(args) {
   const isReissue = args.includes('--reissue') || args.includes('--rotate') || args.includes('-r');
-  const id = args.find(a => !a.startsWith('-'));
-  if (!id) {
+  const rawId = args.find(a => !a.startsWith('-'));
+  if (!rawId) {
     console.error('用法: baton nonce <id> [--reissue]');
     console.error('查看或重签工单的 Audit Nonce 防伪挑战令牌。');
     process.exit(2);
   }
+  const id = resolveTicketId(rawId);
   const file = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(file)) {
     console.error('找不到交接: ' + file);
@@ -2731,10 +2775,11 @@ function cmdNonce(args) {
  * 为什么只列元数据 + 节标题 + 首行：收/写/收回执前只需要「这份交接讲什么、该谁动」，
  * 不必为判断是否相关而吞掉整篇正文（P2 Path 定向：LLM 只读该份的摘要，仍按需 read 全文）。 */
 function cmdShow(args) {
-  const [id] = args.filter(a => !a.startsWith('-'));
-  if (!id) { console.error('用法: handoff show <id> [--nonce]'); process.exit(2); }
-  const isResp = id.endsWith('-resp');
-  const hFile = isResp ? path.join(R_DIR, `${id}.md`) : path.join(H_DIR, `${id}.md`);
+  const [rawId] = args.filter(a => !a.startsWith('-'));
+  if (!rawId) { console.error('用法: handoff show <id> [--nonce]'); process.exit(2); }
+  const isResp = rawId.endsWith('-resp');
+  const id = resolveTicketId(rawId);
+  const hFile = isResp ? path.join(R_DIR, `${id}-resp.md`) : path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(hFile)) { console.error('找不到: ' + hFile); process.exit(1); }
   const raw = fs.readFileSync(hFile, 'utf8');
   const fm = readFM(raw);
@@ -2770,8 +2815,8 @@ function cmdShow(args) {
         ? ['handoff_id', 'mode', 'from_lane', 'to_lane', 'needs_change', 'audit_nonce', 'blind', 'date', 'delivered_at', 'delivered_by_lane']
         : ['handoff_id', 'needs_change', 'needs_iggle_change', 'from_repo', 'to_repo', 'date', 'delivered_at'])
     : (MODE === 'intra-repo'
-        ? ['mode', 'project', 'from_lane', 'to_lane', 'workspace', 'timing', 'type', 'status', 'round', 'needs_change', 'audit_nonce', 'blind', 'reject_count', 'created', 'rejected_at', 'rejected_by', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']
-        : ['target', 'type', 'status', 'round', 'needs_change', 'needs_iggle_change', 'reject_count', 'created', 'rejected_at', 'rejected_by', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']);
+        ? ['mode', 'project', 'from_lane', 'to_lane', 'conversation_id', 'workspace', 'timing', 'type', 'status', 'round', 'needs_change', 'audit_nonce', 'blind', 'reject_count', 'created', 'rejected_at', 'rejected_by', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']
+        : ['target', 'type', 'status', 'conversation_id', 'round', 'needs_change', 'needs_iggle_change', 'reject_count', 'created', 'rejected_at', 'rejected_by', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']);
   for (const k of keys) {
     if (fm && fm[k] !== undefined && fm[k] !== '') console.log(`- ${k}: ${fm[k]}`);
   }
@@ -2850,6 +2895,7 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
 - **一单到底与主题恒定**：工单 ID（形如 <PROJECT>-YYYYMMDD-HHMM）创建后全程唯一恒定，所有轮次（Round 1..N）在原单同一 ID 下流转闭环，严禁轮次变异；任务主题全生命周期保持一致，严禁追加轮次噪音。
+- **会话亲和性守卫**：工单强制关联 conversation_id；人类未指定工单编号时，严禁处理 conversation_id 与当前会话不符的工单（推荐运行 \`baton status --current\` 过滤本会话待办；跨会话接单人类指令必须显式包含具体工单编号）。
 - **命令形态与显式身份**：一律 \`baton <op>\` 或 \`handoff <op>\`。全面支持 \`--as <lane>\` 显式声明身份，同一会话无缝切换多工单。
 - **会话身份锁与凭证防伪**：支持 \`baton lane <lane>\` 锁定会话身份；环境绑定优先级 \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`；审计交付必须持有 \`audit.token\` 密码学签章，禁止发起方跨角色自我闭环。
 - **确定性自愈**：校验细节（Nonce、证据路径、数据一致性）由 CLI 运行时精准拦截；若命令报错，末尾 100% 打印可直接复制的一键自愈命令。
@@ -2871,7 +2917,7 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
    请 [<目标角色>] 接单：
    [任务主题] <主题>
    [任务轮次] Round <round>（第 <round> 轮复审）
-   [工单编号] [<ID>]
+   [工单编号] [<conversation_id>]
    [工单路径] <交接路径>
    \`\`\`
 
@@ -2884,6 +2930,7 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
 **Core Guards & Identity (Mandatory)**
 - **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.
 - **Single Ticket Lifecycle & Invariant Topic**: Ticket ID (<PROJECT>-YYYYMMDD-HHMM) is strictly immutable throughout its lifecycle across all rounds (Round 1..N); task topic remains constant with zero round noise suffixing.
+- **Session Affinity Guard**: Tickets are bound to initiator conversation_id; agents MUST NOT pick tickets with mismatched conversation_id unless explicitly instructed with a ticket ID (use \`baton status --current\` to filter session tasks).
 - **CLI Form & Explicit Identity**: Always use \`baton <op>\` or \`handoff <op>\`. Full support for \`--as <lane>\` explicit identity override, enabling multi-ticket processing within the same session.
 - **Session Lane Lock & Cryptographic Signatures**: Run \`baton lane <lane>\` to lock session identity; precedence is \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`; audit deliverables require \`audit.token\` cryptographic signatures to prevent self-closing leaks.
 - **Self-Healing Diagnostics**: Gate details (Nonce, Evidence, consistency) are evaluated by CLI runtime. Every CLI error output ends with a one-click copyable remediation command.
@@ -2902,10 +2949,10 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
 3. **Tail Block (Baton Pass Prompt Standard)**: End outbound replies with a dedicated code block for one-click human copying (no text after this block):
    ## Baton Pass Prompt
    \`\`\`text
-   Please [<Target Role>] take handoff:
+   Please [<Target Role>] take ticket:
    [Task Topic] <Title>
    [Task Round] Round <round> (Review Round <round>)
-   [Ticket ID] [<ID>]
+   [Ticket ID] [<conversation_id>]
    [Ticket Path] <Path>
    \`\`\`
 
@@ -2986,7 +3033,11 @@ function sanitizeTaskTopic(rawTitle) {
 }
 
 function cmdCheck(args = []) {
-  const targetId = args.find(a => !a.startsWith('-'));
+  const rawId = args.find(a => !a.startsWith('-'));
+  const targetId = resolveTicketId(rawId);
+  const resolvedArgs = (targetId && targetId !== rawId)
+    ? args.map(a => a === rawId ? targetId : a)
+    : args;
   if (!targetId) {
     checkStubCarrier();
   }
@@ -3000,8 +3051,8 @@ function cmdCheck(args = []) {
     for (const p of cliProblems) console.error('  - ' + p);
     process.exit(1);
   }
-  if (MODE === 'intra-repo') return cmdCheckIntra(args);
-  return cmdCheckCross(args);
+  if (MODE === 'intra-repo') return cmdCheckIntra(resolvedArgs);
+  return cmdCheckCross(resolvedArgs);
 }
 
 // 跨仓模式门禁
@@ -3458,8 +3509,9 @@ function detectRepo(cwd) {
 }
 
 function cmdPrompt(args) {
-  const [id] = args.filter(a => !a.startsWith('--'));
-  if (!id) { console.error('用法: handoff prompt <id>'); process.exit(2); }
+  const [rawId] = args.filter(a => !a.startsWith('--'));
+  if (!rawId) { console.error('用法: handoff prompt <id>'); process.exit(2); }
+  const id = resolveTicketId(rawId);
   const hFile = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(hFile)) { console.error('找不到交接: ' + hFile); process.exit(1); }
   const content = fs.readFileSync(hFile, 'utf8');
@@ -3475,6 +3527,8 @@ function cmdPrompt(args) {
     const round = Number(fm.round || 1);
     const roundLineZh = round > 1 ? `[任务轮次] Round ${round}（第 ${round} 轮复审）\n` : '';
     const roundLineEn = round > 1 ? `[Task Round] Round ${round} (Review Round ${round})\n` : '';
+    const convId = fm.conversation_id || getSessionId();
+    const promptId = convId || id;
 
     // 审计动作契约（v2.13）：to_lane=audit 时注入强制审计动作，提示词与接入桩同步。
     const auditContract = (String(fm.to_lane || '').toLowerCase() === 'audit')
@@ -3491,9 +3545,9 @@ function cmdPrompt(args) {
       console.log(`\`\`\`text`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
-        console.log(`请 [${toRole}] 在隔离工作树接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工作树路径] ${wtRel}\n[工单编号] [${id}]\n[工单路径] ${display}`);
+        console.log(`请 [${toRole}] 在隔离工作树接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工作树路径] ${wtRel}\n[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd());
       } else {
-        console.log(`请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${id}]\n[工单路径] ${display}`);
+        console.log(`请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd());
       }
       console.log(`\`\`\`\n`);
       if (ws === 'worktree') {
@@ -3519,9 +3573,9 @@ function cmdPrompt(args) {
       console.log(`\`\`\`text`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
-        console.log(`Please [${toRole}] take handoff in isolated worktree:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Worktree] ${wtRel}\n[Ticket ID] [${id}]\n[Ticket Path] ${display}`);
+        console.log(`Please [${toRole}] take handoff in isolated worktree:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Worktree] ${wtRel}\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd());
       } else {
-        console.log(`Please [${toRole}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${id}]\n[Ticket Path] ${display}`);
+        console.log(`Please [${toRole}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd());
       }
       console.log(`\`\`\`\n`);
       if (ws === 'worktree') {
@@ -3573,6 +3627,8 @@ function cmdPrompt(args) {
   const round = Number(readFM(content)?.round || 1);
   const roundLineZh = round > 1 ? `[任务轮次] Round ${round}（第 ${round} 轮复审）\n` : '';
   const roundLineEn = round > 1 ? `[Task Round] Round ${round} (Review Round ${round})\n` : '';
+  const convId = readFM(content)?.conversation_id || getSessionId();
+  const promptId = convId || id;
 
   if (isZh) {
     console.log(`📋 跨仓交接 (${id}) · target=${pTarget || 'unknown'}:`);
@@ -3580,7 +3636,7 @@ function cmdPrompt(args) {
     console.log(`\n## 交接提示词\n`);
     console.log(`> 直接复制下方提示词，发送给接收方 Agent 接单：\n`);
     console.log(`\`\`\`text`);
-    console.log(`请 [${targetLabel}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${id}]\n[工单路径] ${display}`);
+    console.log(`请 [${targetLabel}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd());
     console.log(`\`\`\`\n`);
     console.log(`（若已挂起后台监听，回执登记后状态机会自动感知唤醒发起方闭环。）\n`);
   } else {
@@ -3589,7 +3645,7 @@ function cmdPrompt(args) {
     console.log(`\n## Baton Pass Prompt\n`);
     console.log(`> Copy the prompt below to pass to the receiver Agent:\n`);
     console.log(`\`\`\`text`);
-    console.log(`Please [${targetLabel}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${id}]\n[Ticket Path] ${display}`);
+    console.log(`Please [${targetLabel}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd());
     console.log(`\`\`\`\n`);
     console.log(`(If background listener is running, the state machine will automatically wake up upon receipt.)\n`);
   }
@@ -4513,15 +4569,16 @@ async function cmdWait(args) {
   const valFlags = ['--timeout', '-t', '--interval', '-i', '--settle', '-s', '--settle-ms'];
   const valueIdx = new Set();
   for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
-  const ids = args.filter((a, i) => !a.startsWith('-') && !valueIdx.has(i));
+  const rawIds = args.filter((a, i) => !a.startsWith('-') && !valueIdx.has(i));
 
-  if (!ids.length) {
+  if (!rawIds.length) {
     console.error('用法: baton wait <id1> [id2 ...] [--any|--all] [--timeout <duration>] [--interval <duration>] [--settle <duration>] [--daemon]');
     console.error('示例: baton wait SWOOP-20261104-01-feat --timeout 60m --settle 10s --daemon');
     console.error('      baton wait ID-1 ID-2 --any      # 竞态首个到达即平息唤醒 (Race)');
     console.error('      baton wait ID-1 ID-2 --all      # 全部任务全量交付后统一平息唤醒 (Join, 默认)');
     process.exit(2);
   }
+  const ids = rawIds.map(resolveTicketId);
 
   const isDaemon = args.includes('--daemon') || args.includes('-d');
   if (isDaemon && !process.env.BATON_DAEMON) {

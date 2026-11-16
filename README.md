@@ -203,12 +203,13 @@ ln -sf ~/dev-templates/hooks/pre-commit-miniprogram .git/hooks/pre-commit
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:e5cc6082 -->
+<!-- stub:sha256:269fbd99 -->
 ### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.35.0 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
 - **一单到底与主题恒定**：工单 ID（形如 <PROJECT>-YYYYMMDD-HHMM）创建后全程唯一恒定，所有轮次（Round 1..N）在原单同一 ID 下流转闭环，严禁轮次变异；任务主题全生命周期保持一致，严禁追加轮次噪音。
+- **会话亲和性守卫**：工单强制关联 conversation_id；人类未指定工单编号时，严禁处理 conversation_id 与当前会话不符的工单（推荐运行 `baton status --current` 过滤本会话待办；跨会话接单人类指令必须显式包含具体工单编号）。
 - **命令形态与显式身份**：一律 `baton <op>` 或 `handoff <op>`。全面支持 `--as <lane>` 显式声明身份，同一会话无缝切换多工单。
 - **会话身份锁与凭证防伪**：支持 `baton lane <lane>` 锁定会话身份；环境绑定优先级 `HANDOFF_LANE` > `baton lane` > `--as <lane>`；审计交付必须持有 `audit.token` 密码学签章，禁止发起方跨角色自我闭环。
 - **确定性自愈**：校验细节（Nonce、证据路径、数据一致性）由 CLI 运行时精准拦截；若命令报错，末尾 100% 打印可直接复制的一键自愈命令。
@@ -230,7 +231,7 @@ ln -sf ~/dev-templates/hooks/pre-commit-miniprogram .git/hooks/pre-commit
    请 [<目标角色>] 接单：
    [任务主题] <主题>
    [任务轮次] Round <round>（第 <round> 轮复审）
-   [工单编号] [<ID>]
+   [工单编号] [<conversation_id>]
    [工单路径] <交接路径>
    ```
 

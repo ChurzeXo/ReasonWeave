@@ -135,6 +135,23 @@ function detectLang() {
   return 'en';
 }
 
+function getSessionId() {
+  const envKey = process.env.BATON_SESSION_ID ||
+    process.env.ANTIGRAVITY_CONVERSATION_ID ||
+    process.env.CURSOR_CONVERSATION_ID ||
+    process.env.CLAUDE_CONVERSATION_ID ||
+    process.env.WORKBUDDY_CONVERSATION_ID ||
+    process.env.WINDSURF_CONVERSATION_ID ||
+    process.env.TERM_SESSION_ID ||
+    process.env.SESSION_ID;
+  if (envKey) return String(envKey).replace(/[^a-zA-Z0-9_-]/g, '_');
+  const ppid = process.ppid || 'global';
+  return `ppid-${ppid}`;
+}
+
+const currentSessionId = getSessionId();
+const ONLY_CURRENT = process.argv.includes('--current') || process.argv.includes('--mine') || process.argv.includes('--this-session');
+
 let FOR = '';
 for (let i = 0; i < process.argv.length; i++) {
   if ((process.argv[i] === '--for' || process.argv[i] === '--as') && process.argv[i + 1]) { FOR = process.argv[i + 1].toLowerCase(); break; }
@@ -209,6 +226,7 @@ for (const f of hFiles) {
     target: fm.target || '',
     type: fm.type || '',
     status: fm.status || 'draft',
+    conversation_id: fm.conversation_id || '',
     needs: fm && (fm.needs_change !== undefined ? fm.needs_change : fm.needs_iggle_change),
     created: fm.created || '',
     closed: fm.closed || '',
@@ -488,16 +506,27 @@ function formatRowLine(r, isZh) {
     noncePart = `  [Nonce: ${r.audit_nonce}]`;
   }
   const blindPart = r.blind ? '  [Blind: true]' : '';
-  return `  - ${r.id}  ${r.file}${receiptPart}  [${watch.text}]${noncePart}${blindPart}${idleAlert}${rejPart}`;
+  let sessionPart = '';
+  if (r.conversation_id) {
+    if (r.conversation_id === currentSessionId) {
+      sessionPart = isZh ? '  [本对话]' : '  [This Session]';
+    } else {
+      const shortConv = r.conversation_id.slice(0, 8);
+      sessionPart = isZh ? `  [外部对话: ${shortConv}]` : `  [External: ${shortConv}]`;
+    }
+  }
+  return `  - ${r.id}  ${r.file}${receiptPart}  [${watch.text}]${noncePart}${blindPart}${sessionPart}${idleAlert}${rejPart}`;
 }
 
-const rows = Object.values(handoffs).map(h => ({
+const allRows = Object.values(handoffs).map(h => ({
   ...h,
   hasReceipt: !!receipts[h.id],
   receiptFile: receipts[h.id] ? receipts[h.id].file : '',
   audit_nonce: h.audit_nonce || (receipts[h.id] && receipts[h.id].audit_nonce) || '',
   blind: h.blind || (receipts[h.id] && receipts[h.id].blind) || false,
 }));
+
+const rows = ONLY_CURRENT ? allRows.filter(r => r.conversation_id === currentSessionId) : allRows;
 
 for (const r of rows) {
   if (isReceivedIdle(r)) {
@@ -707,11 +736,13 @@ if (FOR) {
         return eff.is_rejected && eff.rejected_by !== FOR && r.from_lane === FOR && r.status !== 'closed' && (r.status === 'forwarded' || r.status === 'draft');
       })
     : [];
+  const sessionTagZh = ONLY_CURRENT ? ` · 本会话过滤 (${currentSessionId.slice(0, 8)})` : '';
+  const sessionTagEn = ONLY_CURRENT ? ` · Session Filter (${currentSessionId.slice(0, 8)})` : '';
   const lines = [];
   if (isZh) {
-    lines.push(`[交接追踪 · ${ROOT}] ${FOR} 未闭环 ${mine.length} 项（${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR}）`);
+    lines.push(`[交接追踪 · ${ROOT}${sessionTagZh}] ${FOR} 未闭环 ${mine.length} 项（${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR}）`);
     if (mine.length === 0 && rejectedByMe.length === 0 && rejectedToMe.length === 0) {
-      lines.push(`✅ 没有待 ${FOR} 处理的交接。`);
+      lines.push(ONLY_CURRENT ? `✅ 当前会话没有待 ${FOR} 处理的交接。` : `✅ 没有待 ${FOR} 处理的交接。`);
     } else {
       if (todo.length) {
         lines.push(`- 待 ${FOR} 处理（${todo.length}）:`);
@@ -767,9 +798,9 @@ if (FOR) {
       for (const w of warnings) lines.push(`  - ${w}`);
     }
   } else {
-    lines.push(`[Baton Status · ${ROOT}] ${FOR}: ${mine.length} open item(s) (${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR})`);
+    lines.push(`[Baton Status · ${ROOT}${sessionTagEn}] ${FOR}: ${mine.length} open item(s) (${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR})`);
     if (mine.length === 0 && rejectedByMe.length === 0 && rejectedToMe.length === 0) {
-      lines.push(`✅ No pending handoffs for ${FOR}.`);
+      lines.push(ONLY_CURRENT ? `✅ No pending handoffs for ${FOR} in current session.` : `✅ No pending handoffs for ${FOR}.`);
     } else {
       if (todo.length) {
         lines.push(`- Pending for ${FOR} (${todo.length}):`);
@@ -849,15 +880,16 @@ const byStatusDisplay = {};
 for (const r of openDisplay) (byStatusDisplay[r.status] = byStatusDisplay[r.status] || []).push(r);
 
 if (isZh) {
+  const sessionTagZh = ONLY_CURRENT ? ` · 本会话过滤 (${currentSessionId.slice(0, 8)})` : '';
   if (ACTIVE_ONLY) {
-    lines.push(`[交接追踪 · ${ROOT}] 进行中 ${openDisplay.length} 项活跃（已聚焦折叠 ${foldedCount} 项历史沉睡工单 / 累计 ${open.length} 项）/ 总计 ${rows.length} 项`);
+    lines.push(`[交接追踪 · ${ROOT}${sessionTagZh}] 进行中 ${openDisplay.length} 项活跃（已聚焦折叠 ${foldedCount} 项历史沉睡工单 / 累计 ${open.length} 项）/ 总计 ${rows.length} 项`);
   } else if (foldedCount > 0) {
-    lines.push(`[交接追踪 · ${ROOT}] 进行中 ${open.length} 项（当前展示活跃 ${openDisplay.length} 项 / 已聚焦折叠 ${foldedCount} 项）/ 总计 ${rows.length} 项`);
+    lines.push(`[交接追踪 · ${ROOT}${sessionTagZh}] 进行中 ${open.length} 项（当前展示活跃 ${openDisplay.length} 项 / 已聚焦折叠 ${foldedCount} 项）/ 总计 ${rows.length} 项`);
   } else {
-    lines.push(`[交接追踪 · ${ROOT}] 进行中 ${open.length} 项 / 总计 ${rows.length} 项`);
+    lines.push(`[交接追踪 · ${ROOT}${sessionTagZh}] 进行中 ${open.length} 项 / 总计 ${rows.length} 项`);
   }
   if (rows.length === 0) {
-    lines.push('✅ 公共交接目录为空（或已全部闭环）。');
+    lines.push(ONLY_CURRENT ? '✅ 当前会话无关联待办工单。' : '✅ 公共交接目录为空（或已全部闭环）。');
   } else {
     const buckets = MODE === 'intra-repo'
       ? [
@@ -891,15 +923,16 @@ if (isZh) {
     for (const w of warnings) lines.push(`  - ${w}`);
   }
 } else {
+  const sessionTagEn = ONLY_CURRENT ? ` · Session Filter (${currentSessionId.slice(0, 8)})` : '';
   if (ACTIVE_ONLY) {
-    lines.push(`[Baton Status · ${ROOT}] In Progress: ${openDisplay.length} active (${foldedCount} folded / ${open.length} total ongoing) / Total: ${rows.length}`);
+    lines.push(`[Baton Status · ${ROOT}${sessionTagEn}] In Progress: ${openDisplay.length} active (${foldedCount} folded / ${open.length} total ongoing) / Total: ${rows.length}`);
   } else if (foldedCount > 0) {
-    lines.push(`[Baton Status · ${ROOT}] In Progress: ${open.length} (Showing Active: ${openDisplay.length} / Folded: ${foldedCount}) / Total: ${rows.length}`);
+    lines.push(`[Baton Status · ${ROOT}${sessionTagEn}] In Progress: ${open.length} (Showing Active: ${openDisplay.length} / Folded: ${foldedCount}) / Total: ${rows.length}`);
   } else {
-    lines.push(`[Baton Status · ${ROOT}] In Progress: ${open.length} / Total: ${rows.length}`);
+    lines.push(`[Baton Status · ${ROOT}${sessionTagEn}] In Progress: ${open.length} / Total: ${rows.length}`);
   }
   if (rows.length === 0) {
-    lines.push('✅ Hub directory is empty (or all handoffs are closed).');
+    lines.push(ONLY_CURRENT ? '✅ No active tickets associated with the current session.' : '✅ Hub directory is empty (or all handoffs are closed).');
   } else {
     const buckets = MODE === 'intra-repo'
       ? [
