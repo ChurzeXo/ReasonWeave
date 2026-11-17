@@ -38,17 +38,36 @@ function createTestRepo() {
 
 
 function extractTicketId(str) {
-  const m = str && str.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/);
-  return m ? m[1] : null;
+  if (!str) return null;
+  const m0 = str.match(/(?:Created Intra-Repo Baton|已创建仓内交接)\s+([A-Za-z0-9_-]+)/);
+  if (m0) return m0[1];
+  const m1 = str.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/);
+  if (m1) return m1[1];
+  const m2 = str.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-\d{2})?)/i);
+  if (m2) return m2[1];
+  const m3 = str.match(/(session-[A-Za-z0-9_-]+)/i);
+  if (m3) return m3[1];
+  return null;
 }
 function runBaton(tmpDir, args, extraEnv = {}) {
   const asMatch = args.match(/--as\s+([a-zA-Z0-9_-]+)/);
   const defaultLane = asMatch ? asMatch[1] : 'audit';
+  const cleanEnv = { ...process.env };
+  delete cleanEnv.BATON_SESSION_ID;
+  delete cleanEnv.ANTIGRAVITY_CONVERSATION_ID;
+  delete cleanEnv.CURSOR_CONVERSATION_ID;
+  delete cleanEnv.CLAUDE_CONVERSATION_ID;
+  delete cleanEnv.WORKBUDDY_CONVERSATION_ID;
+  delete cleanEnv.WINDSURF_CONVERSATION_ID;
+  delete cleanEnv.TERM_SESSION_ID;
+  delete cleanEnv.SESSION_ID;
+  delete cleanEnv.BATON_ID_FORMAT;
+  const defaultFormat = extraEnv.BATON_SESSION_ID ? 'session' : 'timestamp';
   try {
     const out = execSync(`node ${HANDOFF_BIN} ${args}`, {
       cwd: tmpDir,
       encoding: 'utf-8',
-      env: { ...process.env, CI: 'true', BATON_NO_NOTIFY: '1', HANDOFF_STATUS_GATE: 'off', HANDOFF_LANE: defaultLane, ...extraEnv }
+      env: { ...cleanEnv, CI: 'true', BATON_NO_NOTIFY: '1', HANDOFF_STATUS_GATE: 'off', HANDOFF_LANE: defaultLane, BATON_ID_FORMAT: defaultFormat, ...extraEnv }
     });
     return { status: 0, stdout: out, stderr: '' };
   } catch (err) {
@@ -580,13 +599,13 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.35\.2\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.36\.0\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.35\.2/);
+    assert.match(agentsContent, /v2\.36\.0/);
     assert.match(agentsContent, /--as <lane>/);
     // 接入桩正文应保持轻量韧性（小于 4200 字符，远小于旧版 8000+ 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
@@ -725,27 +744,27 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.35.2，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.36.0，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.35.2'), '应当输出 v2.35.2');
+    assert.ok(verRes.stdout.includes('v2.36.0'), '应当输出 v2.36.0');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.35.2'), '-v 应当输出 v2.35.2');
+    assert.ok(vRes.stdout.includes('v2.36.0'), '-v 应当输出 v2.36.0');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.35.2'), 'version 应当输出 v2.35.2');
+    assert.ok(versionRes.stdout.includes('v2.36.0'), 'version 应当输出 v2.36.0');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.35.2'), '英文帮助中必须展示 v2.35.2');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.36.0'), '英文帮助中必须展示 v2.36.0');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -1025,7 +1044,7 @@ status: draft
 
     // 2. 创建 to_lane: audit 工单
     const resA = runBaton(tmpDir, 'new audit task "测试会话利益冲突" --from arch', sessionEnv);
-    const idA = resA.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
+    const idA = extractTicketId(resA.stdout);
 
     // 3. 当前会话 (arch) 尝试使用 --as audit 提交交付回执
     const fakeDeliver = runBaton(tmpDir, `receipt ${idA} -n "## 结论 (Verdict)\\n- **结论**：PASS" --deliver --as audit --evidence-note "说明"`, sessionEnv);
@@ -1038,7 +1057,7 @@ status: draft
     const auditSessionEnv = { BATON_SESSION_ID: auditSessionId, HANDOFF_LANE: '' };
     runBaton(tmpDir, 'lane audit', auditSessionEnv);
 
-    const fakeClose = runBaton(tmpDir, `close ${idA} -n "自审自闭环" --as arch`, auditSessionEnv);
+    const fakeClose = runBaton(tmpDir, `close ${idA} -n "自审自闭环" --as arch --force-session`, auditSessionEnv);
     assert.notEqual(fakeClose.status, 0, '目标方会话伪装发起方闭环必须硬拦截');
     assert.match(fakeClose.stderr + fakeClose.stdout, /CROSS_LANE_IMPERSONATION_BLOCKED/);
     assert.match(fakeClose.stderr + fakeClose.stdout, /禁止目标方 \(audit\) 伪装为发起方 \(arch\) 验收闭环/);
@@ -1300,8 +1319,8 @@ status: draft
     assert.ok(mineInA.stdout.includes(idA), 'status --mine 必须包含本会话工单 A');
     assert.ok(!mineInA.stdout.includes(idB), 'status --mine 严禁包含外部会话工单 B');
 
-    // 7. 多轮流转只读锁定：在另一会话转递工单 A，conversation_id 依然锁定为 sessionA
-    const fwdRes = runBaton(tmpDir, `forward ${idA} --no-wait`, { BATON_SESSION_ID: 'session-gamma-77778888', BATON_AGENT_HOST: 'antigravity' });
+    // 7. 多轮流转只读锁定：在另一会话转递工单 A（通过 --force-session 放行跨会话），conversation_id 依然锁定为 sessionA
+    const fwdRes = runBaton(tmpDir, `forward ${idA} --no-wait --force-session`, { BATON_SESSION_ID: 'session-gamma-77778888', BATON_AGENT_HOST: 'antigravity' });
     assert.equal(fwdRes.status, 0);
     const contentAAfterFwd = fs.readFileSync(fileA, 'utf8');
     assert.match(contentAAfterFwd, new RegExp(`conversation_id:\\s*${sessionA}`), '多轮流转中 conversation_id 必须只读锁定');
@@ -1432,5 +1451,66 @@ status: draft
     // 核心断言：audit 交付输出单行 "审计完成，裁决 GO"，严禁输出多行交接卡片
     assert.match(deliverRes.stdout, /审计完成，裁决 GO/);
     assert.doesNotMatch(deliverRes.stdout, /请 \[发起方\] 查收/);
+  });
+
+  it('36. [v2.36.0] 会话 ID 与工单 ID 全局统一为会话 ID，且严禁跨会话处理工单 (Anti-Cross-Session Hard Gate)', () => {
+    const tmpDir = createTestRepo();
+    const testSession = '4e34646a-74c7-4f1e-b56f-81f49698e9d0';
+    const externalSession = 'session-gamma-external-9999';
+
+    // 1. 在 AI 会话环境中新建工单：工单物理 ID 即为会话 ID，彻底消除双 ID 分裂
+    const newRes = runBaton(tmpDir, 'new audit task "统一会话ID与工单ID" --from impl', { BATON_SESSION_ID: testSession });
+    assert.equal(newRes.status, 0, `新建工单失败: ${newRes.stderr}\n${newRes.stdout}`);
+    const id = extractTicketId(newRes.stdout);
+    assert.equal(id, testSession, '工单物理 ID 必须与会话 ID 100% 相同');
+
+    // 物理文件与 Frontmatter 验证
+    const ticketFile = path.join(tmpDir, '.handoffs', 'handoffs', `${testSession}.md`);
+    assert.ok(fs.existsSync(ticketFile), `物理工单文件必须为 ${testSession}.md`);
+    const content = fs.readFileSync(ticketFile, 'utf8');
+    assert.match(content, new RegExp(`handoff_id:\\s*${testSession}`), 'handoff_id 必须为会话 ID');
+    assert.match(content, new RegExp(`conversation_id:\\s*${testSession}`), 'conversation_id 必须为会话 ID');
+
+    // 出站提示词验证：[工单编号] 与 [工单路径] 严格指向同唯一会话 ID
+    const promptRes = runBaton(tmpDir, `prompt ${id}`, { BATON_SESSION_ID: testSession, BATON_LANG: 'zh' });
+    assert.match(promptRes.stdout, new RegExp(`\\[工单编号\\] \\[${testSession}\\]`));
+    assert.match(promptRes.stdout, new RegExp(`\\[工单路径\\] .*?\\.handoffs/handoffs/${testSession}\\.md`));
+
+    // 2. 跨会话硬门禁 (Anti-Cross-Session Hard Gate)：
+    // 异源外部会话 (externalSession) 尝试推进 (forward) 工单，必须被物理阻断
+    const fakeForward = runBaton(tmpDir, `forward ${id} --no-wait`, { BATON_SESSION_ID: externalSession, BATON_AGENT_HOST: 'antigravity' });
+    assert.notEqual(fakeForward.status, 0, '跨会话 forward 必须被拦截');
+    assert.match(fakeForward.stderr + fakeForward.stdout, /CROSS_SESSION_MUTATION_BLOCKED/);
+
+    // 原发起会话 (testSession) 推进 (forward)，放行
+    const validForward = runBaton(tmpDir, `forward ${id} --no-wait`, { BATON_SESSION_ID: testSession, BATON_AGENT_HOST: 'antigravity' });
+    assert.equal(validForward.status, 0, `同会话 forward 应该成功: ${validForward.stderr}`);
+
+    // 3. 接收方 (audit) 正常写入回执并交付
+    const deliverRes = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --deliver --auto-nonce --as audit --evidence-note "用例全绿"`, {
+      BATON_SESSION_ID: 'audit-actor-session',
+      HANDOFF_LANE: ''
+    });
+    assert.equal(deliverRes.status, 0, `接收方交付应该成功: ${deliverRes.stderr}`);
+    const receiptFile = path.join(tmpDir, '.handoffs', 'receipts', `${testSession}-resp.md`);
+    assert.ok(fs.existsSync(receiptFile), `物理回执文件必须为 ${testSession}-resp.md`);
+
+    // 4. 异源外部会话 (externalSession) 尝试验收闭环 (accept)，必须被物理阻断
+    const fakeAccept = runBaton(tmpDir, `accept ${id} --as impl -n "外部闭环"`, { BATON_SESSION_ID: externalSession });
+    assert.notEqual(fakeAccept.status, 0, '跨会话 accept 必须被拦截');
+    assert.match(fakeAccept.stderr + fakeAccept.stdout, /CROSS_SESSION_MUTATION_BLOCKED/);
+
+    // 原发起会话 (testSession) 验收闭环 (accept)，放行
+    const validAccept = runBaton(tmpDir, `accept ${id} --as impl -n "确认完成"`, { BATON_SESSION_ID: testSession });
+    assert.equal(validAccept.status, 0, `同会话 accept 应该成功: ${validAccept.stderr}`);
+
+    // 5. 异源外部会话 (externalSession) 尝试重开 (reopen)，必须被物理阻断
+    const fakeReopen = runBaton(tmpDir, `reopen ${id} -n "外部重开"`, { BATON_SESSION_ID: externalSession });
+    assert.notEqual(fakeReopen.status, 0, '跨会话 reopen 必须被拦截');
+    assert.match(fakeReopen.stderr + fakeReopen.stdout, /CROSS_SESSION_MUTATION_BLOCKED/);
+
+    // 原发起会话 (testSession) 重开 (reopen)，放行
+    const validReopen = runBaton(tmpDir, `reopen ${id} --as impl -n "发起方重开"`, { BATON_SESSION_ID: testSession });
+    assert.equal(validReopen.status, 0, `同会话 reopen 应该成功: ${validReopen.stderr}`);
   });
 });

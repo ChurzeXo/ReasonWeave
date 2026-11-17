@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.35.2';
+const BATON_VERSION = '2.36.0';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -203,8 +203,8 @@ const TARGET_LABELS = {
 const TYPES = new Set(['bug', 'feature', 'breaking', 'question']);
 // 仓内模式类型（提案 §5.1）：task/bug/feature/question/continuation（continuation = 续接新窗口，后继会话闭环）
 const INTRA_TYPES = new Set(['task', 'bug', 'feature', 'question', 'continuation']);
-const INTRA_ID_RE = /^([A-Za-z0-9_-]+)-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?))\.md$/;
-const INTRA_RESP_RE = /^[A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?))-resp\.md$/;
+const INTRA_ID_RE = /^(?!README)(?!.*-resp\.md$)([A-Za-z0-9_-]+)\.md$/i;
+const INTRA_RESP_RE = /^(?!README)([A-Za-z0-9_-]+)-resp\.md$/i;
 
 // ── 语言与国际化侦测（Locale & i18n Detection）───────────────────────────
 function detectLang() {
@@ -713,6 +713,24 @@ function generateTimestampId(prefix) {
   return `${baseId}-${String(seq).padStart(2, '0')}`;
 }
 
+// 全局唯一会话 ID 引擎（v2.36.0 强制）：工单 ID 必须为会话 ID，彻底消除物理 ID 与会话 ID 分裂
+function generateConversationIdTicket() {
+  const sess = getSessionId();
+  const hasRealSession = sess && sess !== 'global' && !sess.startsWith('ppid-');
+  const baseId = hasRealSession ? sess : crypto.randomUUID();
+  let candidate = baseId;
+  const baseFile = path.join(H_DIR, `${candidate}.md`);
+  if (!fs.existsSync(baseFile)) {
+    return candidate;
+  }
+  // 同一会话若已存在历史工单，追加序号后缀保持唯一
+  let seq = 1;
+  while (fs.existsSync(path.join(H_DIR, `${baseId}-${String(seq).padStart(2, '0')}.md`))) {
+    seq++;
+  }
+  return `${baseId}-${String(seq).padStart(2, '0')}`;
+}
+
 // 智能工单 ID 解析器（支持直接工单 ID 或通过 conversation_id / 前缀双向反查）
 function resolveTicketId(id) {
   if (!id) return id;
@@ -911,6 +929,38 @@ function getSessionLane() {
     }
   } catch {}
   return '';
+}
+
+/** 跨会话操作硬门禁（Anti-Cross-Session Hard Gate · v2.36.0 宪法 T6）：
+ *  严禁跨会话处理工单。发起方推进（forward）、闭环（accept）、重开（reopen）仅限原工单归属会话执行。 */
+function assertSessionAffinity(fm, op, id, args = []) {
+  if (args.includes('--force-session') || process.env.BATON_FORCE_SESSION === '1') {
+    return;
+  }
+  const curSession = getSessionId();
+  // 仅在真实 AI 会话环境下实施物理阻断；纯终端人工交互（ppid/global）放行
+  if (!curSession || curSession === 'global' || curSession.startsWith('ppid-')) {
+    return;
+  }
+  const ticketSession = fm?.conversation_id || id;
+  // 若工单并非在某个特定真实会话中创建（例如纯终端/ppid/global），允许被当前真实会话接管处理
+  if (!ticketSession || ticketSession === 'global' || ticketSession.startsWith('ppid-')) {
+    return;
+  }
+  if (ticketSession && curSession !== ticketSession && !ticketSession.startsWith(curSession) && !curSession.startsWith(ticketSession)) {
+    const isZh = detectLang() === 'zh';
+    if (isZh) {
+      console.error(`\n❌ 跨会话操作拦截 (CROSS_SESSION_MUTATION_BLOCKED):`);
+      console.error(`   工单 [${id}] 归属于会话 [${ticketSession}]，当前活跃会话为 [${curSession}]。`);
+      console.error(`   根据 AEF 最高工程宪法（防串扰与会话隔离铁律），严禁跨会话处理或推进外部工单！`);
+      console.error(`   👉 请切换至原发起会话（${ticketSession}）执行 ${op}，或在终端使用 --force-session 显式覆盖。\n`);
+    } else {
+      console.error(`\n❌ Cross-Session Mutation Blocked (CROSS_SESSION_MUTATION_BLOCKED):`);
+      console.error(`   Ticket [${id}] belongs to session [${ticketSession}], but current session is [${curSession}].`);
+      console.error(`   Cross-session ticket mutation is strictly prohibited (use --force-session to bypass).\n`);
+    }
+    process.exit(1);
+  }
 }
 
 function setSessionLane(lane) {
@@ -1227,13 +1277,17 @@ function cmdNew(args) {
   // （dirLabel → 回执 authorLabel → brief intro 三处同源）。发送方以转递话术 / frontmatter 为准。
   const dirLabel = `接收方 ${TARGET_LABELS[t] || t}`;
   let id;
-  const idFormat = flagValue(args, '--id-format') || HUB_CONFIG.id_format || process.env.BATON_ID_FORMAT || 'timestamp';
+  const sess = getSessionId();
+  const hasRealSession = sess && sess !== 'global' && !sess.startsWith('ppid-');
+  const idFormat = flagValue(args, '--id-format') || HUB_CONFIG.id_format || process.env.BATON_ID_FORMAT || (hasRealSession ? 'session' : 'timestamp');
   if (idFormat === 'legacy' || args.includes('--legacy-id') || process.env.BATON_LEGACY_ID === '1') {
     const ymd = todayYMD();
     const seq = nextSeqFor(t.toUpperCase(), ymd);
     id = `${t.toUpperCase()}-${ymd}-${seq}-${ty}`;
-  } else {
+  } else if (idFormat === 'timestamp' || args.includes('--timestamp-id')) {
     id = generateTimestampId(t.toUpperCase());
+  } else {
+    id = generateConversationIdTicket();
   }
   const file = path.join(H_DIR, `${id}.md`);
   if (fs.existsSync(file)) { console.error('已存在: ' + file); process.exit(1); }
@@ -1311,14 +1365,18 @@ function cmdNewIntra(args) {
   }
   const title = restClean.join(' ').trim() || '(无标题)';
   let id;
-  const idFormat = flagValue(args, '--id-format') || HUB_CONFIG.id_format || process.env.BATON_ID_FORMAT || 'timestamp';
+  const sess = getSessionId();
+  const hasRealSession = sess && sess !== 'global' && !sess.startsWith('ppid-');
+  const idFormat = flagValue(args, '--id-format') || HUB_CONFIG.id_format || process.env.BATON_ID_FORMAT || (hasRealSession ? 'session' : 'timestamp');
   if (idFormat === 'legacy' || args.includes('--legacy-id') || process.env.BATON_LEGACY_ID === '1') {
     const ymd = todayYMD();
     const seq = nextSeqFor(l, ymd);
     id = `${l}-${ymd}-${seq}-${ty}`;
-  } else {
+  } else if (idFormat === 'timestamp' || args.includes('--timestamp-id')) {
     const projectCode = String(HUB_CONFIG.project || path.basename(path.resolve(ROOT, '..')) || 'BATON').toUpperCase();
     id = generateTimestampId(projectCode);
+  } else {
+    id = generateConversationIdTicket();
   }
   const file = path.join(H_DIR, `${id}.md`);
   if (fs.existsSync(file)) { console.error('已存在: ' + file); process.exit(1); }
@@ -1448,6 +1506,7 @@ function cmdAccept(args) {
   return withTicketLock(id, () => {
     const content = fs.readFileSync(file, 'utf8');
     const fm = readFM(content);
+    assertSessionAffinity(fm, 'accept', id, args);
     const st = fm?.status;
 
     // 身份门禁（P0-3 修复 / ADR-0008 Phase 2 显式声明）：闭环（accept）是发起方的特权，执行方禁止自审自闭环
@@ -1792,6 +1851,7 @@ function cmdReopen(args) {
     const content = fs.readFileSync(file, 'utf8');
     const fm = readFM(content);
     if (!fm) { console.error('工单损坏: ' + file); process.exit(1); }
+    assertSessionAffinity(fm, 'reopen', id, args);
     if (fm.status !== 'closed') {
       console.error(`❌ 工单 ${id} 当前状态为 ${fm.status}，仅 closed 状态允许重开。`);
       process.exit(1);
@@ -2609,6 +2669,7 @@ async function cmdForward(args) {
       process.exit(1);
     }
     const fm = readFM(fs.readFileSync(file, 'utf8'));
+    assertSessionAffinity(fm, 'forward', id, args);
     const toLane = String(fm?.to_lane || fm?.target || '').toLowerCase();
     const ticketFrom = String(fm?.from_lane || '').toLowerCase();
     if (!getSessionLane() && ticketFrom) {
@@ -2909,12 +2970,12 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.35.2 为准）
+const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.36.0 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
-- **一单到底与主题恒定**：工单 ID（形如 <PROJECT>-YYYYMMDD-HHMM）创建后全程唯一恒定，所有轮次（Round 1..N）在原单同一 ID 下流转闭环，严禁轮次变异；任务主题全生命周期保持一致，严禁追加轮次噪音。
-- **会话亲和性守卫**：工单强制关联 conversation_id；人类未指定工单编号时，严禁处理 conversation_id 与当前会话不符的工单（推荐运行 \`baton status --current\` 过滤本会话待办；跨会话接单人类指令必须显式包含具体工单编号）。
+- **一单到底与会话ID统一（强制 · v2.36.0）**：工单物理 ID 即为会话 ID（全局唯一统一），严禁物理 ID 与会话 ID 分裂。所有轮次（Round 1..N）在原单同一 ID 下流转闭环，严禁轮次变异；任务主题全生命周期保持一致。
+- **严禁跨会话处理工单（最高宪法级隔离）**：工单全程严格绑定发起会话；严禁跨会话处理/推进/闭环外部工单（\`forward\`/\`accept\`/\`reopen\` 仅限原发起会话执行；接收方接单必须显式带工单编号，严禁从全局待办中盲目抢单）。
 - **命令形态与显式身份**：一律 \`baton <op>\` 或 \`handoff <op>\`。全面支持 \`--as <lane>\` 显式声明身份，同一会话无缝切换多工单。
 - **会话身份锁与凭证防伪**：支持 \`baton lane <lane>\` 锁定会话身份；环境绑定优先级 \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`；审计交付必须持有 \`audit.token\` 密码学签章，禁止发起方跨角色自我闭环。
 - **确定性自愈**：校验细节（Nonce、证据路径、数据一致性）由 CLI 运行时精准拦截；若命令报错，末尾 100% 打印可直接复制的一键自愈命令。
@@ -2945,12 +3006,12 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.35.2 · Details in $(lab path handoffs)/README.md)
+const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.36.0 · Details in $(lab path handoffs)/README.md)
 
 **Core Guards & Identity (Mandatory)**
 - **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.
-- **Single Ticket Lifecycle & Invariant Topic**: Ticket ID (<PROJECT>-YYYYMMDD-HHMM) is strictly immutable throughout its lifecycle across all rounds (Round 1..N); task topic remains constant with zero round noise suffixing.
-- **Session Affinity Guard**: Tickets are bound to initiator conversation_id; agents MUST NOT pick tickets with mismatched conversation_id unless explicitly instructed with a ticket ID (use \`baton status --current\` to filter session tasks).
+- **Single Ticket Lifecycle & Unified Session ID (Mandatory · v2.36.0)**: Ticket physical ID is the conversation ID (globally unified), eliminating split IDs. Immutable across all rounds (Round 1..N); task topic remains constant with zero round noise suffixing.
+- **Anti-Cross-Session Hard Gate (Constitutional Isolation)**: Tickets are strictly bound to initiator conversation. Mutating or closing external tickets (\`forward\`/\`accept\`/\`reopen\`) across sessions is strictly prohibited. Receivers must take tickets with explicit ticket IDs.
 - **CLI Form & Explicit Identity**: Always use \`baton <op>\` or \`handoff <op>\`. Full support for \`--as <lane>\` explicit identity override, enabling multi-ticket processing within the same session.
 - **Session Lane Lock & Cryptographic Signatures**: Run \`baton lane <lane>\` to lock session identity; precedence is \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`; audit deliverables require \`audit.token\` cryptographic signatures to prevent self-closing leaks.
 - **Self-Healing Diagnostics**: Gate details (Nonce, Evidence, consistency) are evaluated by CLI runtime. Every CLI error output ends with a one-click copyable remediation command.

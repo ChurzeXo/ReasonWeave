@@ -6,6 +6,22 @@
 
 ---
 
+> **v2.36.0 变更（2026-11-17 · 全局会话 ID 与工单 ID 合一 · 根除双 ID 分裂混淆 · 严禁跨会话处理工单硬门禁 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户指出工单目前存在两个 ID（物理工单 ID 形如 `TAPPY-20261117-0807`，关联会话 ID 形如 `4e34646a-74c7-4f1e-b56f-81f49698e9d0`），下游消费方与 Agent 极易产生理解与操作混淆。用户明确指示：全局只保留会话 ID，工单 ID 必须为会话 ID，且严禁跨会话处理工单。
+> 1. **工单 ID 统一为会话 ID（Unified Conversation ID as Ticket ID）**：
+>    - 核心统一：AI 会话环境下新建仓内工单，直接使用活跃会话 ID（`conversation_id`）作为工单物理 ID 与文件名（`.handoffs/handoffs/<conversation_id>.md`，回执为 `.handoffs/receipts/<conversation_id>-resp.md`）；
+>    - 同一会话若存在多工单，自动追加 `-01`、`-02` 序号保持全局唯一；
+>    - 提示词卡片与 CLI 输出中，`[工单编号]` 与 `[工单路径]` 严格 100% 对应会话 ID 文件名，下游消费方无论根据文件名还是提示词均无歧义；
+> 2. **跨会话处理物理硬门禁（Anti-Cross-Session Hard Gate）**：
+>    - 严禁跨会话处理/推进/闭环外部工单：发起方推进（`forward`）、闭环（`accept`/`close`）、重开（`reopen`）严格校验会话亲和性，仅限原发起会话执行；异源会话强行操作将被 `CROSS_SESSION_MUTATION_BLOCKED` 拦截（退出码 1）；
+>    - 终端人工维护可通过 `--force-session` 或 `BATON_FORCE_SESSION=1` 显式豁免；
+> 3. **全生命周期生态兼容（100% Backward Compatibility）**：
+>    - `INTRA_ID_RE` 与 `INTRA_RESP_RE` 正则升级支持 UUID/会话 ID 格式及历史时间戳格式；
+>    - `resolveTicketId` 持续支持历史工单反查与无感兼容；
+> 4. **接入桩与全套单测升级至 v2.36.0**：
+>    - 新增 Test 36 覆盖会话 ID 全生命周期建单、提示词路径核对及跨会话硬门禁阻断验证。
+
+---
+
 > **v2.35.2 变更（2026-11-17 · 入站回执/裁决提示词极简化 · 消除接收方出站卡片倒错 · 出站发起方专属 Round 轮次统筹 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户反馈在发起方 A 与接收方/审计方 B 协同过程中，B 在提交回执或裁决驳回时，CLI 打印与 Agent 生成的提示词格式与发起方出站交接卡片（`请 [实现方] 接单... [任务主题] ... [工单编号] ...`）完全一致，导致多窗口协作中主客颠倒混淆；且接收方不应扮演发起方统筹交接卡片。
 > 1. **入站回执与裁决提示词极简化（Inbound Concise Verdict Prompt）**：
 >    - 接收方（B）在执行 `baton reject` 或终态 `deliver` 时，不再输出多行出站交接卡片，纯化为单行极简裁决提示词；

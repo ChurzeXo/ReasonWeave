@@ -181,7 +181,7 @@ if (FOR && MODE === 'intra-repo') {
 // 命名规范：跨仓 <TARGET>-<YYYYMMDD>-<NN>-<TYPE>；仓内 <LANE>-<YYYYMMDD>-<NN>-<TYPE>
 const _TARGET_ALT = [...VALID_TARGETS].map(t => t.toUpperCase()).join('|');
 const ID_RE = MODE === 'intra-repo'
-  ? /^([A-Za-z0-9_-]+)-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?))$/
+  ? /^(?!README)(?!.*-resp$)([A-Za-z0-9_-]+)$/i
   : new RegExp(`^(${_TARGET_ALT})-\\d{8}-(?:(?:\\d{2}-(?:bug|feature|breaking|question))|(?:\\d{4,6}(?:-\\d{2})?))$`);
 
 function parseFM(content) {
