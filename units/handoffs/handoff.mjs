@@ -825,8 +825,12 @@ function withTicketLock(id, fn) {
             try { fs.rmdirSync(lockDir); } catch {}
           }
         } catch {}
-        const endWait = Date.now() + 40;
-        while (Date.now() < endWait) {}
+        try {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40);
+        } catch {
+          const endWait = Date.now() + 40;
+          while (Date.now() < endWait) {}
+        }
       } else {
         break;
       }
