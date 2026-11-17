@@ -28,7 +28,14 @@ const CURRENT_VERSION = (() => {
   }
 })();
 
+const cliDirs = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const envRoots = process.env.LAB_CONSUMER_ROOTS
+  ? process.env.LAB_CONSUMER_ROOTS.split(':').map((s) => s.trim()).filter(Boolean)
+  : [];
+
 const searchRoots = [
+  ...cliDirs.map((d) => path.resolve(process.cwd(), d)),
+  ...envRoots,
   path.join(os.homedir(), 'Documents', 'Developer'),
   path.join(os.homedir(), 'Documents'),
   path.join(os.homedir(), 'Developer'),

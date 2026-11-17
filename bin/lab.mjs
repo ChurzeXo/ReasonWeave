@@ -20,8 +20,14 @@ Lab Agent Engineering Toolkit (AEF v1.0)
   lab list                    列出所有可用工程能力 Unit
   lab path [unit]             获取某个 Unit (或 lab 根目录) 的安装绝对路径
   lab doctor                  自检本地环境（node, git, opengrep 等前置依赖）
-  lab sync-consumers          全自动批量同步并刷新所有下游消费方 (接入桩/配置/合规体检)
-  lab orphan [cmd]            运行死代码与孤儿资产清道夫
+  lab sync-consumers [dir]    全自动批量同步并刷新所有下游消费方 (接入桩/配置/合规体检)
+  lab baton [cmd]             调用工作流跨仓/仓内交接中枢 (别名: lab handoff)
+  lab worktree [cmd]          Agent 物理工作树隔离调度 (别名: lab baton-worktree)
+  lab audit-runner [cmd]      双盲审计自动化运行器 (别名: lab review-gate)
+  lab orphan [cmd]            运行死代码与孤儿资产清道夫 (别名: lab lab-orphan)
+  lab spec-guard [cmd]        架构规约与漂移守卫 CLI (别名: lab drift-gate)
+  lab adr [cmd]               初始化项目架构决策记录 (别名: lab adr-init)
+  lab preflight [cmd]         运行项目提交前置不变量探针
   lab migrate [dir]           将老项目中的硬编码路径 (~/Documents/lab/...) 一键迁移为动态规范
   lab zspec init [name]       按 ZSpec 工业标准为新项目一键初始化架构骨架与规范文档
   lab zspec add-unit <name>   为新项目新增一个自治工程端 (Unit: 如 web, ios, backend)
@@ -29,12 +35,12 @@ Lab Agent Engineering Toolkit (AEF v1.0)
   lab help                    显示帮助信息
 
 全局命令 CLI:
-  handoff                     调用工作流跨仓/仓内交接中枢
+  handoff / baton             调用工作流跨仓/仓内交接中枢
   baton-worktree              管理多 Agent 物理隔离工作树
   baton-audit-runner          双盲审计独立进程自动重跑器
   lab-orphan                  死代码与孤儿资产清道夫 CLI
   adr-init                    初始化项目架构决策记录 (ADR)
-  spec-guard                  架构规约与漂移守卫 CLI (别名: drift-gate)
+  spec-guard / drift-gate     架构规约与漂移守卫 CLI
 `);
 }
 
@@ -366,6 +372,23 @@ function zspecGuide() {
   }
 }
 
+// ── 外部模块子命令透明转发器 ──────────────────────────────────────────
+function forwardToBinary(binPath, subArgs = [], isShell = false) {
+  if (!fs.existsSync(binPath)) {
+    console.error(`错误: 未找到模块执行文件: ${binPath}`);
+    process.exit(1);
+  }
+  try {
+    if (isShell) {
+      execFileSync(binPath, subArgs, { stdio: 'inherit' });
+    } else {
+      execFileSync(process.execPath, [binPath, ...subArgs], { stdio: 'inherit' });
+    }
+  } catch (err) {
+    process.exit(err.status !== undefined && err.status !== null ? err.status : 1);
+  }
+}
+
 // ── 命令行路由 ────────────────────────────────────────────────────────
 switch (command) {
   case 'list':
@@ -381,52 +404,50 @@ switch (command) {
     break;
   case 'sync-consumers': {
     const scriptPath = path.join(PKG_ROOT, 'scripts', 'sync-all-consumers.mjs');
-    try {
-      execFileSync(process.execPath, [scriptPath, ...args.slice(1)], { stdio: 'inherit' });
-    } catch (err) {
-      process.exit(err.status || 1);
-    }
+    forwardToBinary(scriptPath, args.slice(1));
     break;
   }
-  case 'orphan': {
+  case 'baton':
+  case 'handoff':
+  case 'agent-baton': {
+    const batonBin = path.join(UNITS_DIR, 'handoffs', 'handoff.mjs');
+    forwardToBinary(batonBin, args.slice(1));
+    break;
+  }
+  case 'worktree':
+  case 'baton-worktree': {
+    const wtBin = path.join(UNITS_DIR, 'worktree', 'worktree.mjs');
+    forwardToBinary(wtBin, args.slice(1));
+    break;
+  }
+  case 'audit-runner':
+  case 'baton-audit-runner':
+  case 'review-gate': {
+    const auditBin = path.join(UNITS_DIR, 'review-gate', 'clean-runner.mjs');
+    forwardToBinary(auditBin, args.slice(1));
+    break;
+  }
+  case 'orphan':
+  case 'lab-orphan': {
     const orphanBin = path.join(UNITS_DIR, 'orphan', 'bin', 'lab-orphan.mjs');
-    if (!fs.existsSync(orphanBin)) {
-      console.error('错误: 未找到 orphan 模块执行文件。');
-      process.exit(1);
-    }
-    const subArgs = args.slice(1);
-    try {
-      const out = execFileSync(process.execPath, [orphanBin, ...subArgs], {
-        encoding: 'utf8',
-        stdio: ['inherit', 'pipe', 'pipe'],
-      });
-      process.stdout.write(out);
-    } catch (err) {
-      if (err.stdout) process.stdout.write(err.stdout);
-      if (err.stderr) process.stderr.write(err.stderr);
-      process.exit(err.status || 1);
-    }
+    forwardToBinary(orphanBin, args.slice(1));
     break;
   }
   case 'spec-guard':
   case 'drift-gate': {
     const specGuardBin = path.join(UNITS_DIR, 'spec-guard', 'bin', 'spec-guard.mjs');
-    if (!fs.existsSync(specGuardBin)) {
-      console.error('错误: 未找到 spec-guard 模块执行文件。');
-      process.exit(1);
-    }
-    const subArgs = args.slice(1);
-    try {
-      const out = execFileSync(process.execPath, [specGuardBin, ...subArgs], {
-        encoding: 'utf8',
-        stdio: ['inherit', 'pipe', 'pipe'],
-      });
-      process.stdout.write(out);
-    } catch (err) {
-      if (err.stdout) process.stdout.write(err.stdout);
-      if (err.stderr) process.stderr.write(err.stderr);
-      process.exit(err.status || 1);
-    }
+    forwardToBinary(specGuardBin, args.slice(1));
+    break;
+  }
+  case 'adr':
+  case 'adr-init': {
+    const adrBin = path.join(UNITS_DIR, 'adr', 'scripts', 'adr-init.sh');
+    forwardToBinary(adrBin, args.slice(1), true);
+    break;
+  }
+  case 'preflight': {
+    const preflightBin = path.join(UNITS_DIR, 'preflight', 'templates', 'preflight.sh');
+    forwardToBinary(preflightBin, args.slice(1), true);
     break;
   }
   case 'migrate': {

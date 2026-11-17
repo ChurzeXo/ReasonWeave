@@ -17,7 +17,26 @@
 
 set -eo pipefail
 
-ADR_HOME="${ADR_HOME:-$HOME/Documents/lab/adr}"
+if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ "$1" = "help" ]; then
+  cat <<'EOF'
+adr-init — 为新项目初始化 ADR 仓库 (units/adr)
+
+用法:
+  adr-init <target-dir> [tier:light|standard|frozen] [project-name]
+
+参数:
+  target-dir    目标仓库目录（默认为当前目录 .）
+  tier          规范档位: light | standard | frozen（默认 standard）
+  project-name  项目名称（默认取目标目录名）
+
+选项:
+  -h, --help    显示帮助信息
+EOF
+  exit 0
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ADR_HOME="${ADR_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 TARGET="${1:-.}"
 TIER="${2:-standard}"
 PROJ="${3:-$(basename "$(cd "$TARGET" 2>/dev/null && pwd)")}"

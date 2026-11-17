@@ -1,5 +1,9 @@
 # ADR System Changelog
 
+## v1.0.1 (2026-11-17)
+
+- `scripts/adr-init.sh` 修复与加固：支持 `-h` / `--help` / `help` 参数输出规范用法；消除 `$HOME/Documents/lab/adr` 硬编码回退，基于脚本真实物理路径自解析 `ADR_HOME`，防御脱离原路径后的假接线与不可达崩溃。
+
 ## v1.0 (2026-10-10)
 
 - 初版发布。三档模板：`adr-light.md` / `adr-standard.md` / `adr-frozen.md`。
