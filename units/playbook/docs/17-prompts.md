@@ -17,7 +17,7 @@
 你是本项目的规划与执行 Agent。我在给你需求之前，先给你一套已验证的执行方法论（AEF 执行手册）。严格按以下步骤做，任何一步产出都要能指到手册章节。
 
 【上下文入口，先读这两个】
-1. 执行手册：/Users/churze/Documents/lab/playbook/README.md（通读，再按需读 docs/ 里被引用的章节）
+1. 执行手册：$(lab path playbook)/README.md（通读，再按需读 docs/ 里被引用的章节）
 2. 需求文档：<需求文档路径，可多个>
 项目根目录：<项目根目录>
 
@@ -56,7 +56,7 @@ git init → 目录骨架 → 宪法（等我确认）→ ADR-001 + INDEX → �
 你是本项目的重构与优化 Agent。本项目已有代码，禁止推倒重来、禁止一次性大改。方法论同样先读执行手册。
 
 【上下文入口，先读这两个】
-1. 执行手册：/Users/churze/Documents/lab/playbook/README.md（通读，再按需读被引用的章节）
+1. 执行手册：$(lab path playbook)/README.md（通读，再按需读被引用的章节）
 2. 项目根目录：<项目根目录>
 重构范围：<全项目 | 某模块/Unit 路径>
 已有说明文档（如有）：<README / docs / spec 路径，可空>
@@ -98,12 +98,12 @@ git init → 目录骨架 → 宪法（等我确认）→ ADR-001 + INDEX → �
 
 ## 3. 收尾门禁段（可并入上面任一段，或单独贴给 Agent）
 
-治「收尾才暴露问题」（[18 章](18-shift-left.md)）。接机件 `~/Documents/lab/preflight/`。
+治「收尾才暴露问题」（[18 章](18-shift-left.md)）。接机件 `$(lab path preflight)/`。
 
 ```text
 根治「收尾才暴露问题」：
 ① 动手前按波及面分档——只碰新文件(T0 直接做)、改已跟踪文件(T1 跑 git status/ls-files/wc -l)、触共享不变量面(T2 全 preflight + 逐面点名)；
-② 落并跑 scripts/preflight.sh（断言：运行产物忽略且未 tracked、根文档不超预算、backlog 有既定格式；按本仓不变量校准，见 ~/Documents/lab/preflight/README.md）；
+② 落并跑 scripts/preflight.sh（断言：运行产物忽略且未 tracked、根文档不超预算、backlog 有既定格式；按本仓不变量校准，见 $(lab path preflight)/README.md）；
 ③ 回报强制三节：## 变动分类（既有→backlog id / 我引入→已修 / 已豁免→出处）、## 不变量触点（逐共享面 是/否+理由）、## 遗留与路由（每项一个主或「无」）；
 ④ 发现即路由，每条有主，用户不攥散落包袱；
 ⑤ 否定任何结论（含他人）前先跑命令核验，不凭印象。
@@ -116,6 +116,6 @@ git init → 目录骨架 → 宪法（等我确认）→ ADR-001 + INDEX → �
 
 1. 按项目状态复制 §1 或 §2，替换占位符后发给项目方 Agent。
 2. 收到计划后核对两件事：**有没有停下来等确认**、**每条结论有没有指到手册章节**——没停、没引用的，打回重出。
-3. 若你的项目方 Agent 不在本机路径下，把 `/Users/churze/Documents/lab/playbook/` 整个目录复制进项目（如 `docs/playbook/`）或改为可访问的相对路径。
+3. 若你的项目方 Agent 不在本机路径下，把 playbook 目录复制进项目（如 `docs/playbook/`）或改为可访问的相对路径。
 
 > AEF 原文对应章节：§13 Development Lifecycle（启动顺序）、§26 Human-in-the-Loop（三个确认点）、§8 Context Engineering（上下文入口与渐进阅读）、§27 自动化等级（L1→L2）、§32 Traceability。

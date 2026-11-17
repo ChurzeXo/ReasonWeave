@@ -1,7 +1,7 @@
 # 19 — 全栈反未接线与垂直切片交付法则 (Anti-Orphan & Vertical Slicing Protocol)
 
 > **导读**：本章旨在根治 AI 辅助研发（Vibe Coding / 多 Agent 协同）中最高频出现的隐蔽工程退化——**“底层能力已写好，但上层调度器/路由/UI 未接线（Wiring Gap / Dead Code）”**。
-> **宪法权威**：遵循 [ADR-0009 (Anti-Orphan Deterministic Wiring Governance)](file:///Users/churze/Documents/lab/group/architecture/adr/0009-anti-orphan-deterministic-wiring-governance-and-federated-guardrails.md)。
+> **宪法权威**：遵循 [ADR-0009 (Anti-Orphan Deterministic Wiring Governance)](../../../group/architecture/adr/0009-anti-orphan-deterministic-wiring-governance-and-federated-guardrails.md)。
 
 ---
 

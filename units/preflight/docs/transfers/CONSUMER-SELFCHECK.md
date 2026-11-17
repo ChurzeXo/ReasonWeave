@@ -1,9 +1,9 @@
 # 消费方安装自检提示词（preflight）— 可粘贴版
 
-> 用法：把下面 ```text``` 块整体复制，粘贴进**消费方项目**的 Agent 会话，把 `<项目根目录>` 换成真实路径即可。本提示词**只验证、不改动**（除非发现缺失/错误才最小补全，并先回报告知）。规范永远以 `/Users/churze/Documents/lab/preflight/README.md` 为准。
+> 用法：把下面 ```text``` 块整体复制，粘贴进**消费方项目**的 Agent 会话，把 `<项目根目录>` 换成真实路径即可。本提示词**只验证、不改动**（除非发现缺失/错误才最小补全，并先回报告知）。规范永远以 `$(lab path preflight)/README.md` 为准。
 
 ```text
-对本项目已安装的「仓库不变量门禁（preflight）」做安装正确性自检，只验证、不改动（发现缺失/错配请先回报，不要擅自大改）。规范见 /Users/churze/Documents/lab/preflight/README.md §2/§3/§5 与 INSTALL.md。
+对本项目已安装的「仓库不变量门禁（preflight）」做安装正确性自检，只验证、不改动（发现缺失/错配请先回报，不要擅自大改）。规范见 $(lab path preflight)/README.md §2/§3/§5 与 INSTALL.md。
 项目根：<项目根目录>
 
 【A. 文件落位核对】逐项确认存在且为仓库内文件：
@@ -14,7 +14,7 @@
 - .githooks/pre-commit.d/10-*                  （既有检查的子检查片：命名 10-<现有>，如 10-review-gate / 10-prospero-gates；应存在且都在跑、未焊成一份。纯 preflight 单门禁则无 10-* 亦正常）
 - docs/templates/wrap-up.md
 - scripts/check-wrapup.sh                   （复制自 templates/check.sh）
-- 根 AGENTS.md 含一行指针：「动手前跑 scripts/preflight.sh；收尾按 docs/templates/wrap-up.md 三节填；门禁细节见 ~/Documents/lab/preflight/README.md」
+- 根 AGENTS.md 含一行指针：「动手前跑 scripts/preflight.sh；收尾按 docs/templates/wrap-up.md 三节填；门禁细节见 $(lab path preflight)/README.md」
 
 【B. 门禁激活核对】
 - git config core.hooksPath 应 == .githooks（本地配置，需每位新克隆者各跑一次；确认已设置）

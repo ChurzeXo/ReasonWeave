@@ -46,7 +46,7 @@ baton install && baton link --check && lab doctor && baton check
 
 ### 执行工序（确定性 CLI 驱动）：
 1. **环境检查**：
-   - 运行 `lab doctor`，若命令不存在则执行 `cd ~/Documents/lab && npm link` 挂载。
+   - 运行 `lab doctor`，若命令不存在则进入 toolkit 源码根目录执行 `npm link`（默认位置 `cd ~/Documents/lab && npm link`）挂载。
 2. **生成 ZSpec 标准架构骨架**：
    - 在项目根目录运行脚手架命令：
      ```bash
@@ -169,12 +169,13 @@ baton install && baton link --check && lab doctor && baton check
 ```markdown
 请为本项目接入轻量级工程纪律机件（来自 lab-agent-toolkit）：
 
-1. **环境检查**：终端运行 `lab doctor`，若未就绪执行 `cd ~/Documents/lab && npm link`。
+1. **环境检查**：终端运行 `lab doctor`，若未就绪先进入 toolkit 源码根目录执行 `npm link`（默认位置 `cd ~/Documents/lab && npm link`）。
 2. **在 AGENTS.md 增加指令指针**：
-   - 架构决策：按 `$(lab path adr)/README.md` 接入，新建决策运行 `adr-init . light "<项目名>"`。
+   - 架构决策：按 `$(lab path adr)/README.md` 接入，新建决策运行 `adr-init . light "<项目名>"`（或 `lab adr . light "<项目名>"`）。
    - 待办捕获：按 `$(lab path backlog)/README.md` 将待办记录至 `docs/backlogs/`。
    - 提交门禁：按 `$(lab path preflight)/README.md` 将 `$(lab path preflight)/templates/preflight.sh` 接入为提交前检查。
-   - 代码扫描：按 `$(lab path review-gate)/README.md` 接入本地扫描。
+   - 代码质量：按 `$(lab path review-gate)/README.md` 接入本地扫描。
+   - 任务交接：运行 `baton install` 注入标准接入桩（契约 v2.36.0，严格会话ID统一，严禁跨会话处理工单）。
 3. **铁律**：严禁复制规则全文，只保留动态指针。接入后运行一次 `git status` 汇报。
 ```
 
