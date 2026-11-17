@@ -138,7 +138,7 @@ baton install && baton link --check && lab doctor && baton check
   - [ ] `backlog`（待办捕获，`docs/backlogs/`）
   - [ ] `preflight`（不变量探针与提交门禁）
   - [ ] `review-gate`（代码静态扫描与评审防线）
-  - [ ] `handoffs`（工作流交接中枢，`baton` / `handoff` 命令，契约 v2.32.0）
+  - [ ] `handoffs`（工作流交接中枢，`baton` / `handoff` 命令，契约 v2.36.0）
   - [ ] `worktree`（物理工作树隔离，`baton-worktree`）
   - [ ] `orphan`（死代码与孤儿资产清道夫，`lab orphan`）
   - [ ] `spec-guard` / `drift-gate`（架构规约与漂移守卫）
@@ -182,7 +182,7 @@ baton install && baton link --check && lab doctor && baton check
 
 ### 场景五：已接入消费方升级到最新版能力库
 
-> 📋 **适用场景**：本项目已接入 lab 能力库，lab 仓刚发布功能更新（当前 **Agent Baton v2.32.0 / 接入桩 sha `30eeac8e`**，包含 **ADR-0010 会话环境身份锁与防跨角色漂移、密码学审计凭据与 HMAC-SHA256 签章防伪、出站防注入提示词三段式、工单轮次单一事实源与 cmdForward 幂等性自愈、结论硬锚点校验、128-bit 强随机 Nonce、并发异步派发 `forward --async`、`--auto-nonce` 自动绑定**，以及新增 `orphan`、`spec-guard`、`worktree` 单元与多个 CLI）。
+> 📋 **适用场景**：本项目已接入 lab 能力库，lab 仓刚发布功能更新（当前 **Agent Baton v2.36.0 / 接入桩 sha `4c82924b`**，包含 **全局统一会话ID与一单到底 (`id === conversation_id`)、严禁跨会话处理工单硬门禁 (`CROSS_SESSION_MUTATION_BLOCKED`)、入站极简裁决提示词、出站 Round 轮次单一事实源与独立计算、会话亲和性与并发监听、ADR-0010 会话环境身份锁与防跨角色漂移、密码学审计凭据与 HMAC-SHA256 签章防伪、出站防注入提示词三段式、并发异步派发 `forward --async`、`--auto-nonce` 自动绑定**，以及新增 `orphan`、`spec-guard`、`worktree` 单元与多个 CLI）。
 > 📋 **使用方式**：复制下方整块 Markdown，发给**本项目**的 AI Agent 会话；每个消费方仓各发一次。上游细节见 [INSTALL.md §4](../INSTALL.md)。
 
 ````markdown
@@ -190,8 +190,8 @@ baton install && baton link --check && lab doctor && baton check
 
 背景：本机是「单一 lab 仓 + 软链 / 动态指针」模型，没有 submodule、npm 版本依赖或 commit 钉值，因此不需要逐仓 bump 版本号。但有两样东西不会自动刷新，必须显式处理：
 ① 全局 CLI 的 bin shim（新增 lab-orphan / spec-guard / drift-gate / agent-baton 等）只在 npm link 时生成；
-② 各载体（AGENTS.md / CLAUDE.md / GEMINI.md / README.md 及全局载体）里的 Baton 接入桩正文已变更至最新契约 v2.32.0，旧桩会被判「桩版本漂移」并 exit 1。
-本次升级重点落地了：ADR-0010 会话与环境身份锁（Fail-Closed 防跨角色漂移）、密码学审计私钥凭据与 HMAC-SHA256 签章防伪（防共享磁盘明文 Nonce 冒用）、出站防注入三段式提示词（防跨客户端 Agent 主谓角色倒置）、工单轮次单一事实源与 cmdForward 幂等性自愈、结论硬锚点校验、并发异步转递（--async）与多工单聚合监听。
+② 各载体（AGENTS.md / CLAUDE.md / GEMINI.md / README.md 及全局载体）里的 Baton 接入桩正文已变更至最新契约 v2.36.0，旧桩会被判「桩版本漂移」并 exit 1。
+本次升级重点落地了：全局统一会话ID与一单到底（`id === conversation_id`，消除多端混淆）、防跨会话处理工单硬门禁（`CROSS_SESSION_MUTATION_BLOCKED`）、入站极简裁决提示词、出站 Round 轮次单一事实源与独立计算、会话亲和性与基于 `Atomics.wait` 的低耗并发监听、ADR-0010 会话与环境身份锁（Fail-Closed 防跨角色漂移）、密码学审计私钥凭据与 HMAC-SHA256 签章防伪（防共享磁盘明文 Nonce 冒用）、出站防注入三段式提示词、并发异步转递（--async）与多工单聚合监听。
 
 ### 执行工序（按顺序，全部在终端真实运行，不要只静态读码）
 1. 定位并更新 lab 仓：
@@ -202,7 +202,7 @@ baton install && baton link --check && lab doctor && baton check
 3. 在**本项目根目录**刷新接入桩并自检：
    ```bash
    baton install             # 幂等：刷新项目载体 + 全局载体的接入桩（需固定中文桩可加 --lang zh）
-   baton link --check        # 必须 RC=0，显示「桩版本 == 引擎版本 (v2.32.0)」
+   baton link --check        # 必须 RC=0，显示「桩版本 == 引擎版本 (v2.36.0)」
    baton check               # 本仓交接 / 回执合规自检；历史存量工单告警不阻断当前工单
    ```
 4. 核对新能力可达（只读）：
@@ -211,7 +211,7 @@ baton install && baton link --check && lab doctor && baton check
    for u in handoffs orphan spec-guard worktree; do test -f "$(lab path $u)/README.md" || echo "MISSING: $u"; done
    which lab-orphan spec-guard drift-gate 2>/dev/null || where.exe lab-orphan spec-guard drift-gate
    ```
-5. 检查本项目 AGENTS.md / CLAUDE.md / README.md 的接入桩：版本串为 v2.32.0 且每个文件只有一份桩（无重复块）。若某载体是手写指针（缺 `<!-- handoff-stub:v2.1 begin -->` 标记）导致 install 跳过，请用 `$(lab path handoffs)/README.md` 的标准桩替换该段后重跑 `baton install`。另外：`baton doctor` 会用正则抓载体里第一个 `契约 v<版本>` 做比对，正文若残留手写的旧版本号请删掉（版本串只留在标准桩内），否则升级后仍误报漂移。
+5. 检查本项目 AGENTS.md / CLAUDE.md / README.md 的接入桩：版本串为 v2.36.0 且每个文件只有一份桩（无重复块）。若某载体是手写指针（缺 `<!-- handoff-stub:v2.1 begin -->` 标记）导致 install 跳过，请用 `$(lab path handoffs)/README.md` 的标准桩替换该段后重跑 `baton install`。另外：`baton doctor` 会用正则抓载体里第一个 `契约 v<版本>` 做比对，正文若残留手写的旧版本号请删掉（版本串只留在标准桩内），否则升级后仍误报漂移。
 
 ### 禁止事项（踩过的坑）
 - 不要用 lab 源模板覆盖本项目定制的 `review-gate/scan.sh`、`scripts/preflight.sh`、`.githooks/` 等副本（多为项目校准值）。
@@ -220,10 +220,10 @@ baton install && baton link --check && lab doctor && baton check
 - 不要修改 lab 仓内任何文件；本项目之外的仓库一律不动。
 
 ### 验收判据（全部实测满足才算完成）
-- [ ] `baton link --check` / `baton doctor` RC=0，输出「桩版本 == 引擎版本 (v2.32.0)」
+- [ ] `baton link --check` / `baton doctor` RC=0，输出「桩版本 == 引擎版本 (v2.36.0)」
 - [ ] `lab doctor` RC=0；`baton check` RC=0
 - [ ] `lab path orphan`、`lab path spec-guard` 可解析且对应 README.md 存在
-- [ ] 各载体接入桩唯一、版本串为 v2.32.0
+- [ ] 各载体接入桩唯一、版本串为 v2.36.0
 - [ ] `git status --porcelain` 只有接入桩刷新带来的预期改动，无意外文件
 
 ### 汇报

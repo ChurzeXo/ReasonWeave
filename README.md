@@ -36,8 +36,8 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| 🌐 `lab` | 能力库总管、环境体检、路径动态解析、ZSpec 脚手架、下游一键全量同步分发 (`sync-consumers`)，转发 `orphan` / `spec-guard` |
-| 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、会话环境身份锁、密码学审计凭据防伪、防注入出站提示词、静默管道与事件唤醒（Baton v2.32.0） |
+| 🌐 `lab` | 能力库总管、环境体检、路径动态解析、ZSpec 脚手架、下游一键全量同步分发 (`sync-consumers`)，全量转发 `baton` / `worktree` / `audit-runner` / `orphan` / `spec-guard` / `adr` / `preflight` |
+| 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、会话环境身份锁、密码学审计凭据防伪、防注入出站提示词、一单到底与会话ID统一、严禁跨会话处理工单、静默管道与事件唤醒（Baton v2.36.0） |
 | 🌳 `baton-worktree` | 基于 Git Worktree 的多 Agent 物理目录隔离调度引擎 |
 | 🛡️ `baton-audit-runner` | 双盲审计自动化运行器（无上下文独立重跑测试，Exit Code 真实裁决） |
 | 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫、反未接线联邦门禁（S1–S3 求解器、分栈极速 Fast Gate 增量提交门禁，v1.2.1） |
@@ -46,7 +46,7 @@ npm link
 
 > 💻 **Windows 用户提示**：支持 Windows 10/11 原生免配置运行。推荐使用 **PowerShell** 或 **Windows Terminal**（原生支持 `$(lab path <unit>)` 动态路径）；`npm link` 会自动注册 `.cmd` 与 `.ps1` 包装，无需开启开发者模式或管理员权限；换行符 CRLF `\r\n` 与托盘气泡通知已在底层 100% 原生适配。详见 [INSTALL.md §2.1](INSTALL.md)。
 
-> **已装过旧版本？** 本轮新增了多个 bin，且接入桩正文已演进至最新版（契约 v2.35.0 / sha `e5cc6082`）。升级必须：①在 lab 仓重跑 `npm link`；②在每个消费方仓根跑 `baton install` + `baton link --check`（或直接使用 `lab sync-consumers` 全自动同步）。详见 [INSTALL.md §4](INSTALL.md) 与 [消费方升级提示词](docs/CONSUMER-PROMPTS.md)（场景五）。
+> **已装过旧版本？** 本轮新增了多个 bin，且接入桩正文已演进至最新版（契约 v2.36.0 / sha `4c82924b`）。升级必须：①在 lab 仓重跑 `npm link`；②在每个消费方仓根跑 `baton install` + `baton link --check`（或直接使用 `lab sync-consumers` 全自动同步）。详见 [INSTALL.md §4](INSTALL.md) 与 [消费方升级提示词](docs/CONSUMER-PROMPTS.md)（场景五）。
 
 ### 3. 环境自检 (Doctor)
 在终端执行自检，确认依赖就绪：
@@ -74,11 +74,11 @@ lab zspec guide             # 查看面向 AI Agent 的 ZSpec 实施指南
 lab migrate [项目路径]      # 将老项目中硬编码的路径一键平滑升级
 ```
 
-### 2. `baton` / `handoff` — 任务交割与注意力节流引擎 (v2.32.0)
+### 2. `baton` / `handoff` — 任务交割与注意力节流引擎 (v2.36.0)
 > **跨仓/同仓 Agent 间任务交割像调 API 一样无损直达**  
 > 拒绝人肉传话与上下文衰减。一条命令穿透仓库边界，接口与协作契约严密对齐，独立窗口双盲审计，事件驱动无感闭环。
 
-五态生命周期 `draft → forwarded → received → delivered → closed`；支持物理工作树隔离（`--workspace worktree`）、静默管道（`throttle`）、双盲脱敏（`--blind`）、会话环境身份锁（`baton lane` / `HANDOFF_LANE` fail-closed 防漂移）、利益冲突防自我闭环门禁、密码学审计凭据与 HMAC-SHA256 签章（`.handoffs/.secrets/audit.token` & `audit_sig`）、出站提示词防注入三段式（`【身份警示：你是接收方 <目标角色>，请勿切换角色】`）、并发异步转递（`--async`）与批量派发、Round 轮次单一事实源、受阻无条件下车（`reject`）与 0-Token 后台唤醒（`--wait`）：
+五态生命周期 `draft → forwarded → received → delivered → closed`；支持物理工作树隔离（`--workspace worktree`）、静默管道（`throttle`）、双盲脱敏（`--blind`）、会话环境身份锁（`baton lane` / `HANDOFF_LANE` fail-closed 防漂移）、利益冲突防自我闭环门禁、密码学审计凭据与 HMAC-SHA256 签章（`.handoffs/.secrets/audit.token` & `audit_sig`）、出站提示词防注入三段式（`【身份警示：你是接收方 <目标角色>，请勿切换角色】`）、并发异步转递（`--async`）与批量派发、全局统一会话ID与一单到底（`id === conversation_id`）、严禁跨会话处理工单硬门禁（`CROSS_SESSION_MUTATION_BLOCKED`）、接收方入站回执极简裁决提示词、出站 Round 轮次单一事实源、受阻无条件下车（`reject`）与 0-Token 后台唤醒（`--wait`）：
 ```bash
 baton status --as <lane|target>     # 冷启动直取本方待办（等价 --for；加 --active 聚焦活跃）
 baton lane [<lane>|--clear]         # 绑定当前会话身份锁，防跨角色漂移
@@ -90,7 +90,7 @@ baton deliver <ID> --as <lane>      # 执行方终态交付并翻 delivered（�
 baton reject <ID> -n "<理由>" --as <lane>   # 实测未过 / 受阻：直接退回整改（轮次唯一自增点）
 baton accept <ID> -n "<结论>" --as <lane>   # 发起方独立实测后闭环（close 为同义别名）
 baton check [ID] [--fix]            # 闭环状态、回执证据与 needs_change 漂移核验
-baton install / baton doctor        # 刷新接入桩 / 校验桩版本 == 引擎版本 (v2.32.0)
+baton install / baton doctor        # 刷新接入桩 / 校验桩版本 == 引擎版本 (v2.36.0)
 ```
 
 ### 3. `baton-worktree` — 物理隔离调度引擎
@@ -122,7 +122,7 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 | **backlog** | [`units/backlog/`](units/backlog/) | 待办捕获：越界 / 待拍板 / 未来功能，一任务一文件，不打断当前工作流 |
 | **preflight** | [`units/preflight/`](units/preflight/) | 仓库不变量探针 + Git 提交门禁（v1.1.0），A1~A5 探针（含配置化单一事实源与派生状态防漂移对账），防止“做完才发现还有一件事” |
 | **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`) |
-| **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton v2.32.0），会话环境身份锁、密码学审计凭据签章、出站防注入提示词、无条件下车、五态状态机与事件唤醒 |
+| **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton v2.36.0），统一会话ID、防跨会话硬门禁、会话身份锁、密码学审计凭据签章、出站防注入提示词、无条件下车、五态状态机与事件唤醒 |
 | **worktree** | [`units/worktree/`](units/worktree/) | 基于 Git Worktree 的物理目录隔离调度引擎，为多 Agent 并发分配独立沙盒并智能共享依赖缓存 |
 | **playbook** | [`units/playbook/`](units/playbook/) | Agent Engineering Framework (AEF) 完整方法论手册与模板库 |
 

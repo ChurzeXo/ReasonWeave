@@ -5,17 +5,17 @@
 
 ---
 
-## 0. 当前版本快照（2026-11-15）
+## 0. 当前版本快照（2026-11-17）
 
 | 组件 | 版本 | 备注 |
 |---|---|---|
-| **Agent Baton / handoffs** | **v2.32.0** | 接入桩 sha `30eeac8e`；ADR-0010 身份防御、会话锁、密码学审计凭据与防注入提示词；Hub 注册 lab 跨仓 target；跨仓/仓内工作流中枢 |
+| **Agent Baton / handoffs** | **v2.36.0** | 接入桩 sha `4c82924b`；统一工单与会话ID (`id === conversation_id`)、严禁跨会话处理工单硬门禁、会话身份锁、密码学审计凭据、极简入站裁决提示词；Hub 注册 lab 跨仓 target；跨仓/仓内工作流中枢 |
 | **spec-guard / drift-gate** | **v2.2.0** | 架构规约与物理接线守卫（ADR-064 机器信任根验签、三维热力表、约定阈值解耦、增量感知门禁） |
 | **preflight** | **v1.1.0** | 仓库不变量探针（A1~A5 配置化对账防漂移、工程落地指引） |
 | **orphan** | **v1.2.1** | 死代码与孤儿资产清道夫、反未接线联邦门禁（ADR-0009、S1–S3 求解器、分栈 Fast Gate 提交门禁） |
 | **worktree** | v0.1.0 | 多 Agent 物理工作树隔离调度 |
 | **review-gate** | v1.1.0 | SAST + 双盲审计独立重跑器 |
-| **adr / backlog / playbook** | v1.0 / v1.2.0 / — | 架构记忆、待办捕获、AEF 执行手册 |
+| **adr / backlog / playbook** | v1.0.1 / v1.2.0 / — | 架构记忆、待办捕获、AEF 执行手册 |
 
 > 版本事实源 = `units/<unit>/VERSION.md` 与 `$(lab path handoffs)/README.md`。
 > `package.json` 仍是 `1.0.0`：本机是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule、npm 版本依赖或 commit 钉值，因此 lab 仓更新后引用自动指向最新，**不需要逐仓 bump 版本号**（跨机器按版本分发才需要 `npm version` + publish）。
@@ -47,8 +47,8 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| `lab` | 能力库总管、路径动态解析、环境体检、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、`orphan` / `spec-guard` 转发 |
-| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、会话锁、密码学防伪回执、事件驱动唤醒（v2.32.0） |
+| `lab` | 能力库总管、路径动态解析、环境体检、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发 `baton` / `worktree` / `audit-runner` / `orphan` / `spec-guard` / `adr` / `preflight` |
+| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、统一会话ID、防跨会话硬门禁、会话锁、密码学防伪回执、事件驱动唤醒（v2.36.0） |
 | `baton-worktree` | 为工单分配 / 回收独立物理工作树 |
 | `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执 |
 | `lab-orphan` | 死代码与孤儿资产清道夫（也可 `lab orphan <cmd>`） |
@@ -84,7 +84,7 @@ baton --help      # 确认交接引擎可用
 baton check       # 交接 / 回执合规自检（exit 0 = 合规）
 ```
 
-`baton doctor` 期望输出：`✅ [桩版本一致] ... 桩版本 == 引擎版本 (v2.32.0)`。
+`baton doctor` 期望输出：`✅ [桩版本一致] ... 桩版本 == 引擎版本 (v2.36.0)`。
 仓内还有全量回归自检：`npm test`（Node 内置 test runner，无额外依赖）。
 
 ---
@@ -106,7 +106,7 @@ lab sync-consumers /path/to/parent_dir
 ### 4.1 为什么必须做两件事（手动逐仓升级原理）
 
 1. **重跑 `npm link`**：本轮新增了 `agent-baton`、`lab-orphan`、`spec-guard`、`drift-gate` 等 bin。全局 bin shim 只在 `npm link` 时生成，旧的软链不会凭空多出新命令。
-2. **重跑 `baton install`**：接入桩正文已演进至最新版本（契约 v2.32.0），桩 sha 为 `30eeac8e`。旧桩留在 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `README.md` 及全局载体里，`baton link --check` 会判「桩版本漂移」并 **exit 1**，Agent 也会继续按过期工作流行动。
+2. **重跑 `baton install`**：接入桩正文已演进至最新版本（契约 v2.36.0），桩 sha 为 `4c82924b`。旧桩留在 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `README.md` 及全局载体里，`baton link --check` 会判「桩版本漂移」并 **exit 1**，Agent 也会继续按过期工作流行动。
 
 > 对比 v2.22.0 那次「下游零文件改动」：那轮没动桩正文；**这轮动了，所以逐仓重刷是硬要求**。
 
@@ -124,7 +124,7 @@ npm test                  # 可选：全量回归，确认引擎无损
 
 ```bash
 baton install             # 幂等：刷新项目载体 + 全局载体的接入桩
-baton link --check        # 必须 RC=0，且显示 v2.32.0 桩版本一致
+baton link --check        # 必须 RC=0，且显示 v2.36.0 桩版本一致
 baton check               # 本仓交接 / 回执合规自检
 ```
 
@@ -160,7 +160,7 @@ lab zspec add-unit <端名>       # 新增工程端
 lab zspec guide                 # 面向 Agent 的 ZSpec 实施规范
 ```
 
-### 5.2 交接中枢 `baton`（别名 `handoff`，v2.32.0）
+### 5.2 交接中枢 `baton`（别名 `handoff`，v2.36.0）
 
 ```bash
 baton status [--for <lane|target> | --as <lane|target>]   # 待办入口（两者等价；加 --active 聚焦活跃）
