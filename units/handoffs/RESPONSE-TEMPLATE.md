@@ -27,6 +27,11 @@
    The `## 结论 (Verdict)` section is a strict hard anchor. The receipt MUST contain a clearly stated verdict line (`- **结论**：...` or `<Accepted / Rejected / Verified / NO-GO>`), otherwise `baton receipt` and `baton deliver` will fail closed (Exit 1). Omitting the verdict section to bypass checks is strictly forbidden.
 6. **Copy the Skeleton Verbatim**:
    Do not invent custom markdown structures. Missing required anchors or sections will cause `baton check` and `baton receipt` to fail closed.
+7. **Concise Receiver Verdict Standard (v2.35.2)**:
+   When submitting a receipt or verdict back to the initiator, receivers (especially auditors) MUST NOT format their response as a multi-line outbound dispatch card (`请 [xxx] 接单...`). The receiver's final prompt MUST be a concise one-line verdict:
+   - Rejection (NO-GO): `审计完成，裁决 NO-GO（工单已退回实现方进入 Round <N>）`
+   - Pass (GO): `审计完成，裁决 GO` (or `交付完成，回执已就绪`)
+   The initiator is solely responsible for calculating and carrying the next `Round` in subsequent outbound handoff cards.
 
 ---
 

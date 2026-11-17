@@ -580,18 +580,18 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.35\.1\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.35\.2\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.35\.1/);
+    assert.match(agentsContent, /v2\.35\.2/);
     assert.match(agentsContent, /--as <lane>/);
-    // 接入桩正文应保持轻量韧性（小于 3800 字符，远小于旧版 8000+ 字符，去恐吓化）
+    // 接入桩正文应保持轻量韧性（小于 4200 字符，远小于旧版 8000+ 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
     assert.ok(stubMatch, '必须找到接入桩标记');
-    assert.ok(stubMatch[1].length < 3800, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
+    assert.ok(stubMatch[1].length < 4200, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
   });
 
   it('18. 连续多轮驳回历史无损继承与防冲刷（防模板空标题冲刷、精准小节定位追加）', () => {
@@ -725,27 +725,27 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.35.1，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.35.2，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.35.1'), '应当输出 v2.35.1');
+    assert.ok(verRes.stdout.includes('v2.35.2'), '应当输出 v2.35.2');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.35.1'), '-v 应当输出 v2.35.1');
+    assert.ok(vRes.stdout.includes('v2.35.2'), '-v 应当输出 v2.35.2');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.35.1'), 'version 应当输出 v2.35.1');
+    assert.ok(versionRes.stdout.includes('v2.35.2'), 'version 应当输出 v2.35.2');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.35.1'), '英文帮助中必须展示 v2.35.1');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.35.2'), '英文帮助中必须展示 v2.35.2');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -1218,12 +1218,19 @@ status: draft
     const rejectRes = runBaton(tmpDir, `reject ${id} -n "验收未通过，需修复幂等锁逻辑" --as audit`, { BATON_LANG: 'zh' });
     assert.equal(rejectRes.status, 0);
 
-    // 6. 验证驳回整改提示词结构化卡片（移除驳回角色与理由，工单编号统一为会话 ID，驳回理由落盘工单与回执）
-    assert.match(rejectRes.stdout, /\[任务主题\] ADR-073专项C-多轨EventInbox幂等去重与防风暴双盲审计/);
-    assert.match(rejectRes.stdout, /\[任务轮次\] Round 2/);
-    assert.match(rejectRes.stdout, /\[工单编号\]/);
+    // 6. 验证驳回裁决提示词（简洁单行：审计完成，裁决 NO-GO；严禁接收方输出多行出站交接卡片）
+    assert.match(rejectRes.stdout, /审计完成，裁决 NO-GO（工单已退回实现方进入 Round 2）/);
+    assert.doesNotMatch(rejectRes.stdout, /\[任务主题\]/);
+    assert.doesNotMatch(rejectRes.stdout, /\[工单编号\]/);
     assert.doesNotMatch(rejectRes.stdout, /\[驳回角色\]/);
     assert.doesNotMatch(rejectRes.stdout, /\[驳回理由\]/);
+
+    // 验证发起方 A 重新出站转递时计算并呈现完整的 Round 2 交接卡片
+    const fwdRound2 = runBaton(tmpDir, `forward ${id} --no-wait`, { BATON_AGENT_HOST: 'antigravity', BATON_LANG: 'zh' });
+    assert.equal(fwdRound2.status, 0);
+    const promptRound2 = runBaton(tmpDir, `prompt ${id}`, { BATON_LANG: 'zh' });
+    assert.match(promptRound2.stdout, /\[任务轮次\] Round 2（第 2 轮复审）/);
+    assert.match(promptRound2.stdout, /\[任务主题\] ADR-073专项C-多轨EventInbox幂等去重与防风暴双盲审计/);
 
     // 验证驳回理由精准写入工单与回执
     const ticketBody = fs.readFileSync(path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`), 'utf8');
@@ -1393,5 +1400,37 @@ status: draft
     } finally {
       try { process.kill(childA.pid, 'SIGKILL'); } catch {}
     }
+  });
+
+  it('35. [v2.35.2] 入站回执/裁决提示词极简化与出站 Round 轮次专属计算（Inbound Concise Verdict Prompt & Outbound Round SSOT）', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 发起方 A 创建工单并转递
+    const newRes = runBaton(tmpDir, 'new audit task "测试回执提示词极简化" --from impl');
+    const id = newRes.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
+    runBaton(tmpDir, `forward ${id} --no-wait`, { BATON_AGENT_HOST: 'antigravity' });
+
+    // 2. 接收方 B (audit) 裁决驳回 (NO-GO)
+    const rejectRes = runBaton(tmpDir, `reject ${id} -n "判据不满足，打回重构" --as audit`, { BATON_LANG: 'zh' });
+    assert.equal(rejectRes.status, 0);
+    // 核心断言：输出简洁单行裁决提示词，严禁输出多行出站交接卡片
+    assert.match(rejectRes.stdout, /审计完成，裁决 NO-GO（工单已退回实现方进入 Round 2）/);
+    assert.doesNotMatch(rejectRes.stdout, /请 \[实现方\] 接单：/);
+    assert.doesNotMatch(rejectRes.stdout, /\[任务主题\]/);
+
+    // 3. 发起方 A 重新出站转递，计算并输出 Round 2 完整交接卡片
+    const fwdRes = runBaton(tmpDir, `forward ${id} --no-wait`, { BATON_AGENT_HOST: 'antigravity', BATON_LANG: 'zh' });
+    assert.equal(fwdRes.status, 0);
+    const promptRes = runBaton(tmpDir, `prompt ${id}`, { BATON_LANG: 'zh' });
+    assert.match(promptRes.stdout, /\[任务轮次\] Round 2（第 2 轮复审）/);
+    assert.match(promptRes.stdout, /请 \[审计方\] 接单：/);
+
+    // 4. 接收方 B (audit) 重新复审通过并交付 (GO)
+    const nonce = runBaton(tmpDir, `show ${id} --nonce`).stdout.trim();
+    const deliverRes = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS\\n## 说明\\n已全量通过" --deliver --as audit --audit-nonce "${nonce}" --evidence-note "复审全通"`, { BATON_LANG: 'zh' });
+    assert.equal(deliverRes.status, 0);
+    // 核心断言：audit 交付输出单行 "审计完成，裁决 GO"，严禁输出多行交接卡片
+    assert.match(deliverRes.stdout, /审计完成，裁决 GO/);
+    assert.doesNotMatch(deliverRes.stdout, /请 \[发起方\] 查收/);
   });
 });

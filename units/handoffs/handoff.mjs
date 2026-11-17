@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.35.1';
+const BATON_VERSION = '2.35.2';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -475,7 +475,7 @@ function checkReceiptPrompt(f, fm, raw, problems) {
   }
   // AR-②：只验节名存在会被「空壳节」蒙混（曾有一份回执节名为空、交付行写在另一个重复节里，
   // check 照过）。故再验**至少一个节内含标准可复制交付行**（新式「请收 <仓> 回执：」或旧式「登记回执：」）。
-  const LINE_RE = /^[ \t]*(?:请【[^】]*】查收【[^】]*】回执(?:[ \t]*\[[^\]]+\])?[ \t]*[：:]|请收[ \t]*\S+[ \t]*回执(?:[ \t]*\[[^\]]+\])?[ \t]*[：:]|登记回执(?:[ \t]*\[[^\]]+\])?[ \t]*[：:])/m;
+  const LINE_RE = /^[ \t]*(?:请【[^】]*】查收【[^】]*】回执(?:[ \t]*\[[^\]]+\])?[ \t]*[：:]|请收[ \t]*\S+[ \t]*回执(?:[ \t]*\[[^\]]+\])?[ \t]*[：:]|登记回执(?:[ \t]*\[[^\]]+\])?[ \t]*[：:]|审计完成[，,]裁决|交付完成[，,]回执已就绪|Audit complete|Delivery complete)/m;
   const hasLine = secs.some(b => LINE_RE.test(b));
   if (!hasLine) {
     problems.push(`[回执] 「## 转递提示词」节为空 — 须含一行可复制交付行（「请收 <写回执仓> 回执：<路径>（…）」或旧式「登记回执：<路径>」）: ${f}`);
@@ -1751,21 +1751,15 @@ function cmdReject(args) {
     console.log(`✅ 已驳回退回: ${id} → forwarded（驳回理由已写入工单与回执）`);
     if (MODE === 'intra-repo') {
       const isZh = detectLang() === 'zh';
-      const toRole = resolveLaneRole(hFm?.from_lane) || hFm?.from_lane || (isZh ? '实现方' : 'Implementer');
-      const rawTitle = extractTitle(stripFM(rawH));
-      const cleanTitle = sanitizeTaskTopic(rawTitle);
-      const display = file.startsWith(os.homedir()) ? '~' + file.slice(os.homedir().length) : file;
-      const convId = hFm?.conversation_id || getSessionId();
-      const promptId = convId || id;
       if (isZh) {
-        console.log(`\n📋 可复制整改提示词（复制给实现方 Agent）:`);
+        console.log(`\n📋 可复制裁决提示词（复制给实现方/发起方 Agent）:`);
         console.log(`\`\`\`text`);
-        console.log(`请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n[任务轮次] Round ${nextRound}（第 ${nextRound} 轮复审）\n[工单编号] [${promptId}]\n[工单路径] ${display}`);
+        console.log(`审计完成，裁决 NO-GO（工单已退回实现方进入 Round ${nextRound}）`);
         console.log(`\`\`\`\n`);
       } else {
-        console.log(`\n📋 Copyable Rejection Prompt (pass to implementer):`);
+        console.log(`\n📋 Copyable Verdict Prompt (pass to implementer/initiator):`);
         console.log(`\`\`\`text`);
-        console.log(`Please [${toRole}] take ticket:\n[Task Topic] ${cleanTitle}\n[Task Round] Round ${nextRound} (Review Round ${nextRound})\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`);
+        console.log(`Audit complete, verdict NO-GO (Ticket returned to implementer entering Round ${nextRound})`);
         console.log(`\`\`\`\n`);
       }
     }
@@ -1916,12 +1910,20 @@ function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
       if (isZh) {
         console.log(`📋 可复制交付提示词（复制给发起方 Agent）:`);
         console.log(`\`\`\`text`);
-        console.log(`请 [${toRole}] 查收 [${fromRole}] 提交的回执：\n[工单编号] [${ticketId}]\n[需发起方改动] ${flag}\n[回执路径] ${display}`);
+        if (fromLane === 'audit') {
+          console.log(`审计完成，裁决 GO`);
+        } else {
+          console.log(`交付完成，回执已就绪 [${ticketId}]：${display}`);
+        }
         console.log(`\`\`\`\n`);
       } else {
         console.log(`📋 Copyable Delivery Prompt (pass to initiator):`);
         console.log(`\`\`\`text`);
-        console.log(`Please [${toRole}] inspect receipt submitted by [${fromRole}]:\n[Ticket ID] [${ticketId}]\n[Needs Initiator Action] ${flag}\n[Receipt Path] ${display}`);
+        if (fromLane === 'audit') {
+          console.log(`Audit complete, verdict GO`);
+        } else {
+          console.log(`Delivery complete, receipt ready [${ticketId}]: ${display}`);
+        }
         console.log(`\`\`\`\n`);
       }
     } else {
@@ -2629,7 +2631,12 @@ async function cmdForward(args) {
         forwardUpdates.rejected_by = '';
         forwardUpdates.rejected_at = '';
       }
-      if (!fm?.round) forwardUpdates.round = 1;
+      const roundFlag = flagValue(args, '--round');
+      if (roundFlag && Number(roundFlag) > 0) {
+        forwardUpdates.round = Number(roundFlag);
+      } else if (!fm?.round) {
+        forwardUpdates.round = 1;
+      }
       if (!fm?.conversation_id) forwardUpdates.conversation_id = getSessionId();
       if (MODE === 'intra-repo' && toLane === 'audit' && !fm?.audit_nonce) {
         forwardUpdates.audit_nonce = generateAuditNonce(id);
@@ -2902,7 +2909,7 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.35.1 为准）
+const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.35.2 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
@@ -2919,11 +2926,12 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
    - **实测通过**：照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` 骨架 → 运行 \`baton receipt <id> -n "<正文>" --deliver --as <本方 lane> --evidence-paths "<路径>"\`（审计工单附 \`--audit-nonce "<nonce>"\` 或同工作区授权下使用 \`--auto-nonce\` 自动绑定最新令牌；红队用例严格遵循 NO_DISPATCH / NO_COMPLETE / COMPLETE 三态标准）。
    - **实测未过（NO-GO/受阻）**：享有安全下车通道，直接运行 \`baton reject <id> -n "<理由/缺失条件>" --as <本方 lane>\` 退回整改。
 4. **收尾自检**：运行 \`baton check [id]\`（若有数据漂移可加 \`--fix\` 自动修复）。
+5. **入站回复收尾（简洁裁决/交付提示词）**：接收方严禁使用多行出站交接卡片；末尾仅输出单行提示词（驳回：\`审计完成，裁决 NO-GO（工单已退回实现方进入 Round <N>）\`；通过：\`审计完成，裁决 GO\` 或 \`交付完成，回执已就绪\`）。后续 Round 轮次由发起方在出站时唯一定义与计算。
 
 **出站工作流（派发 · 监听 · 严禁漏开监听）**
 1. **建单与转递（单工单原子闭环 · 99%场景）**：\`baton new <target|lane> <type> "<标题>"\`，填写正文后直接作为宿主后台任务（如 \`WaitMsBeforeAsync: 500\`）运行 \`baton forward <id> --wait\`（原子一步到位：秒级打印提示词 + 自动挂起后台监听 + 回执秒级唤醒；单工单严禁使用 \`--async\` 拆分两步！）。
 2. **多单并发派发（仅限一次性派发多单）**：\`baton forward <id1> <id2> ... --async\`，派发后必须立即作为后台任务运行 \`baton wait <id1> <id2> ... --all\` 聚合监听平账。
-3. **回复收尾（交接提示词规范）**：出站回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
+3. **出站回复收尾（交接提示词规范）**：出站由发起方统一计算与推进 Round 轮次；回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
    ## 交接提示词
    \`\`\`text
    请 [<目标角色>] 接单：
@@ -2937,7 +2945,7 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.35.1 · Details in $(lab path handoffs)/README.md)
+const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.35.2 · Details in $(lab path handoffs)/README.md)
 
 **Core Guards & Identity (Mandatory)**
 - **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.
@@ -2954,11 +2962,12 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
    - **All Tests Pass**: Follow \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` → run \`baton receipt <id> -n "<Body>" --deliver --as <my lane> --evidence-paths "<files>"\` (audit tickets require \`--audit-nonce "<nonce>"\` or \`--auto-nonce\`; red-team probes must follow three-state standard: NO_DISPATCH / NO_COMPLETE / COMPLETE).
    - **Tests Fail / Blocked (NO-GO)**: Use unconditional egress channel, run \`baton reject <id> -n "<reason/missing condition>" --as <my lane>\` to send back for revision (draft receipts can be logged without blocker).
 4. **Wrap-up Check**: Run \`baton check [id]\` (supports \`--fix\` for auto-repair).
+5. **Inbound Reply Closing (Concise Verdict Prompt)**: Receivers MUST NOT use multi-line outbound dispatch cards. Output only a single-line prompt at end of reply (Reject: \`Audit complete, verdict NO-GO (Ticket returned to implementer entering Round <N>)\`; Pass: \`Audit complete, verdict GO\` or \`Delivery complete, receipt ready\`). Subsequent Round is calculated and dispatched by the initiator.
 
-**Outbound Workflow (Create · Forward · Wait)**
+**Outbound Workflow (Dispatch · Listen · Mandatory Listener)**
 1. **Create & Forward (Single Ticket Atomic · 99% cases)**: \`baton new <target|lane> <type> "<Title>"\`, fill body, then run \`baton forward <id> --wait\` as a host background task (atomic one-shot: instant prompt card + auto-background listen + wake on delivery; single-ticket \`--async\` split is strictly prohibited!).
 2. **Concurrent Batch Dispatch (Multiple tickets only)**: \`baton forward <id1> <id2> ... --async\`, then immediately run \`baton wait <id1> <id2> ... --all\` as a host background task to clear debt.
-3. **Tail Block (Baton Pass Prompt Standard)**: End outbound replies with a dedicated code block for one-click human copying (no text after this block):
+3. **Outbound Reply Closing (Baton Pass Prompt)**: Initiator calculates and advances Round count; end outbound replies with an isolated code block for one-click human copying (no text after):
    ## Baton Pass Prompt
    \`\`\`text
    Please [<Target Role>] take ticket:
