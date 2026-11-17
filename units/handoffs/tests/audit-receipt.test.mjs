@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 
 const HANDOFF_BIN = path.resolve('units/handoffs/handoff.mjs');
 
@@ -580,13 +580,13 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.35\.0\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.35\.1\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.35\.0/);
+    assert.match(agentsContent, /v2\.35\.1/);
     assert.match(agentsContent, /--as <lane>/);
     // 接入桩正文应保持轻量韧性（小于 3800 字符，远小于旧版 8000+ 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
@@ -725,27 +725,27 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.35.0，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.35.1，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.35.0'), '应当输出 v2.35.0');
+    assert.ok(verRes.stdout.includes('v2.35.1'), '应当输出 v2.35.1');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.35.0'), '-v 应当输出 v2.35.0');
+    assert.ok(vRes.stdout.includes('v2.35.1'), '-v 应当输出 v2.35.1');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.35.0'), 'version 应当输出 v2.35.0');
+    assert.ok(versionRes.stdout.includes('v2.35.1'), 'version 应当输出 v2.35.1');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.35.0'), '英文帮助中必须展示 v2.35.0');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.35.1'), '英文帮助中必须展示 v2.35.1');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -1174,7 +1174,7 @@ status: draft
     assert.match(blockedByDebt.stderr + blockedByDebt.stdout, /未清偿监听借据拦截|Unwatched Debt Gate Blocked/);
 
     // 6. 验证 reportUnwatchedPending / baton check 输出一键平账命令
-    const checkRes = runBaton(tmpDir, 'check');
+    const checkRes = runBaton(tmpDir, 'check', { HOME: tmpDir });
     assert.match(checkRes.stdout, /一键启动后台监听平账|Start background listener/);
 
     // 7. 模拟通过 mock watcher 启动监听接管并核销平账
@@ -1319,5 +1319,79 @@ status: draft
     const promptByConv = runBaton(tmpDir, `prompt ${sessionA}`, { BATON_LANG: 'zh' });
     assert.equal(promptByConv.status, 0);
     assert.match(promptByConv.stdout, /会话A的主线任务/);
+  });
+
+  it('34. [v2.35.1] 跨会话监听多实例安全共存与孤儿精准抑制（Session Affinity & Multi-Window Concurrent Listening）', async () => {
+    const tmpDir = createTestRepo();
+    const res = runBaton(tmpDir, 'new impl task "测试多窗口并发监听协同" --from audit');
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
+
+    // 1. 模拟窗口 A (会话 session-A) 正在运行监听
+    const sessionA = 'session-window-A-11112222';
+    const sessionB = 'session-window-B-33334444';
+    const watchDir = path.join(tmpDir, '.handoffs', '.watch');
+    fs.mkdirSync(watchDir, { recursive: true });
+    const watchFile = path.join(watchDir, `${id}.json`);
+
+    // 启动一个常驻后台存活的真实进程代表窗口 A
+    const childA = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    childA.unref();
+
+    try {
+      // 写入窗口 A 的监听记录
+      fs.writeFileSync(watchFile, JSON.stringify({
+        id,
+        pid: childA.pid,
+        session_id: sessionA,
+        conversation_id: sessionA,
+        started_at: new Date().toISOString(),
+        watchers: [{
+          pid: childA.pid,
+          session_id: sessionA,
+          conversation_id: sessionA,
+          started_at: new Date().toISOString()
+        }]
+      }, null, 2), 'utf8');
+
+      // 2. 窗口 B (会话 session-B) 启动工单监听（工单处于 forwarded 态，timeout 200ms）
+      const waitResB = runBaton(tmpDir, `wait ${id} --timeout 200ms`, {
+        BATON_SESSION_ID: sessionB,
+        BATON_LANG: 'zh',
+        HOME: tmpDir
+      });
+
+      assert.ok(waitResB.stdout.includes('多端协同监听') || waitResB.stderr.includes('多端协同监听') || waitResB.stdout.includes('Handoff Wait'), '应触发多端监听逻辑');
+
+      // 核心断言：窗口 A 的进程绝对没有被 SIGTERM 杀死（依然存活！）
+      let childAAlive = false;
+      try {
+        process.kill(childA.pid, 0);
+        childAAlive = true;
+      } catch {}
+      assert.ok(childAAlive, '跨会话并发监听时，窗口 B 绝对严禁杀死窗口 A 的监听进程！');
+
+      // 3. 验证同会话孤儿抑制（同会话内重复开启监听，应杀死旧孤儿）
+      // 模拟窗口 A 在 sessionA 下再次启动监听，此时 childA 应被安全接管并杀死
+      runBaton(tmpDir, `wait ${id} --timeout 200ms`, {
+        BATON_SESSION_ID: sessionA,
+        BATON_LANG: 'zh',
+        HOME: tmpDir
+      });
+
+      // 短暂等待 SIGTERM 信号传递
+      await new Promise(r => setTimeout(r, 100));
+
+      let childAAfterSameSession = false;
+      try {
+        process.kill(childA.pid, 0);
+        childAAfterSameSession = true;
+      } catch {}
+      assert.ok(!childAAfterSameSession, '同会话内重复开启监听，应当精准终止本会话旧孤儿进程！');
+    } finally {
+      try { process.kill(childA.pid, 'SIGKILL'); } catch {}
+    }
   });
 });

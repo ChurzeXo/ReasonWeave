@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.35.0';
+const BATON_VERSION = '2.35.1';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -2494,9 +2494,21 @@ function getActiveUnwatchedDebt() {
     if (fs.existsSync(wFile)) {
       try {
         const wData = JSON.parse(fs.readFileSync(wFile, 'utf8'));
-        if (wData && wData.pid) {
-          process.kill(wData.pid, 0);
-          isWatching = true;
+        if (wData) {
+          if (Array.isArray(wData.watchers) && wData.watchers.length > 0) {
+            for (const w of wData.watchers) {
+              try {
+                if (w && w.pid) {
+                  process.kill(w.pid, 0);
+                  isWatching = true;
+                  break;
+                }
+              } catch {}
+            }
+          } else if (wData.pid) {
+            process.kill(wData.pid, 0);
+            isWatching = true;
+          }
         }
       } catch {}
     }
@@ -2890,7 +2902,7 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.35.0 为准）
+const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.35.1 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
@@ -2925,7 +2937,7 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.35.0 · Details in $(lab path handoffs)/README.md)
+const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.35.1 · Details in $(lab path handoffs)/README.md)
 
 **Core Guards & Identity (Mandatory)**
 - **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.
@@ -3460,9 +3472,21 @@ function reportUnwatchedPending() {
     if (fs.existsSync(watchFile)) {
       try {
         const wData = JSON.parse(fs.readFileSync(watchFile, 'utf8'));
-        if (wData && wData.pid) {
-          process.kill(wData.pid, 0);
-          hasWatcher = true;
+        if (wData) {
+          if (Array.isArray(wData.watchers) && wData.watchers.length > 0) {
+            for (const w of wData.watchers) {
+              try {
+                if (w && w.pid) {
+                  process.kill(w.pid, 0);
+                  hasWatcher = true;
+                  break;
+                }
+              } catch {}
+            }
+          } else if (wData.pid) {
+            process.kill(wData.pid, 0);
+            hasWatcher = true;
+          }
         }
       } catch {}
     }
@@ -4694,6 +4718,10 @@ async function cmdWait(args) {
   if (process.env.HANDOFF_LANE) {
     console.log(`   - 当前窗口 Lane: ${process.env.HANDOFF_LANE}`);
   }
+  const currentSessionId = getSessionId();
+  if (currentSessionId) {
+    console.log(`   - 会话亲和 ID: ${currentSessionId}`);
+  }
   console.log(`   (提示: 此命令设计为在后台运行 run_in_background，回执到达时将 Exit 0 唤醒主会话)\n`);
 
   let lastHeartbeatTime = startTime;
@@ -4775,39 +4803,84 @@ async function cmdWait(args) {
     watchers.length = 0;
   };
 
-  // ── 监听注册表与孤儿守护抑制（防止同一工单多实例累积导致 CPU 唤醒风暴）─────────
+  // ── 监听注册表与孤儿守护抑制（防止同一工单多实例累积导致 CPU 唤醒风暴 · v2.35.1 会话亲和性加固）─────
   const WATCH_DIR = path.join(ROOT, '.watch');
   try { fs.mkdirSync(WATCH_DIR, { recursive: true }); } catch {}
 
-  // 启动前检查并清理针对当前工单的旧 watcher 进程，确保全系统全局单一实例
+  // 启动前检查并清理针对当前工单的旧 watcher 进程
+  // 核心守卫（会话亲和性与防串扰）：
+  // 1. 同一会话（session_id 相同）：确系本窗口历史未退出孤儿，安全接管并发送 SIGTERM 终止旧守护，防止单窗口累积发热；
+  // 2. 跨会话/跨窗口（session_id 不同）：严禁向外部会话发送 SIGTERM 强杀！允许多窗口基于 fs.watch 并发安全协同监听，广播唤醒。
+  const survivingWatchersMap = new Map();
+
   for (const id of ids) {
     const watchFile = path.join(WATCH_DIR, `${id}.json`);
+    const surviving = [];
     if (fs.existsSync(watchFile)) {
       try {
         const raw = fs.readFileSync(watchFile, 'utf8');
         const prev = JSON.parse(raw);
-        if (prev && prev.pid && prev.pid !== process.pid) {
+        const prevWatchers = Array.isArray(prev?.watchers) && prev.watchers.length > 0
+          ? prev.watchers
+          : (prev?.pid ? [{ pid: prev.pid, session_id: prev.session_id || prev.conversation_id || '', host_env: prev.host_env, started_at: prev.started_at }] : []);
+
+        for (const w of prevWatchers) {
+          if (!w || !w.pid || w.pid === process.pid) continue;
+          let isAlive = false;
           try {
-            process.kill(prev.pid, 0); // 探测进程存活
-            process.kill(prev.pid, 'SIGTERM'); // 终止旧的孤儿守护
-          } catch {}
-          try { fs.unlinkSync(watchFile); } catch {}
+            process.kill(w.pid, 0); // 探测进程存活
+            isAlive = true;
+          } catch (e) {
+            if (e.code === 'EPERM') isAlive = true;
+          }
+
+          if (!isAlive) continue; // 僵死孤儿自动丢弃
+
+          const wSession = w.session_id || w.conversation_id || '';
+          const isSameSession = Boolean(wSession && currentSessionId && wSession === currentSessionId);
+
+          if (isSameSession) {
+            // 同会话历史孤儿：终止旧进程
+            try {
+              process.kill(w.pid, 'SIGTERM');
+            } catch {}
+          } else {
+            // 跨会话/外部窗口：保留存活 watcher，严禁强杀
+            surviving.push(w);
+            const externalTag = wSession ? `会话: ${wSession.slice(0, 8)}` : `PID: ${w.pid}`;
+            console.log(`ℹ️ [多端协同监听] 检测到外部会话窗口 (${externalTag}) 正在并发监听工单 [${id}]，两端均由事件总线独立唤醒。`);
+          }
         }
       } catch {}
     }
+    survivingWatchersMap.set(id, surviving);
   }
 
   const writeWatchRegistry = () => {
     const startedAt = new Date().toISOString();
     for (const id of ids) {
       const watchFile = path.join(WATCH_DIR, `${id}.json`);
-      const payload = {
-        id,
+      const surviving = survivingWatchersMap.get(id) || [];
+      const currentWatcher = {
         pid: process.pid,
+        session_id: currentSessionId,
+        conversation_id: currentSessionId,
         started_at: startedAt,
         timeout_ms: timeoutMs,
         interval_ms: explicitIntervalMs || null,
         host_env: isAgentEnvironment() ? 'agent' : 'terminal'
+      };
+      const mergedWatchers = [...surviving, currentWatcher];
+      const payload = {
+        id,
+        pid: process.pid,
+        session_id: currentSessionId,
+        conversation_id: currentSessionId,
+        started_at: startedAt,
+        timeout_ms: timeoutMs,
+        interval_ms: explicitIntervalMs || null,
+        host_env: isAgentEnvironment() ? 'agent' : 'terminal',
+        watchers: mergedWatchers
       };
       try {
         fs.writeFileSync(watchFile, JSON.stringify(payload, null, 2), 'utf8');
@@ -4823,9 +4896,31 @@ async function cmdWait(args) {
         if (fs.existsSync(watchFile)) {
           const raw = fs.readFileSync(watchFile, 'utf8');
           const data = JSON.parse(raw);
-          if (data && data.pid === process.pid) {
-            fs.unlinkSync(watchFile);
+          if (Array.isArray(data?.watchers)) {
+            const remaining = data.watchers.filter(w => {
+              if (!w || !w.pid || w.pid === process.pid) return false;
+              try {
+                process.kill(w.pid, 0);
+                return true;
+              } catch (e) {
+                return e.code === 'EPERM';
+              }
+            });
+            if (remaining.length > 0) {
+              data.watchers = remaining;
+              data.pid = remaining[0].pid;
+              data.session_id = remaining[0].session_id || '';
+              data.conversation_id = remaining[0].conversation_id || '';
+              fs.writeFileSync(watchFile, JSON.stringify(data, null, 2), 'utf8');
+              continue;
+            }
+          } else if (data && data.pid !== process.pid) {
+            try {
+              process.kill(data.pid, 0);
+              continue; // 外部进程依然存活，不删文件
+            } catch {}
           }
+          fs.unlinkSync(watchFile);
         }
       } catch {}
     }

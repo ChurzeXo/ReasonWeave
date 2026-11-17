@@ -296,16 +296,38 @@ function getWatchInfo(id) {
   if (fs.existsSync(watchFile)) {
     try {
       data = JSON.parse(fs.readFileSync(watchFile, 'utf8'));
-      if (data && data.pid) {
-        try {
-          process.kill(data.pid, 0);
-          isAlive = true;
-        } catch (e) {
-          if (e.code === 'EPERM') {
+      if (data) {
+        if (Array.isArray(data.watchers) && data.watchers.length > 0) {
+          const aliveWatchers = [];
+          for (const w of data.watchers) {
+            try {
+              if (w && w.pid) {
+                process.kill(w.pid, 0);
+                aliveWatchers.push(w);
+              }
+            } catch (e) {
+              if (e.code === 'EPERM') aliveWatchers.push(w);
+            }
+          }
+          if (aliveWatchers.length > 0) {
             isAlive = true;
+            data.watchers = aliveWatchers;
+            data.pid = aliveWatchers[0].pid;
           } else {
             isAlive = false;
             try { fs.unlinkSync(watchFile); } catch {}
+          }
+        } else if (data.pid) {
+          try {
+            process.kill(data.pid, 0);
+            isAlive = true;
+          } catch (e) {
+            if (e.code === 'EPERM') {
+              isAlive = true;
+            } else {
+              isAlive = false;
+              try { fs.unlinkSync(watchFile); } catch {}
+            }
           }
         }
       }
@@ -315,12 +337,16 @@ function getWatchInfo(id) {
     const started = data.started_at ? new Date(data.started_at).getTime() : 0;
     const elapsed = started ? Math.max(0, Date.now() - started) : 0;
     const durStr = formatDurationShort(elapsed);
+    const watcherCount = Array.isArray(data.watchers) ? data.watchers.length : 1;
+    const watcherText = watcherCount > 1
+      ? `监听: ${watcherCount} 窗口 (首个 pid ${data.pid}, ${durStr})`
+      : `监听: pid ${data.pid} (${durStr})`;
     return {
       listening: true,
       pid: data.pid,
       started_at: data.started_at,
       duration: durStr,
-      text: `监听: pid ${data.pid} (${durStr})`
+      text: watcherText
     };
   }
   return {
