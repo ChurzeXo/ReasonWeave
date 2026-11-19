@@ -14,6 +14,7 @@
 | **SwiftUI** | iOS 页面、ViewModel、导航树 | [`swift-periphery.md`](./swift-periphery.md) | **Heavy Gate** (CI 或 Pre-push 运行 Periphery，避免阻塞本地 commit) |
 | **微信小程序 / TS** | 页面路由、组件依赖、云函数 | [`miniprogram-route-guard.js.template`](./miniprogram-route-guard.js.template) | **Fast Gate** (本地 pre-commit 轻量 AST 路由探针) |
 | **Node.js / ESM** | CLI 子命令、公共导出原语、core 模块 | [`pre-commit-node.sh.template`](./pre-commit-node.sh.template) | **Fast Gate** (语法硬校验 + `lab-orphan check-diff --staged`，lab 实测 ~1.8–2.0s) |
+| **通用项目接入** | 新项目 `AGENTS.md` / `GEMINI.md` 极简路由与 `preflight.conf` L1+L2 串联 | [`project-agents-gemini-templates.md`](./project-agents-gemini-templates.md) | **SSOT 指针** (`AGENTS.md <= 12` 行、`GEMINI.md <= 6` 行 + 4 项验收清单) |
 
 ---
 

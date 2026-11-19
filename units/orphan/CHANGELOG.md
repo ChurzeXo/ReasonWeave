@@ -1,5 +1,15 @@
 # Changelog — units/orphan
 
+## [v1.3.0] - 2026-11-19
+
+### Added
+- **反假接线三层正交治理规范与新项目接入模板（沉淀自 Tappy ADR-075 实战）**：
+  - `README.md`（§5–§8）与 `units/playbook/docs/19-anti-orphan-vertical-slicing.md`（§4–§5）同步升级，保持单一事实源一致：
+    - 确立 **L1 / L2 / L3 三层正交解耦原则**：L1 严格收敛为双向拓扑零差集（含显式 `Tool(name=...)` 注册表与反向幽灵工具拦截）+ 基础结构存在性，明令禁止 L1 追逐无穷表达式/反射黑名单（防 Rice 定理死循环，反射由 OpenGrep SAST 守卫）；L2 在唯一 `.venv` 运行时验证全量路由非空产出、失败传播（`0` / `None` / 异常不吞没）及 `--verify-mutations` 变异自证并接入 CI 与 `preflight.conf` `RECONCILE_CMD`；L3 要求真机/外部设备产出使用非对称 Ed25519（禁对称 HMAC）+ 新鲜度硬门限校验；
+    - 确立 **Tier 1（轻量专项）vs Tier 2（全局自查）** 通用触发矩阵；
+    - 确立 **Agent 自主识别与呈批开单协议**（本任务新引入断链当场修完复测；越界/历史/跨端断链禁静默跳过或越界硬改，须附 `文件:行号` + L1/L2 复现证据主动询问人类是否 `baton new` 开单）；
+  - 新增 `templates/wiring/project-agents-gemini-templates.md`（并在 `templates/wiring/README.md` 索引）：提供新项目 `AGENTS.md`（`<= 12` 行分级自查段）与 `GEMINI.md`（`<= 6` 行执行守卫段）标准复制模板、`preflight.conf` L1+L2 串联参考及 4 项初始化验收清单。
+
 ## [v1.2.1] - 2026-11-14
 
 ### Added
