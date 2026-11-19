@@ -323,8 +323,9 @@ baton install && baton link --check && lab doctor && baton check
 
 ### 场景七：消费方接入或升级 orphan v1.3.0 反假接线三层治理与 AGENTS/GEMINI 极简路由
 
-> 📋 **适用场景**：新项目初始化或已接入消费方同步升级 `orphan v1.3.0`（L1/L2/L3 三层正交反假接线规范、Tier 1/2 分级自查、Agent 自主呈批开单协议与 `AGENTS.md`/`GEMINI.md` 极简接入模板）。  
-> 📋 **使用方式**：复制以下内容发送给消费方项目的 AI Agent 会话：
+> 📋 **适用场景**：**已有真实业务代码**的下游消费方（或新项目搭完首个真实模块与运行时后），接入或升级 `orphan v1.3.0`（L1/L2/L3 三层正交反假接线规范、Tier 1/2 分级自查、Agent 自主呈批开单协议与 `AGENTS.md`/`GEMINI.md` 极简接入模板）。  
+> ⚠️ **边界提示**：`lab-agent-toolkit` 自身及 0 代码空目录**不执行**本场景（只需在 `lab` 仓执行 `git pull --ff-only && npm link && lab doctor` 完成全局安装即可，严禁在空仓硬填 `<...>` 占位符）。  
+> 📋 **使用方式**：复制以下内容发送给下游业务项目的 AI Agent 会话：
 
 ````markdown
 请同步 `lab-agent-toolkit` 最新 `orphan v1.3.0` 反假接线规范与极简接入模板，完成本项目的接线治理对齐。
