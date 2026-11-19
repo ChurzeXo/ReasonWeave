@@ -18,7 +18,7 @@
 | **adr / backlog / playbook** | v1.0.1 / v1.2.0 / — | 架构记忆、待办捕获、AEF 执行手册 |
 
 > 版本事实源 = `units/<unit>/VERSION.md` 与 `$(lab path handoffs)/README.md`。
-> `package.json` 仍是 `1.0.0`：本机是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule、npm 版本依赖或 commit 钉值，因此 lab 仓更新后引用自动指向最新，**不需要逐仓 bump 版本号**（跨机器按版本分发才需要 `npm version` + publish）。
+> `package.json` 当前为 `1.1.0`（随全局能力演进做 minor 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
 
 ---
 
