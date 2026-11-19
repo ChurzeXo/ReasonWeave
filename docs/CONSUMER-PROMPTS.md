@@ -33,7 +33,7 @@ cd ~/Documents/lab && npm link
 baton install && baton link --check && lab doctor && baton check
 ```
 
-完整升级工序与坑位见 [INSTALL.md §4](../INSTALL.md)，逐场景可执行提示词见下方**场景五**。
+完整升级工序与坑位见 [INSTALL.md §4](../INSTALL.md)，逐场景可执行提示词见下方**场景五**；若需在已有真实代码的下游业务仓接入 `orphan v1.3.0` 的 `AGENTS.md`/`GEMINI.md` 本地路径映射（由消费方 Agent 在业务仓创建，全局安装或空仓不执行），见**场景七**。
 
 ---
 

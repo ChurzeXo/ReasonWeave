@@ -139,7 +139,7 @@ baton check               # 本仓交接 / 回执合规自检
 - **字段归一化**：同跨仓数据模型统一为 `needs_change`，引擎对历史 `needs_iggle_change` 透明向下兼容；若消费方有脚本自行解析该字段，需自行核对。
 - **别在 AGENTS.md 正文写死 `契约 vX.Y.Z`**：`baton doctor` 用正则抓载体里第一个 `契约 v<版本>` 与引擎比对；正文残留旧版本号会让升级后误判「桩版本漂移」。版本串只留在标准接入桩内，正文只放动态指针。
 - **行为变化**：写操作全面支持 `--as <lane>` 显式身份；`reject` / `reopen` 享无条件下车通道；`receipt --deliver` 一步直达终态交付；审计工单须带 `--audit-nonce`（用 `baton show <id> --nonce` / `baton nonce <id>` 取令牌）；`baton check <id> --fix` 可修复历史 `needs_change` 漂移。细则以 `$(lab path handoffs)/README.md` 契约为准。
-- **新单元按需接入**：`orphan`、`spec-guard` 的门禁模板属于可选增强，不是升级必做项；接入用 `$(lab path orphan)/README.md`、`$(lab path spec-guard)/README.md` 指针，不复制正文。
+- **新单元按需接入**：`orphan`、`spec-guard` 的门禁模板属于可选增强，不是升级必做项；接入用 `$(lab path orphan)/README.md`、`$(lab path spec-guard)/README.md` 指针，不复制正文。其中 `orphan v1.3.0` 的 `AGENTS.md`（`<= 12` 行）/ `GEMINI.md`（`<= 6` 行）反假接线路径映射**仅在已有真实业务代码的下游项目仓创建，一般由消费方 Agent 探测本仓真实路径后写入**；全局安装/升级 `lab-agent-toolkit` 或 0 代码空目录无需创建。
 
 ---
 

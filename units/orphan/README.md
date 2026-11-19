@@ -126,6 +126,9 @@ Agent 在执行研发或审计任务中发现未接线或假接线时，必须�
 
 ## 8. 新项目 `AGENTS.md` / `GEMINI.md` 接入规范与模板
 
+* **创建时机与职责分工**：
+  * **何时创建**：仅在**已有真实业务代码的下游消费方仓**（或新项目完成骨架搭建、已存在首个真实注册表/路由/入口与唯一运行时后）创建；**全局安装/升级 `lab-agent-toolkit` 本身或 0 代码空目录严禁创建或强填 `<...>` 占位符**。
+  * **由谁创建**：一般由**消费方项目的 Agent** 结合本仓真实目录与运行时路径负责创建并自检，不通过中央脚手架硬编码注入。
 * **SSOT 原则**：业务仓库**不得复制**本单元或 Playbook 的长篇方法论，只放极简本地路由映射（`AGENTS.md` 分级自查段 **`<= 12` 行**、`GEMINI.md` 执行守卫段 **`<= 6` 行**），并保留 `$(lab path orphan)/README.md` 指针。
 * **标准复制模板与 4 项初始化验收清单**（行数预算、路径真实性、`preflight.conf` L1+L2 串联、`pre-commit` SAST 挂载）：完整模板见 [`templates/wiring/project-agents-gemini-templates.md`](./templates/wiring/project-agents-gemini-templates.md)。
 

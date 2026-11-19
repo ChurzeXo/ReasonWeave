@@ -1,6 +1,7 @@
 # 新项目 `AGENTS.md` / `GEMINI.md` 反假接线接入规范与模板
 
 > **单一事实源（SSOT）**：本模板源自 [units/orphan/README.md](../../README.md) 与 [19-anti-orphan-vertical-slicing.md](../../../playbook/docs/19-anti-orphan-vertical-slicing.md)（沉淀自 ADR-075 实战）。  
+> **创建时机与职责**：本映射**仅在已有真实业务代码的下游消费方仓**（或新项目已建好首个真实入口与唯一运行时后）创建，一般由**消费方 Agent** 探测本仓真实路径后负责写入；全局安装/升级 `lab-agent-toolkit` 本身或 0 代码空目录**不创建**本映射（严禁残留 `<...>` 占位符）。  
 > **核心铁律**：业务仓库**不得复制**长篇方法论或三层架构正文，只放极简本地路由映射，并保留 `$(lab path orphan)/README.md` 指针。
 
 ---

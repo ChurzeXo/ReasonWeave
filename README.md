@@ -188,6 +188,7 @@ ln -sf ~/dev-templates/hooks/pre-commit-miniprogram .git/hooks/pre-commit
 ```
 
 - **统一模板库**：位于 `$HOME/dev-templates/hooks/`，各技术栈最佳实践与参考实现见 [`$(lab path orphan)/templates/wiring/README.md`](units/orphan/templates/wiring/README.md)。
+- **路径映射创建时机与职责（`orphan v1.3.0`）**：`AGENTS.md`（`<= 12` 行）/ `GEMINI.md`（`<= 6` 行）反假接线本地路径映射**仅在有真实业务代码的下游消费方仓创建**，一般由**消费方 Agent** 探测本仓真实路径后写入（模板见 `$(lab path orphan)/templates/wiring/project-agents-gemini-templates.md`）；全局安装/升级 `lab-agent-toolkit` 或 0 代码空目录不创建该映射。
 - **紧急豁免机制**：生产紧急 Hotfix 支持通过 `SKIP_WIRING_GATE=1 git commit -m "..."` 临时跳过。
 
 ---
