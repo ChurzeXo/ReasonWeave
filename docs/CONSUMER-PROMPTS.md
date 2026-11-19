@@ -13,6 +13,7 @@
 5. [场景四：轻量项目仅接入纪律机件（不做 ZSpec 宏观重构）](#场景四轻量项目仅接入纪律机件不做-zspec-宏观重构)
 6. [场景五：已接入消费方升级到最新版能力库](#场景五已接入消费方升级到最新版能力库)
 7. [场景六：消费方接入与升级 spec-guard v2.0 机器信任根与接线守卫](#场景六消费方接入与升级-spec-guard-v20-机器信任根与接线守卫)
+8. [场景七：消费方接入或升级 orphan v1.3.0 反假接线三层治理与 AGENTS/GEMINI 极简路由](#场景七消费方接入或升级-orphan-v130-反假接线三层治理与-agentsgemini-极简路由)
 
 ---
 
@@ -316,5 +317,32 @@ baton install && baton link --check && lab doctor && baton check
 1. `spec-guard check --full` 最终输出的三元热力表汇总行（总规约数、数据漂移数、孤儿决策数）；
 2. 本次治理修复了哪些 ADR（特别说明 ADR-066 机器信任根治理情况）；
 3. 生产接线与门禁配置确认。
+````
+
+---
+
+### 场景七：消费方接入或升级 orphan v1.3.0 反假接线三层治理与 AGENTS/GEMINI 极简路由
+
+> 📋 **适用场景**：新项目初始化或已接入消费方同步升级 `orphan v1.3.0`（L1/L2/L3 三层正交反假接线规范、Tier 1/2 分级自查、Agent 自主呈批开单协议与 `AGENTS.md`/`GEMINI.md` 极简接入模板）。  
+> 📋 **使用方式**：复制以下内容发送给消费方项目的 AI Agent 会话：
+
+````markdown
+请同步 `lab-agent-toolkit` 最新 `orphan v1.3.0` 反假接线规范与极简接入模板，完成本项目的接线治理对齐。
+
+### 执行工序（SSOT 指针制，严禁复制长篇正文）
+1. **拉取与核验指针**：
+   - 确认本地 `$(lab path orphan)/README.md`（§5–§8）与 `$(lab path orphan)/templates/wiring/project-agents-gemini-templates.md` 可读；若不存在或版本落后，先到 `lab` 仓根目录执行 `git pull --ff-only && npm link && lab doctor`。
+2. **更新 `AGENTS.md` 与 `GEMINI.md`（严格行数预算）**：
+   - 参照 `$(lab path orphan)/templates/wiring/project-agents-gemini-templates.md`，只替换 `<...>` 为本项目真实路径：
+     - `AGENTS.md` 新增/更新「反假接线分级自查段」（**`<= 12` 行**，含 Tier 1/2 本地映射 + 自主呈批开单纪律 + `$(lab path orphan)/README.md` 指针）；
+     - `GEMINI.md` 新增/更新「反假接线执行守卫段」（**`<= 6` 行**，指定唯一 `.venv` 或唯一运行时执行 L1/L2，严禁 `SKIP_*` 与 `--no-verify` 绕过）。
+3. **对齐 L1 / L2 / L3 与门禁串联**：
+   - 检查 `preflight.conf` 中的 `RECONCILE_CMD` 是否已串联 L1（静态双向拓扑零差集 `--fast`）与 L2（唯一运行时失败传播与 `--verify-mutations` 变异自证），并确认 CI 同步接入；
+   - 确认 `.githooks/pre-commit.d/` 已挂载 OpenGrep SAST（如 `10-review-gate`）守卫反射与动态执行；若涉及真机/外设产出，核验 L3 非对称 Ed25519 + 新鲜度硬门限。
+4. **4 项初始化验收自检**：
+   - 逐项核验：① 行数预算（`AGENTS.md <= 12` 行、`GEMINI.md <= 6` 行，无长篇方法论复制）；② 本地路径与唯一 `.venv` 真实可执行；③ `bash scripts/preflight.sh`（A5 `RECONCILE_CMD` L1+L2 串联）全绿；④ `pre-commit` SAST 已挂载且无 `SKIP_*` 绕过后门。
+
+### 汇报要求
+3 句话内说明：① 修改了哪些文件及对应段行数；② `preflight.sh` 与 L1/L2 实测结果；③ 是否存在越界/历史假接线需要 `baton new` 开单整改（如有，附 `文件:行号` + 复现证据）。
 ````
 

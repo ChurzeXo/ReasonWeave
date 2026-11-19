@@ -40,7 +40,7 @@ npm link
 | 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、会话环境身份锁、密码学审计凭据防伪、防注入出站提示词、一单到底与会话ID统一、严禁跨会话处理工单、静默管道与事件唤醒（Baton v2.36.0） |
 | 🌳 `baton-worktree` | 基于 Git Worktree 的多 Agent 物理目录隔离调度引擎 |
 | 🛡️ `baton-audit-runner` | 双盲审计自动化运行器（无上下文独立重跑测试，Exit Code 真实裁决） |
-| 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫、反未接线联邦门禁（S1–S3 求解器、分栈极速 Fast Gate 增量提交门禁，v1.2.1） |
+| 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫、反未接线与反假接线三层治理门禁（S1–S3 求解器、L1/L2/L3 正交解耦、Tier 1/2 自查与模板，v1.3.0） |
 | 🛡️ `spec-guard` / `drift-gate` | 架构规约与物理接线守卫（P3' 三元映射对账、三维热力表、ADR 机器信任根验签、约定阈值解耦，v2.2.0） |
 | 📐 `adr-init` | 架构决策记录 (ADR) 快速引导初始化 |
 
@@ -118,7 +118,7 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 |---|---|---|
 | **adr** | [`units/adr/`](units/adr/) | 架构决策记录（ADR），三档强度 light / standard / frozen，跨会话架构记忆 |
 | **spec-guard** | [`units/spec-guard/`](units/spec-guard/) | 全局架构漂移与规约守卫（v2.2.0），ADR 机器信任根验签、物理接线探针、P3' 三元映射对账（三维热力表）、自定义发现规则与 overlay、约定阈值语义解耦、零覆盖假绿防卫、暂存区增量感知门禁（<0.05s） |
-| **orphan** | [`units/orphan/`](units/orphan/) | 死代码与孤儿资产清道夫、反未接线联邦门禁（v1.2.1），只读 Git HEAD + S1–S3 求解器自检 + 跨栈增量提交门禁与 Fast Gate 模板 |
+| **orphan** | [`units/orphan/`](units/orphan/) | 死代码与孤儿资产清道夫、反假接线三层正交治理（v1.3.0），只读 Git HEAD + S1–S3 求解器 + L1/L2/L3 规范、Tier 1/2 自查、自主呈批开单及新项目 `AGENTS.md`/`GEMINI.md` 模板 |
 | **backlog** | [`units/backlog/`](units/backlog/) | 待办捕获：越界 / 待拍板 / 未来功能，一任务一文件，不打断当前工作流 |
 | **preflight** | [`units/preflight/`](units/preflight/) | 仓库不变量探针 + Git 提交门禁（v1.1.0），A1~A5 探针（含配置化单一事实源与派生状态防漂移对账），防止“做完才发现还有一件事” |
 | **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`) |

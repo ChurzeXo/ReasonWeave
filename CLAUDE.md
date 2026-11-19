@@ -1,20 +1,21 @@
 ---
 
-## 全局 AI 行为规约：全栈“反未接线”（Anti-Orphan）确定性交付宪章
+## 全局 AI 行为规约：全栈“反未接线与反假接线”（Anti-Orphan & Anti-Fake-Wiring）确定性交付宪章
 
-> **权威出处**：遵循 [ADR-0009](file:///Users/churze/Documents/lab/group/architecture/adr/0009-anti-orphan-deterministic-wiring-governance-and-federated-guardrails.md) 与 `$(lab path playbook)/docs/19-anti-orphan-vertical-slicing.md`。
-> **核心铁律**：拒绝依赖 AI 自觉（Prompt 祈祷），建立机器可验证的物理级确定性门禁；严禁底层能力已实现但上层未接线。
+> **权威出处**：遵循 [ADR-0009](file:///Users/churze/Documents/lab/group/architecture/adr/0009-anti-orphan-deterministic-wiring-governance-and-federated-guardrails.md)、`$(lab path playbook)/docs/19-anti-orphan-vertical-slicing.md` 与 `$(lab path orphan)/README.md`（§5–§8）。
+> **核心铁律**：拒绝依赖 AI 自觉（Prompt 祈祷），建立机器可验证的物理级确定性门禁；严禁底层能力已实现但上层未接线或假接线。
 
 ### 1. 垂直切片铁律（Vertical Slicing Rule）
 - **禁止水平分层交付**：严禁只编写底层 Executor 函数、API 接口、数据模型或独立 UI 组件而不接入主调用链。
 - **端到端原子提交**：任何新增的原语（Primitive）、工具能力、路由或页面，必须在同一次变更中完成全链路闭环：`底层实现 -> 注册表/Schema/路由声明 -> 上层调度器/Planner/主导航入口`。
 
-### 2. 完成定义（Definition of Done, DoD）
-- 仅通过底层函数的单元测试（Unit Test）**绝对不视为任务完成**。
-- 必须同步提供**接线验证（Wiring Verification）**——证明上层调度器（如 LLM Planner、NavigationStack、App 路由、`app.json`）已能识别并实际触发该能力。
+### 2. 完成定义（DoD）与三层正交判据
+- 仅通过底层函数的单元测试（Unit Test）**绝对不视为任务完成**，必须同步提供**接线验证（Wiring Verification）**。
+- 业务仓按三层正交解耦落地：L1（静态双向拓扑零差集，禁追逐无穷表达式/反射黑名单，反射归 OpenGrep SAST）→ L2（唯一 `.venv` 运行时非空产出 + 失败传播 + `--verify-mutations`，接入 CI 与 `preflight.conf` `RECONCILE_CMD`）→ L3（真机/外设产出非对称 Ed25519 + 新鲜度硬门限）。
 
-### 3. 交割与审计契约（Handoff & Audit Protocol）
+### 3. 交割与自主呈批开单契约（Handoff & Audit Protocol）
 - 在多窗口或跨 Agent 异步交割任务时，审计方（`to_lane: audit`）代码审查的第一道防线为“孤儿与接线检查（Orphan Check）”：凡新增的导出函数、Struct、View 或 Page 未在主入口调用树中被引用，一律直接打回（Reject），禁止合并。
+- 发现本任务新引入断链当场修完复测；发现越界/历史/跨端断链禁静默跳过或越界硬改，须附 `文件:行号` + L1/L2 复现证据，主动询问人类是否执行 `baton new` 开单整改。
 
 ### 4. 物理门禁（Physical Gate，与 `AGENTS.md` 同名章节等价）
 - 本仓 Fast Gate 挂载于 `.git/hooks/pre-commit`（软链至 `$HOME/dev-templates/hooks/pre-commit-node`，SSOT 为 `units/orphan/templates/wiring/pre-commit-node.sh.template`），提交时自动执行 `node --check` + `lab-orphan check-diff --staged`。
