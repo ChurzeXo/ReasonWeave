@@ -135,15 +135,35 @@ function detectLang() {
   return 'en';
 }
 
+function extractBaggageSessionId(baggage) {
+  if (!baggage || typeof baggage !== 'string') return '';
+  for (const part of baggage.split(',')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const k = part.slice(0, eqIdx).trim().toLowerCase();
+    if (k === 'codebuddy.session_id' || k === 'workbuddy.session_id' || k === 'session_id') {
+      let v = part.slice(eqIdx + 1).split(';')[0].trim();
+      try { v = decodeURIComponent(v); } catch {}
+      if (v) return v;
+    }
+  }
+  return '';
+}
+
 function getSessionId() {
   const envKey = process.env.BATON_SESSION_ID ||
     process.env.ANTIGRAVITY_CONVERSATION_ID ||
     process.env.CURSOR_CONVERSATION_ID ||
     process.env.CLAUDE_CONVERSATION_ID ||
+    process.env.CLAUDE_SESSION_ID ||
     process.env.WORKBUDDY_CONVERSATION_ID ||
+    process.env.WORKBUDDY_SESSION_ID ||
+    process.env.CODEBUDDY_CONVERSATION_ID ||
+    process.env.CODEBUDDY_SESSION_ID ||
     process.env.WINDSURF_CONVERSATION_ID ||
     process.env.TERM_SESSION_ID ||
-    process.env.SESSION_ID;
+    process.env.SESSION_ID ||
+    extractBaggageSessionId(process.env.BAGGAGE);
   if (envKey) return String(envKey).replace(/[^a-zA-Z0-9_-]/g, '_');
   const ppid = process.ppid || 'global';
   return `ppid-${ppid}`;

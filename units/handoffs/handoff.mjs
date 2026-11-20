@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.36.0';
+const BATON_VERSION = '2.36.1';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -290,8 +290,12 @@ function isAgentEnvironment() {
     process.env.ANTIGRAVITY_AGENT ||
     process.env.BATON_AGENT_HOST ||
     process.env.CLAUDE_CODE ||
+    process.env.CLAUDE_SESSION_ID ||
     process.env.CURSOR_AGENT ||
     process.env.WORKBUDDY_AGENT ||
+    process.env.WORKBUDDY_SESSION_ID ||
+    process.env.CODEBUDDY_SESSION_ID ||
+    process.env.CODEBUDDY_CONVERSATION_ID ||
     process.env.AI_AGENT ||
     process.env.CONTINUE_GLOBAL_DIR ||
     process.env.WINDSURF_AGENT ||
@@ -909,18 +913,107 @@ function generateAuditNonce(id) {
 const SESSIONS_DIR = path.join(ROOT, '.sessions');
 const SECRETS_DIR = path.join(ROOT, '.secrets');
 
+const KNOWN_SESSION_ENV_KEYS = [
+  'BATON_SESSION_ID',
+  'ANTIGRAVITY_CONVERSATION_ID',
+  'CURSOR_CONVERSATION_ID',
+  'CLAUDE_CONVERSATION_ID',
+  'CLAUDE_SESSION_ID',
+  'WORKBUDDY_CONVERSATION_ID',
+  'WORKBUDDY_SESSION_ID',
+  'CODEBUDDY_CONVERSATION_ID',
+  'CODEBUDDY_SESSION_ID',
+  'WINDSURF_CONVERSATION_ID',
+  'TERM_SESSION_ID',
+  'SESSION_ID',
+];
+
+const IGNORED_OS_SESSION_ENV_KEYS = new Set([
+  'XDG_SESSION_ID',
+  'GNOME_DESKTOP_SESSION_ID',
+  'DESKTOP_SESSION_ID',
+  'KDE_SESSION_ID',
+  'SSH_SESSION_ID',
+  'AWS_SESSION_ID',
+]);
+
+/** 从 W3C BAGGAGE 提取兜底会话 ID（如 codebuddy.session_id=...） */
+function extractBaggageSessionId(baggage) {
+  if (!baggage || typeof baggage !== 'string') return '';
+  for (const part of baggage.split(',')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const k = part.slice(0, eqIdx).trim().toLowerCase();
+    if (k === 'codebuddy.session_id' || k === 'workbuddy.session_id' || k === 'session_id') {
+      let v = part.slice(eqIdx + 1).split(';')[0].trim();
+      try { v = decodeURIComponent(v); } catch {}
+      if (v) return v;
+    }
+  }
+  return '';
+}
+
+/** 检测环境中是否存在未被 getSessionId() 识别的疑似宿主会话 ID */
+function detectUnrecognizedSessionEnv() {
+  const found = [];
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!v || !String(v).trim()) continue;
+    if (KNOWN_SESSION_ENV_KEYS.includes(k) || IGNORED_OS_SESSION_ENV_KEYS.has(k)) continue;
+    if (/^(?:.*_)?(?:SESSION_ID|CONVERSATION_ID)$/i.test(k)) {
+      found.push(k);
+    }
+  }
+  const baggage = process.env.BAGGAGE;
+  if (baggage && typeof baggage === 'string') {
+    for (const part of baggage.split(',')) {
+      const eqIdx = part.indexOf('=');
+      if (eqIdx === -1) continue;
+      const bk = part.slice(0, eqIdx).trim();
+      const bv = part.slice(eqIdx + 1).split(';')[0].trim();
+      if (!bv) continue;
+      const bkLower = bk.toLowerCase();
+      if (
+        bkLower !== 'codebuddy.session_id' &&
+        bkLower !== 'workbuddy.session_id' &&
+        bkLower !== 'session_id' &&
+        /(?:^|[._-])(?:session_id|conversation_id)$/i.test(bk)
+      ) {
+        found.push(`BAGGAGE:${bk}`);
+      }
+    }
+  }
+  return found;
+}
+
 function getSessionId() {
-  const envKey = process.env.BATON_SESSION_ID ||
-    process.env.ANTIGRAVITY_CONVERSATION_ID ||
-    process.env.CURSOR_CONVERSATION_ID ||
-    process.env.CLAUDE_CONVERSATION_ID ||
-    process.env.WORKBUDDY_CONVERSATION_ID ||
-    process.env.WINDSURF_CONVERSATION_ID ||
-    process.env.TERM_SESSION_ID ||
-    process.env.SESSION_ID;
-  if (envKey) return String(envKey).replace(/[^a-zA-Z0-9_-]/g, '_');
+  for (const k of KNOWN_SESSION_ENV_KEYS) {
+    if (process.env[k]) return String(process.env[k]).replace(/[^a-zA-Z0-9_-]/g, '_');
+  }
+  const baggageId = extractBaggageSessionId(process.env.BAGGAGE);
+  if (baggageId) return String(baggageId).replace(/[^a-zA-Z0-9_-]/g, '_');
   const ppid = process.ppid || 'global';
   return `ppid-${ppid}`;
+}
+
+/** Fail-closed 检测：真实会话 ID 存在但未被识别时阻断，防止静默退化 timestamp/ppid */
+function assertNoUnrecognizedSession(op, args = []) {
+  if (args.includes('--force-session') || process.env.BATON_FORCE_SESSION === '1') return;
+  const sess = getSessionId();
+  if (sess && sess !== 'global' && !sess.startsWith('ppid-')) return;
+  const unrecognized = detectUnrecognizedSessionEnv();
+  if (unrecognized.length === 0) return;
+  const isZh = detectLang() === 'zh';
+  if (isZh) {
+    console.error(`\n❌ 未识别的宿主会话 ID (UNRECOGNIZED_SESSION_ID):`);
+    console.error(`   执行 [${op}] 时检测到疑似宿主会话变量 [${unrecognized.join(', ')}]，但未被 getSessionId() 识别。`);
+    console.error(`   已实施 fail-closed 阻断，防止静默退化为 timestamp/ppid 导致双 ID 分裂或跨会话门禁失效。`);
+    console.error(`   👉 请升级 baton，或通过 BATON_SESSION_ID=<id> / --force-session 显式指定。\n`);
+  } else {
+    console.error(`\n❌ Unrecognized Host Session ID (UNRECOGNIZED_SESSION_ID):`);
+    console.error(`   Detected session-like env [${unrecognized.join(', ')}] during [${op}], but it is not recognized by getSessionId().`);
+    console.error(`   Fail-closed to prevent silent fallback to timestamp/ppid. Pass BATON_SESSION_ID=<id> or --force-session.\n`);
+  }
+  process.exit(1);
 }
 
 function getSessionLane() {
@@ -941,6 +1034,7 @@ function assertSessionAffinity(fm, op, id, args = []) {
   if (args.includes('--force-session') || process.env.BATON_FORCE_SESSION === '1') {
     return;
   }
+  assertNoUnrecognizedSession(op, args);
   const curSession = getSessionId();
   // 仅在真实 AI 会话环境下实施物理阻断；纯终端人工交互（ppid/global）放行
   if (!curSession || curSession === 'global' || curSession.startsWith('ppid-')) {
@@ -1281,6 +1375,7 @@ function cmdNew(args) {
   // （dirLabel → 回执 authorLabel → brief intro 三处同源）。发送方以转递话术 / frontmatter 为准。
   const dirLabel = `接收方 ${TARGET_LABELS[t] || t}`;
   let id;
+  assertNoUnrecognizedSession('new', args);
   const sess = getSessionId();
   const hasRealSession = sess && sess !== 'global' && !sess.startsWith('ppid-');
   const idFormat = flagValue(args, '--id-format') || HUB_CONFIG.id_format || process.env.BATON_ID_FORMAT || (hasRealSession ? 'session' : 'timestamp');
@@ -1369,6 +1464,7 @@ function cmdNewIntra(args) {
   }
   const title = restClean.join(' ').trim() || '(无标题)';
   let id;
+  assertNoUnrecognizedSession('new', args);
   const sess = getSessionId();
   const hasRealSession = sess && sess !== 'global' && !sess.startsWith('ppid-');
   const idFormat = flagValue(args, '--id-format') || HUB_CONFIG.id_format || process.env.BATON_ID_FORMAT || (hasRealSession ? 'session' : 'timestamp');
@@ -2974,7 +3070,7 @@ const STUB_CANON = (s) => s
   .replace(/<!-- stub:sha256:[0-9a-f]+ -->\n?/g, '')
   .replace(/\s+$/, '');
 
-const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.36.0 为准）
+const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v${BATON_VERSION} 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
@@ -3010,7 +3106,7 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 const STUB_SHA_ZH = crypto.createHash('sha256').update(STUB_BODY_ZH).digest('hex').slice(0, 8);
 const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- stub:sha256:${STUB_SHA_ZH} -->\n${STUB_BODY_ZH}\n${STUB_END}`;
 
-const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v2.36.0 · Details in $(lab path handoffs)/README.md)
+const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v${BATON_VERSION} · Details in $(lab path handoffs)/README.md)
 
 **Core Guards & Identity (Mandatory)**
 - **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.

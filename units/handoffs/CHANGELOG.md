@@ -6,6 +6,17 @@
 
 ---
 
+> **v2.36.1 补丁（2026-11-20 · WorkBuddy/CodeBuddy 会话 ID 接入 · 未识别宿主会话 ID fail-closed 门禁 · 补齐 Test 37）**：动因——WorkBuddy/CodeBuddy 宿主环境下注入 `CODEBUDDY_SESSION_ID` / `CLAUDE_SESSION_ID`（及 `BAGGAGE` 中 `codebuddy.session_id`），此前 `getSessionId()` 未收录上述环境变量而静默回退 `ppid-<pid>`，连锁导致 `cmdNew`/`cmdNewIntra` 退化为 `timestamp` 双 ID 分裂且 `assertSessionAffinity()` 对 `ppid-` 放行致使 T6 跨会话硬门禁失效。
+> 1. **补齐 WorkBuddy/CodeBuddy 环境变量与 BAGGAGE 兜底（`handoff.mjs` & `handoff-status.mjs`）**：
+>    - `KNOWN_SESSION_ENV_KEYS` 新增 `CODEBUDDY_SESSION_ID`、`CODEBUDDY_CONVERSATION_ID`、`CLAUDE_SESSION_ID`、`WORKBUDDY_SESSION_ID`，并增加 W3C `BAGGAGE` 中 `codebuddy.session_id` / `workbuddy.session_id` / `session_id` 解析兜底；
+>    - `isAgentEnvironment()` 同步纳入上述宿主变量。
+> 2. **未识别宿主会话 ID fail-closed 门禁（`UNRECOGNIZED_SESSION_ID`）**：
+>    - 新增 `detectUnrecognizedSessionEnv()` 与 `assertNoUnrecognizedSession()`：当 `getSessionId()` 回退为 `ppid-` 但环境中存在未识别的 `*_SESSION_ID` / `*_CONVERSATION_ID`（排除系统级 OS 变量如 `XDG_SESSION_ID` 等）或 `BAGGAGE` 会话键时，在 `new` 及 `assertSessionAffinity`（`forward`/`accept`/`reopen`）中直接 fail-closed 阻断（退出码 1），杜绝静默退化 `timestamp` 与绕过 T6 门禁（支持 `--force-session` / `BATON_FORCE_SESSION=1` / `BATON_SESSION_ID` 显式覆盖）。
+> 3. **回归单测（Test 37）**：
+>    - 新增 Test 37 验证 `CODEBUDDY_SESSION_ID` 自动建单 `handoff_id == 文件名 == 会话 ID`、跨会话 `forward`/`accept` 被 `CROSS_SESSION_MUTATION_BLOCKED` 拦截、`BAGGAGE` 兜底解析及未识别 `*_SESSION_ID` 的 `UNRECOGNIZED_SESSION_ID` fail-closed 阻断。
+
+---
+
 > **v2.36.0 变更（2026-11-17 · 全局会话 ID 与工单 ID 合一 · 根除双 ID 分裂混淆 · 严禁跨会话处理工单硬门禁 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户指出工单目前存在两个 ID（物理工单 ID 形如 `TAPPY-20261117-0807`，关联会话 ID 形如 `4e34646a-74c7-4f1e-b56f-81f49698e9d0`），下游消费方与 Agent 极易产生理解与操作混淆。用户明确指示：全局只保留会话 ID，工单 ID 必须为会话 ID，且严禁跨会话处理工单。
 > 1. **工单 ID 统一为会话 ID（Unified Conversation ID as Ticket ID）**：
 >    - 核心统一：AI 会话环境下新建仓内工单，直接使用活跃会话 ID（`conversation_id`）作为工单物理 ID 与文件名（`.handoffs/handoffs/<conversation_id>.md`，回执为 `.handoffs/receipts/<conversation_id>-resp.md`）；

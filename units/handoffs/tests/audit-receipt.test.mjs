@@ -57,17 +57,35 @@ function runBaton(tmpDir, args, extraEnv = {}) {
   delete cleanEnv.ANTIGRAVITY_CONVERSATION_ID;
   delete cleanEnv.CURSOR_CONVERSATION_ID;
   delete cleanEnv.CLAUDE_CONVERSATION_ID;
+  delete cleanEnv.CLAUDE_SESSION_ID;
   delete cleanEnv.WORKBUDDY_CONVERSATION_ID;
+  delete cleanEnv.WORKBUDDY_SESSION_ID;
+  delete cleanEnv.CODEBUDDY_CONVERSATION_ID;
+  delete cleanEnv.CODEBUDDY_SESSION_ID;
   delete cleanEnv.WINDSURF_CONVERSATION_ID;
   delete cleanEnv.TERM_SESSION_ID;
   delete cleanEnv.SESSION_ID;
+  delete cleanEnv.BAGGAGE;
   delete cleanEnv.BATON_ID_FORMAT;
-  const defaultFormat = extraEnv.BATON_SESSION_ID ? 'session' : 'timestamp';
+  const hasTestSession = Boolean(
+    extraEnv.BATON_SESSION_ID ||
+    extraEnv.CODEBUDDY_SESSION_ID ||
+    extraEnv.CODEBUDDY_CONVERSATION_ID ||
+    extraEnv.CLAUDE_SESSION_ID ||
+    extraEnv.WORKBUDDY_SESSION_ID ||
+    extraEnv.BAGGAGE
+  );
+  const envObj = { ...cleanEnv, CI: 'true', BATON_NO_NOTIFY: '1', HANDOFF_STATUS_GATE: 'off', HANDOFF_LANE: defaultLane, ...extraEnv };
+  if (!('BATON_ID_FORMAT' in extraEnv)) {
+    envObj.BATON_ID_FORMAT = hasTestSession ? 'session' : 'timestamp';
+  } else if (extraEnv.BATON_ID_FORMAT === undefined) {
+    delete envObj.BATON_ID_FORMAT;
+  }
   try {
     const out = execSync(`node ${HANDOFF_BIN} ${args}`, {
       cwd: tmpDir,
       encoding: 'utf-8',
-      env: { ...cleanEnv, CI: 'true', BATON_NO_NOTIFY: '1', HANDOFF_STATUS_GATE: 'off', HANDOFF_LANE: defaultLane, BATON_ID_FORMAT: defaultFormat, ...extraEnv }
+      env: envObj
     });
     return { status: 0, stdout: out, stderr: '' };
   } catch (err) {
@@ -599,7 +617,7 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.36\.0\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.36\.1\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
@@ -744,27 +762,27 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.36.0，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.36.1，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.36.0'), '应当输出 v2.36.0');
+    assert.ok(verRes.stdout.includes('v2.36.1'), '应当输出 v2.36.1');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.36.0'), '-v 应当输出 v2.36.0');
+    assert.ok(vRes.stdout.includes('v2.36.1'), '-v 应当输出 v2.36.1');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.36.0'), 'version 应当输出 v2.36.0');
+    assert.ok(versionRes.stdout.includes('v2.36.1'), 'version 应当输出 v2.36.1');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.36.0'), '英文帮助中必须展示 v2.36.0');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.36.1'), '英文帮助中必须展示 v2.36.1');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -1512,5 +1530,78 @@ status: draft
     // 原发起会话 (testSession) 重开 (reopen)，放行
     const validReopen = runBaton(tmpDir, `reopen ${id} --as impl -n "发起方重开"`, { BATON_SESSION_ID: testSession });
     assert.equal(validReopen.status, 0, `同会话 reopen 应该成功: ${validReopen.stderr}`);
+  });
+
+  it('37. [v2.36.1] WorkBuddy/CodeBuddy 会话 ID 接入 (CODEBUDDY_SESSION_ID / CLAUDE_SESSION_ID / BAGGAGE) 与未识别会话 ID fail-closed 门禁', () => {
+    const tmpDir = createTestRepo();
+    const cbSession = '0cab7cf6-1111-2222-3333-444455556666';
+    const otherCbSession = '99998888-7777-6666-5555-444433332222';
+
+    // 1. 注入 CODEBUDDY_SESSION_ID（不显式传 BATON_ID_FORMAT），验证自动识别为 session 模式且 handoff_id == 文件名 == 会话 ID
+    const newRes = runBaton(tmpDir, 'new audit task "WorkBuddy 会话合一验证" --from impl', {
+      CODEBUDDY_SESSION_ID: cbSession,
+      CLAUDE_SESSION_ID: cbSession,
+      WORKBUDDY_AGENT: '1',
+      BATON_ID_FORMAT: undefined
+    });
+    assert.equal(newRes.status, 0, `CODEBUDDY_SESSION_ID 建单失败: ${newRes.stderr}\n${newRes.stdout}`);
+    const id = extractTicketId(newRes.stdout);
+    assert.equal(id, cbSession, '工单物理 ID 必须与 CODEBUDDY_SESSION_ID 100% 相同');
+    const ticketFile = path.join(tmpDir, '.handoffs', 'handoffs', `${cbSession}.md`);
+    assert.ok(fs.existsSync(ticketFile), `物理工单文件必须为 ${cbSession}.md`);
+    const content = fs.readFileSync(ticketFile, 'utf8');
+    assert.match(content, new RegExp(`handoff_id:\\s*${cbSession}`));
+    assert.match(content, new RegExp(`conversation_id:\\s*${cbSession}`));
+
+    // 2. 跨会话 forward 必须被 CROSS_SESSION_MUTATION_BLOCKED 拦截
+    const crossForward = runBaton(tmpDir, `forward ${id} --no-wait`, {
+      CODEBUDDY_SESSION_ID: otherCbSession,
+      WORKBUDDY_AGENT: '1'
+    });
+    assert.notEqual(crossForward.status, 0, '跨会话 forward 必须被拦截');
+    assert.match(crossForward.stderr + crossForward.stdout, /CROSS_SESSION_MUTATION_BLOCKED/);
+
+    // 原会话 forward 放行，接收方交付后，跨会话 accept 也必须被拦截
+    const sameForward = runBaton(tmpDir, `forward ${id} --no-wait`, {
+      CODEBUDDY_SESSION_ID: cbSession,
+      WORKBUDDY_AGENT: '1'
+    });
+    assert.equal(sameForward.status, 0, `同会话 forward 应成功: ${sameForward.stderr}`);
+
+    const deliverRes = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --deliver --auto-nonce --as audit --evidence-note "实测通过"`, {
+      CODEBUDDY_SESSION_ID: 'audit-cb-session',
+      HANDOFF_LANE: ''
+    });
+    assert.equal(deliverRes.status, 0, `接收方交付应成功: ${deliverRes.stderr}`);
+
+    const crossAccept = runBaton(tmpDir, `accept ${id} --as impl -n "外部越权闭环"`, {
+      CODEBUDDY_SESSION_ID: otherCbSession,
+      WORKBUDDY_AGENT: '1'
+    });
+    assert.notEqual(crossAccept.status, 0, '跨会话 accept 必须被拦截');
+    assert.match(crossAccept.stderr + crossAccept.stdout, /CROSS_SESSION_MUTATION_BLOCKED/);
+
+    // 3. BAGGAGE 中 codebuddy.session_id 兜底验证
+    const baggageSession = 'baggage-cb-77889900';
+    const baggageNew = runBaton(tmpDir, 'new impl task "BAGGAGE 兜底验证" --from audit', {
+      BAGGAGE: `foo=bar,codebuddy.session_id=${baggageSession};prop=1`,
+      BATON_ID_FORMAT: undefined
+    });
+    assert.equal(baggageNew.status, 0, `BAGGAGE 兜底建单失败: ${baggageNew.stderr}`);
+    assert.equal(extractTicketId(baggageNew.stdout), baggageSession);
+
+    // 4. Fail-closed 检测：存在未识别的 *_SESSION_ID 时，禁止静默退化为 timestamp / ppid 绕过 T6
+    const unknownNew = runBaton(tmpDir, 'new audit task "未识别会话阻断" --from impl', {
+      FUTURE_AGENT_SESSION_ID: 'unrecognized-9999',
+      BATON_ID_FORMAT: undefined
+    });
+    assert.notEqual(unknownNew.status, 0, '未识别宿主会话 ID 新建工单必须 fail-closed 阻断');
+    assert.match(unknownNew.stderr + unknownNew.stdout, /UNRECOGNIZED_SESSION_ID/);
+
+    const unknownForward = runBaton(tmpDir, `forward ${id} --no-wait`, {
+      FUTURE_AGENT_SESSION_ID: 'unrecognized-9999'
+    });
+    assert.notEqual(unknownForward.status, 0, '未识别宿主会话 ID 执行 forward 必须 fail-closed 阻断');
+    assert.match(unknownForward.stderr + unknownForward.stdout, /UNRECOGNIZED_SESSION_ID/);
   });
 });
