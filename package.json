@@ -1,6 +1,6 @@
 {
   "name": "lab-agent-toolkit",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Agent Engineering Framework (AEF) & Disciplines Toolkit for multi-agent software engineering",
   "type": "module",
   "main": "bin/lab.mjs",
@@ -21,7 +21,7 @@
   },
   "scripts": {
     "sync:consumers": "node scripts/sync-all-consumers.mjs",
-    "test": "node bin/lab.mjs doctor && node units/handoffs/handoff.mjs status && node units/worktree/worktree.mjs --help && node units/review-gate/clean-runner.mjs --help && node units/orphan/bin/lab-orphan.mjs test-solver && node --test units/orphan/tests/*.test.mjs && node --test units/spec-guard/tests/*.test.mjs && node --test units/handoffs/tests/*.test.mjs",
+    "test": "node bin/lab.mjs doctor && node units/handoffs/handoff.mjs status && node units/worktree/worktree.mjs --help && node units/review-gate/clean-runner.mjs --help && node units/orphan/bin/lab-orphan.mjs test-solver && node --test units/orphan/tests/*.test.mjs && node --test units/spec-guard/tests/*.test.mjs && node --test units/handoffs/tests/*.test.mjs && node --test tests/*.test.mjs",
     "postinstall": "chmod +x bin/lab.mjs units/handoffs/handoff.mjs units/worktree/worktree.mjs units/review-gate/clean-runner.mjs units/orphan/bin/lab-orphan.mjs units/spec-guard/bin/spec-guard.mjs units/adr/scripts/adr-init.sh units/preflight/templates/preflight.sh units/preflight/templates/check.sh units/review-gate/templates/scan.sh scripts/sync-all-consumers.mjs 2>/dev/null || true"
   },
   "files": [

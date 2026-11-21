@@ -17,6 +17,7 @@ function showHelp() {
 Lab Agent Engineering Toolkit (AEF v1.0)
 
 用法:
+  lab init [name]             一键初始化完整 AEF 工程规范（交接/门禁/孤儿治理/ADR/待办/全客户端桩）
   lab list                    列出所有可用工程能力 Unit
   lab path [unit]             获取某个 Unit (或 lab 根目录) 的安装绝对路径
   lab doctor                  自检本地环境（node, git, opengrep 等前置依赖）
@@ -92,12 +93,16 @@ function doctor() {
   const checks = [
     { name: 'Node.js (>=18)', cmd: 'node -v', required: true },
     { name: 'Git', cmd: 'git --version', required: true },
-    { name: 'OpenGrep (review-gate L1)', cmd: 'opengrep --version', required: false },
+    { name: 'OpenGrep (review-gate L1)', cmd: 'opengrep --version', required: false, env: { OPENGREP_SEND_METRICS: 'off', SEMGREP_SEND_METRICS: 'off' }, timeout: 5000 },
   ];
 
   for (const c of checks) {
     try {
-      const out = execSync(c.cmd, { stdio: ['pipe', 'pipe', 'ignore'] }).toString().trim();
+      const out = execSync(c.cmd, {
+        stdio: ['pipe', 'pipe', 'ignore'],
+        env: { ...process.env, ...(c.env || {}) },
+        timeout: c.timeout || 10000
+      }).toString().trim();
       console.log(`  ✅ \x1b[32m${c.name.padEnd(28)}\x1b[0m: ${out}`);
     } catch {
       if (c.required) {
@@ -203,13 +208,14 @@ function migrate(targetDir, isDryRun) {
   }
 }
 
-// ── ZSpec 脚手架与 Agent 规范 ──────────────────────────────────────────
-function zspecInit(projectName) {
+// ── AEF 全套工程规范一键初始化 (All-in-One Init) ──────────────────────────
+function initProject(projectName, extraArgs = []) {
   const name = projectName || path.basename(process.cwd());
   const cwd = process.cwd();
 
-  console.log(`\n🏗️  正在按 ZSpec (AEF v1.0) 规范初始化项目: \x1b[32m${name}\x1b[0m\n`);
+  console.log(`\n🚀 \x1b[1;36m[Lab AEF v1.0]\x1b[0m 正在一键初始化全套工程规范: \x1b[32m${name}\x1b[0m\n`);
 
+  // 1. 基础目录骨架
   const dirs = [
     'group/product',
     'group/architecture',
@@ -217,48 +223,67 @@ function zspecInit(projectName) {
     'units',
     'specs',
     'docs/backlogs',
+    'docs/adr/templates',
+    'docs/templates',
+    'scripts',
+    '.githooks/pre-commit.d',
+    '.handoffs/handoffs',
+    '.handoffs/receipts',
+    '.handoffs/archive',
   ];
 
   for (const d of dirs) {
     fs.mkdirSync(path.join(cwd, d), { recursive: true });
   }
 
-  // 1. 生成 constitution.md
+  // 1.1 仓内交接配置 (Baton Hub Configuration)
+  const hubConfigDest = path.join(cwd, '.handoffs', '.handoff-hub.json');
+  if (!fs.existsSync(hubConfigDest)) {
+    const hubConfig = {
+      mode: 'intra-repo',
+      project: name,
+      lanes: ['impl', 'audit', 'arch'],
+      types: ['task', 'bug', 'feature'],
+      workspace_default: 'same',
+      close_policy: 'sender'
+    };
+    fs.writeFileSync(hubConfigDest, JSON.stringify(hubConfig, null, 2) + '\n', 'utf8');
+    console.log('  ✅ 已创建: .handoffs/.handoff-hub.json (仓内工作流交接配置)');
+  }
+
+  // 2. 核心事实源与宪法 (ZSpec / AEF)
   const constSrc = path.join(TEMPLATES_DIR, 'constitution.md');
-  let constContent = fs.existsSync(constSrc)
+  const constContent = fs.existsSync(constSrc)
     ? fs.readFileSync(constSrc, 'utf8').replace(/<PROJECT>/g, name).replace(/<项目名>/g, name)
     : `# ${name} Constitution\n\nVersion: 1.0\n`;
   const constDest = path.join(cwd, 'constitution.md');
   if (!fs.existsSync(constDest)) {
     fs.writeFileSync(constDest, constContent, 'utf8');
-    console.log('  ✅ 已创建: constitution.md (最高宪法)');
+    console.log('  ✅ 已创建: constitution.md (最高宪法 · 单一事实源)');
   }
 
-  // 2. 生成 group/product/intent.md
   const intentSrc = path.join(TEMPLATES_DIR, 'group', 'product', 'intent.md');
-  let intentContent = fs.existsSync(intentSrc)
+  const intentContent = fs.existsSync(intentSrc)
     ? fs.readFileSync(intentSrc, 'utf8').replace(/<项目名>/g, name)
     : `# ${name} 产品意图\n\n## 核心问题\n\n## 关键用户旅程\n`;
   const intentDest = path.join(cwd, 'group', 'product', 'intent.md');
   if (!fs.existsSync(intentDest)) {
     fs.writeFileSync(intentDest, intentContent, 'utf8');
-    console.log('  ✅ 已创建: group/product/intent.md (共享产品意图事实源)');
+    console.log('  ✅ 已创建: group/product/intent.md (共享产品意图)');
   }
 
-  // 3. 生成 group/architecture/dependency-graph.md
   const depSrc = path.join(TEMPLATES_DIR, 'group', 'architecture', 'dependency-graph.md');
-  let depContent = fs.existsSync(depSrc)
+  const depContent = fs.existsSync(depSrc)
     ? fs.readFileSync(depSrc, 'utf8').replace(/<项目名>/g, name)
     : `# ${name} 架构与依赖拓扑\n\n## Units 清单\n`;
   const depDest = path.join(cwd, 'group', 'architecture', 'dependency-graph.md');
   if (!fs.existsSync(depDest)) {
     fs.writeFileSync(depDest, depContent, 'utf8');
-    console.log('  ✅ 已创建: group/architecture/dependency-graph.md (共享拓扑依赖事实源)');
+    console.log('  ✅ 已创建: group/architecture/dependency-graph.md (共享拓扑依赖)');
   }
 
-  // 4. 生成 group/contracts/api.md
   const apiSrc = path.join(TEMPLATES_DIR, 'group', 'contracts', 'api.md');
-  let apiContent = fs.existsSync(apiSrc)
+  const apiContent = fs.existsSync(apiSrc)
     ? fs.readFileSync(apiSrc, 'utf8').replace(/<项目名>/g, name)
     : `# ${name} 共享 API 契约\n`;
   const apiDest = path.join(cwd, 'group', 'contracts', 'api.md');
@@ -267,7 +292,165 @@ function zspecInit(projectName) {
     console.log('  ✅ 已创建: group/contracts/api.md (共享接口契约)');
   }
 
-  // 5. 生成根 AGENTS.md (预置完整接线与上下文预算要求)
+  // 3. ADR (架构决策记录 · 纯 Node 生成，跨平台免 bash 依赖)
+  const adrIndexDest = path.join(cwd, 'docs', 'adr', 'INDEX.md');
+  const todayYMD = new Date().toISOString().slice(0, 10);
+  if (!fs.existsSync(adrIndexDest)) {
+    const adrIndexContent = `# ADR INDEX
+
+> 采用 AEF ADR 规范（单一事实源）。只有 Accepted / 🔒 Frozen 的条目才注入 Agent 上下文。
+
+| ADR | 标题 | 状态 | 日期 | 范围 | 文件 |
+|---|---|---|---|---|---|
+| 0001 | ${name} 基础架构与工程纪律初始化 | Accepted | ${todayYMD} | group | \`0001-${name}-bootstrap.md\` |
+
+## 状态说明
+- **Proposed** — 已起草，等待评审。
+- **Accepted / 🔒 Frozen** — 生效。Frozen 不可直接改动，变更走 Supersedes。
+- **Rejected** — 废弃留档。
+`;
+    fs.writeFileSync(adrIndexDest, adrIndexContent, 'utf8');
+    console.log('  ✅ 已创建: docs/adr/INDEX.md (架构决策索引)');
+  }
+
+  const adrTplSrc = path.join(UNITS_DIR, 'adr', 'templates', 'adr-standard.md');
+  const adrTplDest = path.join(cwd, 'docs', 'adr', 'templates', 'adr-template.md');
+  if (fs.existsSync(adrTplSrc) && !fs.existsSync(adrTplDest)) {
+    fs.copyFileSync(adrTplSrc, adrTplDest);
+  }
+
+  const adr0001Dest = path.join(cwd, 'docs', 'adr', `0001-${name}-bootstrap.md`);
+  if (!fs.existsSync(adr0001Dest)) {
+    const rawTpl = fs.existsSync(adrTplSrc) ? fs.readFileSync(adrTplSrc, 'utf8') : '';
+    const bootstrapContent = rawTpl
+      ? rawTpl.replace(/^#\s+ADR-NNNN:.*$/m, `# ADR-0001: ${name} 基础架构与工程纪律初始化`)
+      : `# ADR-0001: ${name} 基础架构与工程纪律初始化\n\n## Status\nAccepted\n\n## Context\n初始化项目架构与 AEF 工程规范。\n`;
+    fs.writeFileSync(adr0001Dest, bootstrapContent, 'utf8');
+    console.log(`  ✅ 已创建: docs/adr/0001-${name}-bootstrap.md (初始架构决策)`);
+  }
+
+  // 4. Backlog (待办捕获跟踪)
+  const backlogRulesSrc = path.join(UNITS_DIR, 'backlog', 'templates', 'project-ironrules.md');
+  const backlogRulesDest = path.join(cwd, 'docs', 'backlogs', 'IRONRULES.md');
+  if (fs.existsSync(backlogRulesSrc) && !fs.existsSync(backlogRulesDest)) {
+    const rawRules = fs.readFileSync(backlogRulesSrc, 'utf8');
+    fs.writeFileSync(backlogRulesDest, rawRules.replace(/<PROJECT>/g, name), 'utf8');
+    console.log('  ✅ 已创建: docs/backlogs/IRONRULES.md (待办捕获铁律)');
+  }
+
+  const backlogTplSrc = path.join(UNITS_DIR, 'backlog', 'templates', 'entry.md');
+  const backlogTplDest = path.join(cwd, 'docs', 'backlogs', 'template.md');
+  if (fs.existsSync(backlogTplSrc) && !fs.existsSync(backlogTplDest)) {
+    fs.copyFileSync(backlogTplSrc, backlogTplDest);
+  }
+
+  // 5. Preflight 不变量探针 & 门禁脚本
+  const preflightSrc = path.join(UNITS_DIR, 'preflight', 'templates', 'preflight.sh');
+  const preflightDest = path.join(cwd, 'scripts', 'preflight.sh');
+  if (fs.existsSync(preflightSrc) && !fs.existsSync(preflightDest)) {
+    fs.copyFileSync(preflightSrc, preflightDest);
+    try { fs.chmodSync(preflightDest, 0o755); } catch {}
+    console.log('  ✅ 已创建: scripts/preflight.sh (仓库不变量探针)');
+  }
+
+  const checkWrapupSrc = path.join(UNITS_DIR, 'preflight', 'templates', 'check.sh');
+  const checkWrapupDest = path.join(cwd, 'scripts', 'check-wrapup.sh');
+  if (fs.existsSync(checkWrapupSrc) && !fs.existsSync(checkWrapupDest)) {
+    fs.copyFileSync(checkWrapupSrc, checkWrapupDest);
+    try { fs.chmodSync(checkWrapupDest, 0o755); } catch {}
+  }
+
+  const wrapupDocSrc = path.join(UNITS_DIR, 'preflight', 'templates', 'wrap-up.md');
+  const wrapupDocDest = path.join(cwd, 'docs', 'templates', 'wrap-up.md');
+  if (fs.existsSync(wrapupDocSrc) && !fs.existsSync(wrapupDocDest)) {
+    fs.copyFileSync(wrapupDocSrc, wrapupDocDest);
+  }
+
+  const preflightConfDest = path.join(cwd, 'preflight.conf');
+  if (!fs.existsSync(preflightConfDest)) {
+    const confContent = `# preflight.conf — 项目级不变量探针配置 (AEF v1.0)
+# 覆盖层级：env > preflight.conf > 脚本内置默认
+
+# A1 运行产物忽略状态（空格分隔：应被 .gitignore 覆盖、且不得被 git 跟踪）
+RUNTIME_PATHS="node_modules/ dist/ build/ .codegraph/ .sessions/ .watch/"
+
+# A2 根文档行数预算（空格分隔：file:maxLines）
+DOC_BUDGETS="AGENTS.md:150 README.md:400"
+
+# A3 backlog 任务条目格式
+BACKLOG_DIR="docs/backlogs"
+BACKLOG_HEAD="^## B-"
+BACKLOG_TYPE="类型"
+`;
+    fs.writeFileSync(preflightConfDest, confContent, 'utf8');
+    console.log('  ✅ 已创建: preflight.conf (不变量探针配置)');
+  }
+
+  // 6. Git Pre-Commit 分发器与门禁自动挂载
+  const hookDispatcherSrc = path.join(UNITS_DIR, 'preflight', 'templates', 'pre-commit');
+  const hookDispatcherDest = path.join(cwd, '.githooks', 'pre-commit');
+  if (fs.existsSync(hookDispatcherSrc)) {
+    fs.copyFileSync(hookDispatcherSrc, hookDispatcherDest);
+    try { fs.chmodSync(hookDispatcherDest, 0o755); } catch {}
+    console.log('  ✅ 已就绪: .githooks/pre-commit (Git 门禁分发器)');
+  }
+
+  const hookPreflightSrc = path.join(UNITS_DIR, 'preflight', 'templates', 'pre-commit.d', '20-preflight');
+  const hookPreflightDest = path.join(cwd, '.githooks', 'pre-commit.d', '20-preflight');
+  if (fs.existsSync(hookPreflightSrc)) {
+    fs.copyFileSync(hookPreflightSrc, hookPreflightDest);
+    try { fs.chmodSync(hookPreflightDest, 0o755); } catch {}
+  }
+
+  const hookOrphanSrc = path.join(UNITS_DIR, 'orphan', 'templates', 'pre-commit.d', '30-orphan-guard');
+  const hookOrphanDest = path.join(cwd, '.githooks', 'pre-commit.d', '30-orphan-guard');
+  if (fs.existsSync(hookOrphanSrc)) {
+    fs.copyFileSync(hookOrphanSrc, hookOrphanDest);
+    try { fs.chmodSync(hookOrphanDest, 0o755); } catch {}
+  }
+
+  // 自动激活 Git Hooks
+  const isGitRepo = fs.existsSync(path.join(cwd, '.git'));
+  if (isGitRepo) {
+    try {
+      execSync('git config core.hooksPath .githooks', { cwd, stdio: 'pipe' });
+      console.log('  ✅ 已自动激活 Git 门禁: git config core.hooksPath .githooks');
+    } catch {
+      console.warn('  ⚠️  激活 core.hooksPath 失败，请手工执行: git config core.hooksPath .githooks');
+    }
+  } else {
+    console.log('  ℹ️  提示: 当前目录尚未执行 git init，在 git init 后执行 "git config core.hooksPath .githooks" 即可激活门禁');
+  }
+
+  // 7. .gitignore 智能维护
+  const gitignoreDest = path.join(cwd, '.gitignore');
+  const defaultIgnores = [
+    'node_modules/',
+    'dist/',
+    'build/',
+    '.codegraph/',
+    '.DS_Store',
+    '.sessions/',
+    '.watch/',
+    '.secrets/',
+    '.handoffs/.latest-prompt.txt',
+    '.handoffs/.unwatched-debt.json',
+  ];
+  if (!fs.existsSync(gitignoreDest)) {
+    fs.writeFileSync(gitignoreDest, defaultIgnores.join('\n') + '\n', 'utf8');
+    console.log('  ✅ 已创建: .gitignore');
+  } else {
+    try {
+      const curGitignore = fs.readFileSync(gitignoreDest, 'utf8');
+      const missing = defaultIgnores.filter(ig => !curGitignore.includes(ig.replace(/\/$/, '')));
+      if (missing.length > 0) {
+        fs.appendFileSync(gitignoreDest, '\n# Lab AEF runtime\n' + missing.join('\n') + '\n', 'utf8');
+        console.log('  ✅ 已在 .gitignore 中补充 AEF 运行时忽略项');
+      }
+    } catch {}
+  }
+
+  // 8. 全客户端载体一等公民 (AGENTS.md, CODEBUDDY.md, .cursorrules, .github/copilot-instructions.md)
   const agentsDest = path.join(cwd, 'AGENTS.md');
   if (!fs.existsSync(agentsDest)) {
     const agentsContent = `# ${name} — Agent 指挥官规范
@@ -285,6 +468,7 @@ group/               全局事实层
 units/<端名>/        各端独立工程上下文（如 web, ios, backend）
 specs/               Spec Kit 特性规格 (spec -> plan -> tasks)
 docs/backlogs/       待办捕获跟踪
+docs/adr/            架构决策记录 (ADR)
 \`\`\`
 
 ## 上下文读取顺序（严格遵循）
@@ -294,26 +478,88 @@ docs/backlogs/       待办捕获跟踪
 4. 共享契约 (\`group/contracts/\`) -> 如涉及跨端改动
 
 ## 工程纪律机件 (Lab Toolkit 驱动)
-- **ADR 架构决策**：按 \`$(lab path adr)/README.md\` 规范执行，新建决策跑 \`adr-init . standard "${name}"\`
-- **待办捕获**：识别到越界/未来事项按 \`$(lab path backlog)/README.md\` 记录入 \`docs/backlogs/\`
-- **提交门禁**：改动前跑 \`$(lab path preflight)/templates/preflight.sh\`
-- **代码扫描**：代码评审参考 \`$(lab path review-gate)/README.md\`
-- **工作流交接**：跨端/跨仓协作使用全局 \`handoff\` 命令
-- **方法论全集**：参考 \`$(lab path playbook)/README.md\`
+- **任务交割**：跨端/跨仓协作与闭环使用全局 \`baton\` / \`handoff\` 命令
+- **提交门禁**：改动前跑 \`bash scripts/preflight.sh\`，提交时由 \`.githooks/pre-commit\` 拦截
+- **ADR 架构决策**：按 \`docs/adr/INDEX.md\` 规范执行，重大决策更新 \`docs/adr/\`
+- **待办捕获**：识别到越界/未来事项按 \`docs/backlogs/IRONRULES.md\` 记录入 \`docs/backlogs/\`
 
 ## Context Budget
 本文件严格控制在 150 行以内。详细细则按需懒加载，严禁大段复制规则正文。
 `;
     fs.writeFileSync(agentsDest, agentsContent, 'utf8');
-    console.log('  ✅ 已创建: AGENTS.md (根指挥官规则，已接入 lab-agent-toolkit)');
+    console.log('  ✅ 已创建: AGENTS.md (通用 Agent 指挥官规范)');
   }
 
-  console.log(`\n🎉 ZSpec 标准骨架创建完成！\n`);
-  console.log(`\x1b[33mAI Agent 下一步操作提示 (Next Actions for Agent):\x1b[0m`);
-  console.log(`  1. 填空事实: 编辑 group/product/intent.md 写入本项目的核心问题与用户旅程`);
-  console.log(`  2. 划分端: 运行 "lab zspec add-unit <端名>" 创建各端自治上下文 (如 web, backend, ios)`);
-  console.log(`  3. 初始化 ADR: 运行 "adr-init . standard \\"${name}\\"" 生成初始架构记录`);
-  console.log(`  4. 查阅完整 Agent 规范指南: 运行 "lab zspec guide"\n`);
+  const codebuddyDest = path.join(cwd, 'CODEBUDDY.md');
+  if (!fs.existsSync(codebuddyDest)) {
+    const codebuddyContent = `# ${name} — WorkBuddy / CodeBuddy Guidelines
+
+## Overview
+本仓库采用 AEF v1.0 (Agent Engineering Framework) 规范。
+全局规范请参阅 \`AGENTS.md\` 与 \`constitution.md\`。
+
+## 工程纪律
+- 任务交接：使用 \`baton\` / \`handoff\` 协同
+- 提交门禁：运行 \`bash scripts/preflight.sh\`
+`;
+    fs.writeFileSync(codebuddyDest, codebuddyContent, 'utf8');
+    console.log('  ✅ 已创建: CODEBUDDY.md (WorkBuddy/CodeBuddy 载体)');
+  }
+
+  const cursorDest = path.join(cwd, '.cursorrules');
+  if (!fs.existsSync(cursorDest)) {
+    fs.writeFileSync(cursorDest, `# Cursor Rules — ${name}\n\nSee AGENTS.md for full engineering guidelines.\n`, 'utf8');
+    console.log('  ✅ 已创建: .cursorrules (Cursor 载体)');
+  }
+
+  const copilotDir = path.join(cwd, '.github');
+  fs.mkdirSync(copilotDir, { recursive: true });
+  const copilotDest = path.join(copilotDir, 'copilot-instructions.md');
+  if (!fs.existsSync(copilotDest)) {
+    fs.writeFileSync(copilotDest, `# GitHub Copilot Instructions — ${name}\n\nSee AGENTS.md for full engineering guidelines.\n`, 'utf8');
+    console.log('  ✅ 已创建: .github/copilot-instructions.md (Copilot 载体)');
+  }
+
+  // 9. 自动注入 / 刷新 Baton 接入桩
+  try {
+    const batonBin = path.join(UNITS_DIR, 'handoffs', 'handoff.mjs');
+    if (fs.existsSync(batonBin)) {
+      execFileSync(process.execPath, [batonBin, 'install', '--project'], { cwd, encoding: 'utf8', stdio: 'pipe' });
+      console.log('  ✅ 已自动注入: Agent Baton 接入桩 (覆盖 AGENTS/CODEBUDDY/.cursorrules/copilot)');
+    }
+  } catch (e) {
+    // Fail-open
+  }
+
+  // 10. 小白友好开箱卡片输出
+  console.log(`
+\x1b[1;32m══════════════════════════════════════════════════════════════════════════\x1b[0m
+🎉 \x1b[1;32m[Lab AEF v1.0] 全套工程规范一键初始化成功！\x1b[0m
+\x1b[1;32m══════════════════════════════════════════════════════════════════════════\x1b[0m
+
+📦 \x1b[1m已就绪工程机件清单 (All-in-One Capabilities Ready):\x1b[0m
+  1. \x1b[36m任务交接中枢 (Baton)\x1b[0m       : .handoffs/ 与全客户端接入桩已就绪
+  2. \x1b[36m提交前不变量探针 (Preflight)\x1b[0m  : scripts/preflight.sh 与 preflight.conf
+  3. \x1b[36mGit 提交物理门禁 (Fast Gate)\x1b[0m : .githooks/pre-commit (自动挂载)
+  4. \x1b[36m死代码与孤儿防线 (Anti-Orphan)\x1b[0m: .githooks/pre-commit.d/30-orphan-guard
+  5. \x1b[36m架构决策记忆 (ADR)\x1b[0m            : docs/adr/ (首篇决策已就绪)
+  6. \x1b[36m待办捕获跟踪 (Backlog)\x1b[0m        : docs/backlogs/ (一任务一文件)
+  7. \x1b[36m全 AI 客户端支持\x1b[0m              : Cursor / WorkBuddy / Copilot / Claude 载体
+
+💡 \x1b[1;33m小白开箱常用 3 条命令 (Cheat-Sheet):\x1b[0m
+  • 查看待办工单: \x1b[32mbaton status\x1b[0m
+  • 派发新任务单: \x1b[32mbaton new impl task "实现某某特性"\x1b[0m
+  • 提交前自检:   \x1b[32mbash scripts/preflight.sh\x1b[0m
+
+\x1b[33mAI Agent 下一步建议:\x1b[0m
+  1. 完善产品意图: 编辑 group/product/intent.md 写入本项目的核心问题
+  2. 划分端/模块:  运行 "lab zspec add-unit <端名>" (如 web, backend, ios)
+\x1b[1;32m══════════════════════════════════════════════════════════════════════════\x1b[0m
+`);
+}
+
+function zspecInit(projectName) {
+  return initProject(projectName);
 }
 
 function zspecAddUnit(unitName) {
@@ -454,6 +700,10 @@ switch (command) {
     const isDry = args.includes('--dry-run');
     const dirArg = args.find((a, idx) => idx > 0 && !a.startsWith('--'));
     migrate(dirArg, isDry);
+    break;
+  }
+  case 'init': {
+    initProject(args[1], args.slice(2));
     break;
   }
   case 'zspec': {

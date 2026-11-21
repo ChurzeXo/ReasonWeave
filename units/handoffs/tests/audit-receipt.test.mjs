@@ -62,6 +62,8 @@ function runBaton(tmpDir, args, extraEnv = {}) {
   delete cleanEnv.WORKBUDDY_SESSION_ID;
   delete cleanEnv.CODEBUDDY_CONVERSATION_ID;
   delete cleanEnv.CODEBUDDY_SESSION_ID;
+  delete cleanEnv.CODEBUDDY_SANDBOX_BROKER_SESSION_ID;
+  delete cleanEnv.WORKBUDDY_SANDBOX_BROKER_SESSION_ID;
   delete cleanEnv.WINDSURF_CONVERSATION_ID;
   delete cleanEnv.TERM_SESSION_ID;
   delete cleanEnv.SESSION_ID;
@@ -71,6 +73,8 @@ function runBaton(tmpDir, args, extraEnv = {}) {
     extraEnv.BATON_SESSION_ID ||
     extraEnv.CODEBUDDY_SESSION_ID ||
     extraEnv.CODEBUDDY_CONVERSATION_ID ||
+    extraEnv.CODEBUDDY_SANDBOX_BROKER_SESSION_ID ||
+    extraEnv.WORKBUDDY_SANDBOX_BROKER_SESSION_ID ||
     extraEnv.CLAUDE_SESSION_ID ||
     extraEnv.WORKBUDDY_SESSION_ID ||
     extraEnv.BAGGAGE
@@ -617,7 +621,7 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.36\.1\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.37\.0\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
@@ -762,27 +766,27 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.36.1，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.37.0，无 v2.20.0 漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.36.1'), '应当输出 v2.36.1');
+    assert.ok(verRes.stdout.includes('v2.37.0'), '应当输出 v2.37.0');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.36.1'), '-v 应当输出 v2.36.1');
+    assert.ok(vRes.stdout.includes('v2.37.0'), '-v 应当输出 v2.37.0');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.36.1'), 'version 应当输出 v2.36.1');
+    assert.ok(versionRes.stdout.includes('v2.37.0'), 'version 应当输出 v2.37.0');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.36.1'), '英文帮助中必须展示 v2.36.1');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.37.0'), '英文帮助中必须展示 v2.37.0');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -1590,6 +1594,15 @@ status: draft
     assert.equal(baggageNew.status, 0, `BAGGAGE 兜底建单失败: ${baggageNew.stderr}`);
     assert.equal(extractTicketId(baggageNew.stdout), baggageSession);
 
+    // 3.1 WorkBuddy 沙箱专属变量 CODEBUDDY_SANDBOX_BROKER_SESSION_ID 必须被收录并合法识别
+    const sandboxSession = 'sandbox-cb-55667788';
+    const sandboxNew = runBaton(tmpDir, 'new impl task "沙箱 Broker 变量识别验证" --from audit', {
+      CODEBUDDY_SANDBOX_BROKER_SESSION_ID: sandboxSession,
+      BATON_ID_FORMAT: undefined
+    });
+    assert.equal(sandboxNew.status, 0, `CODEBUDDY_SANDBOX_BROKER_SESSION_ID 建单失败: ${sandboxNew.stderr}`);
+    assert.equal(extractTicketId(sandboxNew.stdout), sandboxSession, '工单 ID 必须识别沙箱 broker 会话 ID');
+
     // 4. Fail-closed 检测：存在未识别的 *_SESSION_ID 时，禁止静默退化为 timestamp / ppid 绕过 T6
     const unknownNew = runBaton(tmpDir, 'new audit task "未识别会话阻断" --from impl', {
       FUTURE_AGENT_SESSION_ID: 'unrecognized-9999',
@@ -1603,5 +1616,122 @@ status: draft
     });
     assert.notEqual(unknownForward.status, 0, '未识别宿主会话 ID 执行 forward 必须 fail-closed 阻断');
     assert.match(unknownForward.stderr + unknownForward.stdout, /UNRECOGNIZED_SESSION_ID/);
+  });
+
+  it('38. [v2.36.2] WorkBuddy/CodeBuddy 载体全量支持与出站提示词即时纪律提醒验证', () => {
+    const tmpDir = createTestRepo();
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-home-wb-'));
+
+    try {
+      // 1. 项目级：存在 CODEBUDDY.md 时 baton install 自动纳入刷新
+      const cbFile = path.join(tmpDir, 'CODEBUDDY.md');
+      fs.writeFileSync(cbFile, '# Project Guidelines\nInitial content\n', 'utf8');
+
+      const installProj = runBaton(tmpDir, 'install --project --lang zh', { HOME: fakeHome });
+      assert.equal(installProj.status, 0, `install --project 必须成功: ${installProj.stderr}`);
+      assert.match(installProj.stdout, /已写入桩: .*CODEBUDDY\.md/);
+      assert.match(fs.readFileSync(cbFile, 'utf8'), /### Agent Baton \(Handoff\) 接入桩/);
+
+      // 再次 install 必须幂等
+      const installIdempotent = runBaton(tmpDir, 'install --project --lang zh', { HOME: fakeHome });
+      assert.equal(installIdempotent.status, 0);
+      assert.match(installIdempotent.stdout, /已是最新: .*CODEBUDDY\.md/);
+
+      // 2. 全局级：baton install --global 自动覆盖 WorkBuddy 全局记忆与 CodeBuddy 用户指令
+      const installGlobal = runBaton(tmpDir, 'install --global --lang zh', { HOME: fakeHome });
+      assert.equal(installGlobal.status, 0, `install --global 必须成功: ${installGlobal.stderr}`);
+      const wbMemory = path.join(fakeHome, '.workbuddy', 'MEMORY.md');
+      const cbUserMd = path.join(fakeHome, '.CODEBUDDY.md');
+      assert.ok(fs.existsSync(wbMemory), '必须生成 ~/.workbuddy/MEMORY.md');
+      assert.ok(fs.existsSync(cbUserMd), '必须生成 ~/.CODEBUDDY.md');
+      assert.match(fs.readFileSync(wbMemory, 'utf8'), /<!-- handoff-stub:v2\.1 begin -->/);
+      assert.match(fs.readFileSync(cbUserMd, 'utf8'), /<!-- handoff-stub:v2\.1 begin -->/);
+
+      // 3. checkStubCarrier 校验：当 CODEBUDDY.md 及全局载体存在时，baton check 正常通过
+      const checkRes = runBaton(tmpDir, 'check', { HOME: fakeHome });
+      assert.equal(checkRes.status, 0, `包含 CODEBUDDY.md 载体时 check 必须通过: ${checkRes.stderr}`);
+
+      // 若 CODEBUDDY.md 内桩发生漂移，check 必须被精准拦截
+      fs.writeFileSync(cbFile, fs.readFileSync(cbFile, 'utf8').replace('Agent Baton', 'Agent Tampered'), 'utf8');
+      const checkTampered = runBaton(tmpDir, 'check', { HOME: fakeHome });
+      assert.notEqual(checkTampered.status, 0, 'CODEBUDDY.md 桩篡改时 check 必须拦截');
+      assert.match(checkTampered.stderr, /载体漂移\/被手工改/);
+
+      // 4. 出站交接提示词即时纪律提醒验证：baton prompt 必须输出醒目的 Agent 收尾约束
+      const newRes = runBaton(tmpDir, 'new impl task "提示词纪律提醒测试" --from audit');
+      const id = extractTicketId(newRes.stdout);
+      const promptZh = runBaton(tmpDir, `prompt ${id}`, { BATON_LANG: 'zh' });
+      assert.equal(promptZh.status, 0);
+      assert.match(promptZh.stdout, /💡 \[Agent 出站纪律\]/);
+      assert.match(promptZh.stdout, /当前 Agent 请将上述 ```text \.\.\. ``` 代码块完整置于本次回复的最末尾/);
+
+      const promptEn = runBaton(tmpDir, `prompt ${id}`, { BATON_LANG: 'en' });
+      assert.equal(promptEn.status, 0);
+      assert.match(promptEn.stdout, /💡 \[Agent Outbound Rule\]/);
+      assert.match(promptEn.stdout, /Current Agent MUST place the exact ```text \.\.\. ``` block above/);
+    } finally {
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('39. [v2.37.0] 跨平台鲁棒性加固（Windows字面量转义归一、默认自动交付、wait自愈平息交付、提示词镜像与Cursor/Copilot载体）', async () => {
+    const tmpDir = createTestRepo();
+
+    // 1. Windows 换行与字面量转义归一化 + 正向回执默认自动交付
+    const newRes1 = runBaton(tmpDir, 'new impl task "Windows 换行与自动交付测试" --from audit');
+    const id1 = extractTicketId(newRes1.stdout);
+    assert.ok(id1, '应当成功创建工单');
+
+    // 模拟 Windows CMD/PowerShell 传入包含字面量 \\n 的参数，且不加 --deliver
+    const winNote = '## 状态 / 结论\\n- **结论**：PASS\\n## 交付物\\n- 完成 Windows 转义兼容性修复';
+    const winReceipt = runBaton(tmpDir, `receipt ${id1} -n "${winNote}" --as impl --evidence-paths "README.md"`);
+    assert.equal(winReceipt.status, 0, `Windows 转义回执必须成功落盘，严禁误杀: ${winReceipt.stderr}\n${winReceipt.stdout}`);
+    assert.match(winReceipt.stdout, /交付成功|终态交付已生效/);
+
+    const show1 = runBaton(tmpDir, `show ${id1}`);
+    assert.match(show1.stdout, /status:\s*delivered/, '正向回执应当默认自动交付至 delivered 态');
+
+    // 2. 显式 --draft 选项：允许在结论为 PASS 时仍保留在 received 草稿态
+    const newRes2 = runBaton(tmpDir, 'new impl task "草稿暂存测试" --from audit');
+    const id2 = extractTicketId(newRes2.stdout);
+    const draftReceipt = runBaton(tmpDir, `receipt ${id2} -n "## 状态 / 结论\\n- **结论**：PASS\\n## 说明\\n暂存" --draft --as impl --evidence-paths "README.md"`);
+    assert.equal(draftReceipt.status, 0);
+    const show2 = runBaton(tmpDir, `show ${id2}`);
+    assert.match(show2.stdout, /status:\s*received/, '--draft 选项必须保持 status 为 received');
+
+    // 3. cmdWait 平息自愈交付（Auto-Deliver Settle）：工单处于 received 态，wait 平息后自动自愈推进至 delivered 并唤醒
+    const waitRes = runBaton(tmpDir, `wait ${id2} --settle 100ms`);
+    assert.equal(waitRes.status, 0, `wait 自愈交付必须成功退出: ${waitRes.stderr}\n${waitRes.stdout}`);
+    assert.ok(waitRes.stdout.includes('自愈交付') || waitRes.stdout.includes('交付已就绪') || waitRes.stdout.includes('处于终态'), '应触发自愈交付并平息唤醒');
+    const show2AfterWait = runBaton(tmpDir, `show ${id2}`);
+    assert.match(show2AfterWait.stdout, /status:\s*delivered/, 'wait 平息后工单状态必须推进至 delivered');
+
+    // 4. 出站提示词镜像固化至 .handoffs/.latest-prompt.txt
+    const promptRes = runBaton(tmpDir, `prompt ${id1}`, { BATON_LANG: 'zh' });
+    assert.equal(promptRes.status, 0);
+    assert.match(promptRes.stdout, /\.handoffs\/\.latest-prompt\.txt/);
+    const latestPromptFile = path.join(tmpDir, '.handoffs', '.latest-prompt.txt');
+    assert.ok(fs.existsSync(latestPromptFile), '.latest-prompt.txt 文件必须物理存在');
+    const promptContent = fs.readFileSync(latestPromptFile, 'utf8');
+    assert.ok(promptContent.includes(id1), '物理镜像必须包含当前工单编号');
+    assert.ok(promptContent.includes('请 [实现方] 接单') || promptContent.includes('请 [执行方] 接单'), '物理镜像必须包含标准提示词内容');
+
+    // 5. Cursor (.cursorrules) 与 GitHub Copilot (.github/copilot-instructions.md) 载体扩展
+    const cursorFile = path.join(tmpDir, '.cursorrules');
+    fs.writeFileSync(cursorFile, '# Cursor Rules\n', 'utf8');
+    const copilotDir = path.join(tmpDir, '.github');
+    fs.mkdirSync(copilotDir, { recursive: true });
+    const copilotFile = path.join(copilotDir, 'copilot-instructions.md');
+    fs.writeFileSync(copilotFile, '# Copilot Instructions\n', 'utf8');
+
+    const installRes = runBaton(tmpDir, 'install --project --lang zh');
+    assert.equal(installRes.status, 0);
+    assert.match(installRes.stdout, /\.cursorrules/);
+    assert.match(installRes.stdout, /copilot-instructions\.md/);
+    assert.match(fs.readFileSync(cursorFile, 'utf8'), /<!-- handoff-stub:v2\.1 begin -->/);
+    assert.match(fs.readFileSync(copilotFile, 'utf8'), /<!-- handoff-stub:v2\.1 begin -->/);
+
+    const checkRes = runBaton(tmpDir, 'check');
+    assert.equal(checkRes.status, 0, `包含 Cursor/Copilot 载体时 check 必须通过: ${checkRes.stderr}`);
   });
 });

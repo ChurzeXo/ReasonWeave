@@ -36,6 +36,17 @@
 
 ## 2. 首次安装 (Installation)
 
+### 2.1 模式 A：NPM 全局分发安装（小白推荐 · 30 秒开箱即用）
+无需克隆本能力库源码，在任意终端执行：
+```bash
+npm install -g lab-agent-toolkit
+```
+验证安装：
+```bash
+lab doctor
+```
+
+### 2.2 模式 B：源码开发者模式（克隆本库 + 全局 npm link）
 将仓库解压 / 克隆到任意目录（例如 `~/Documents/lab`），在仓库根目录运行：
 
 ```bash
@@ -47,8 +58,8 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| `lab` | 能力库总管、路径动态解析、环境体检、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发 `baton` / `worktree` / `audit-runner` / `orphan` / `spec-guard` / `adr` / `preflight` |
-| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、统一会话ID、防跨会话硬门禁、会话锁、密码学防伪回执、事件驱动唤醒（v2.36.0） |
+| `lab` | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 |
+| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、统一会话ID、防跨会话硬门禁、会话锁、密码学防伪回执、事件驱动唤醒（v2.37.0） |
 | `baton-worktree` | 为工单分配 / 回收独立物理工作树 |
 | `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执 |
 | `lab-orphan` | 死代码与孤儿资产清道夫（也可 `lab orphan <cmd>`） |
@@ -57,7 +68,27 @@ npm link
 
 > **无全局写权限时**：把 `bin` 与 `units/handoffs` 加入 PATH，例如 `export PATH="$HOME/Documents/lab/bin:$HOME/Documents/lab/units/handoffs:$PATH"`；`baton link` 会自愈 `baton` / `handoff` 的 shim 到 `~/.local/bin`。
 
-### 2.1 Windows 平台专属说明 (Windows Setup & Best Practices)
+---
+
+## 2.3 新项目引入 AEF 规范（面向小白 · 10 秒一键初始化）
+
+在任意新老业务项目根目录中，只需运行一条命令：
+
+```bash
+cd /path/to/your-project
+lab init
+```
+
+脚手架全自动非破坏性完成以下 7 项配置，无需任何手动繁琐配置：
+1. **最高宪法与业务事实源**：自动生成 `constitution.md`、`group/product/intent.md`、`group/architecture/dependency-graph.md` 与 `group/contracts/api.md`。
+2. **多 AI 客户端全覆盖**：自动生成 / 更新 `AGENTS.md`、`CODEBUDDY.md` (WorkBuddy)、`.cursorrules` (Cursor)、`.github/copilot-instructions.md` (Copilot) 并一键注入 Baton 接入桩。
+3. **工作流交接中枢**：自动初始化 `.handoffs/` 目录结构与 `.handoffs/.handoff-hub.json` 仓内配置。
+4. **仓库不变量探针**：自动安装 `scripts/preflight.sh` 与开箱即用的 `preflight.conf`。
+5. **Git 物理门禁自动激活**：自动生成 `.githooks/pre-commit` 分发器与 `20-preflight`、`30-orphan-guard`，并自动执行 `git config core.hooksPath .githooks`。
+6. **架构决策记录 (ADR)**：自动初始化 `docs/adr/INDEX.md`、起步决策 `0001-bootstrap.md` 与规范模板。
+7. **待办捕获机制 (Backlog)**：自动就绪 `docs/backlogs/IRONRULES.md` 与单任务单文件模板。
+
+### 2.4 Windows 平台专属说明 (Windows Setup & Best Practices)
 
 Baton 引擎与 Lab 工具链对 Windows (10/11) 提供了原生跨平台兼容与免配置支持：
 

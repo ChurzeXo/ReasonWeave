@@ -6,6 +6,44 @@
 
 ---
 
+> **v2.37.0 里程碑（2026-11-21 · 跨平台与跨客户端鲁棒性系统级加固 · Windows换行与字面量转义归一 · 回执默认自动交付防挂死 · cmdWait平息自愈交付 · 出站提示词系统剪贴板与物理镜像 · 扩展Cursor与Copilot载体 · 补齐 Test 39）**：动因——用户反馈不同 AI 客户端（WorkBuddy, Claude Code, Cursor, Antigravity, OpenCode 等）在 Mac/Windows 跨平台执行过程中，仍存在不按规范写转递提示词、回执漏传 `--deliver` 导致发起方 `wait` 无限挂死 3600 秒、以及 Windows 终端传参丢失换行符导致内容门禁误杀等痼疾。本版本以“不依赖 Agent 自觉”为设计宗旨，实施系统级鲁棒性根治：
+> 1. **Windows 换行与转义归一化（消解内容门禁误杀）**：
+>    - `receiptBodyProblems(raw)`、`stripFM(content)`、`extractConclusion(raw)` 及 `cmdReceipt`/`cmdDeliver`/`cmdReject` 入口全面引入换行与转义归一化（`norm = String(raw).replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')`）；
+>    - 彻底解决 Windows CMD/PowerShell 传参时字面量反斜杠+n 导致多行正则全部失配、误报“无任何 ## 节”或“缺明确结论行”的问题。
+> 2. **`baton receipt` 默认自动交付（彻底解决回执与交付脱节）**：
+>    - 当执行方提交正向回执（PASS/Verified 等正向结论且无变更）时，默认直接执行终态交付（`shouldDeliver = true`），自动推进工单至 `status: delivered`；
+>    - 保留 `--draft` 显式草稿模式，当需要中途暂存或受阻（NO-GO/INCOMPLETE）时安全留存于 `received`。
+> 3. **`cmdWait` 终态平息自愈交付（Auto-Deliver Settle 兜底）**：
+>    - 当发起方挂起 `baton wait` 时，若检测到回执已落盘且结论正向、但由于客户端异常未完成 deliver，在平息缓冲期（Settle Window）无后续写入后，自动触发自愈交付推进为 `delivered` 终态并秒级唤醒发起方，杜绝 3600 秒超时死锁；
+>    - 若回执为负向（受阻/需改动），平息后同样即时唤醒发起方，避免盲目空转。
+> 4. **出站提示词双重交付渠道（系统剪贴板原生注入 + `.latest-prompt.txt` 物理镜像）**：
+>    - `cmdPrompt` 在输出提示词时，原生跨平台自动写入系统剪贴板（macOS: `pbcopy`；Windows: `clip.exe`；Linux: `xclip` / `wl-copy`，异常 fail-open 静默放行）；
+>    - 自动落盘写入工作区 `.handoffs/.latest-prompt.txt` 物理镜像，即使 Agent 上下文注意力衰减漏贴提示词，人类随时 `Cmd+V` / `Ctrl+V` 或 `cat` 即可取得标准交接卡片。
+> 5. **主流 IDE 载体扩充**：
+>    - `cmdInstall` 与 `checkStubCarrier` 自动识别并纳入 Cursor（`.cursorrules`）及 GitHub Copilot（`.github/copilot-instructions.md`）。
+> 6. **WorkBuddy 沙箱 Broker 会话变量支持（消除客户端沙箱会话误杀）**：
+>    - `KNOWN_SESSION_ENV_KEYS`、`isAgentEnvironment` 及 `handoff-status.mjs` 正式收录 WorkBuddy 客户端环境注入的 `CODEBUDDY_SANDBOX_BROKER_SESSION_ID` 与 `WORKBUDDY_SANDBOX_BROKER_SESSION_ID`；
+>    - 单测套件夹具 `cleanEnv` 与 `hasTestSession` 全面同步隔离与覆盖，彻底解决 WorkBuddy 沙箱环境下触发 `UNRECOGNIZED_SESSION_ID` 门禁误杀的问题。
+> 7. **全套自动化测试（Test 39）**：
+>    - 新增 Test 39 覆盖 Windows 字面量转义归一化、正向回执默认自动 deliver、`wait` 自动自愈交付、剪贴板/文件落盘镜像及载体扩展。
+
+---
+
+> **v2.36.2 补丁（2026-11-20 · WorkBuddy/CodeBuddy 项目与全局载体覆盖 · 出站交接提示词即时纪律提醒 · 脚手架自动刷桩 · 补齐 Test 38）**：动因——用户反馈在另一台新电脑安装项目后，WorkBuddy 执行中未按要求输出交接提示词。深度排查确认为：①`baton install` 缺失对 WorkBuddy 全局文件（`~/.workbuddy/MEMORY.md`、`~/.CODEBUDDY.md`）及项目载体（`CODEBUDDY.md`）的支持；②WorkBuddy 存在 `CODEBUDDY.md` 命中后直接 break 截断忽略 `AGENTS.md` 的机制；③新电脑全局记忆为空，缺乏本机历史手动偏好；④长会话注意力衰减导致 Agent 漏贴代码块。
+> 1. **`cmdInstall` 载体全面扩展（消除宿主载体盲区）**：
+>    - 项目级：将 `CODEBUDDY.md` 纳为一等项目载体（存在时或带 `--codebuddy` 时自动纳入写入与刷新）；
+>    - 全局级：自动覆盖 WorkBuddy 全局记忆 `~/.workbuddy/MEMORY.md` 与 CodeBuddy 用户指令 `~/.CODEBUDDY.md`；
+> 2. **`checkStubCarrier` 对账增强**：
+>    - 诊断范围自动覆盖存在的 `CODEBUDDY.md` 及全局 WorkBuddy/CodeBuddy 载体（若含接入桩则校验版本与 sha 一致性）；
+> 3. **出站交接提示词即时纪律提醒（Just-In-Time Instruction Guard）**：
+>    - `cmdPrompt` 在输出交接提示词代码块后，追加直观醒目的 `💡 [Agent 出站纪律]` / `💡 [Agent Outbound Rule]` 提示，强制 Agent 将代码块完整置于回复最末尾供人类一键复制；
+> 4. **`lab zspec init` 自动化闭环**：
+>    - 脚手架在生成新项目骨架与 `AGENTS.md` 后，自动执行 `baton install --project`，杜绝新仓缺乏接入桩的漏洞；
+> 5. **回归单测（Test 38）**：
+>    - 新增 Test 38 验证 WorkBuddy/CodeBuddy 项目载体与全局载体的识别、幂等注入与版本校验。
+
+---
+
 > **v2.36.1 补丁（2026-11-20 · WorkBuddy/CodeBuddy 会话 ID 接入 · 未识别宿主会话 ID fail-closed 门禁 · 补齐 Test 37）**：动因——WorkBuddy/CodeBuddy 宿主环境下注入 `CODEBUDDY_SESSION_ID` / `CLAUDE_SESSION_ID`（及 `BAGGAGE` 中 `codebuddy.session_id`），此前 `getSessionId()` 未收录上述环境变量而静默回退 `ppid-<pid>`，连锁导致 `cmdNew`/`cmdNewIntra` 退化为 `timestamp` 双 ID 分裂且 `assertSessionAffinity()` 对 `ppid-` 放行致使 T6 跨会话硬门禁失效。
 > 1. **补齐 WorkBuddy/CodeBuddy 环境变量与 BAGGAGE 兜底（`handoff.mjs` & `handoff-status.mjs`）**：
 >    - `KNOWN_SESSION_ENV_KEYS` 新增 `CODEBUDDY_SESSION_ID`、`CODEBUDDY_CONVERSATION_ID`、`CLAUDE_SESSION_ID`、`WORKBUDDY_SESSION_ID`，并增加 W3C `BAGGAGE` 中 `codebuddy.session_id` / `workbuddy.session_id` / `session_id` 解析兜底；

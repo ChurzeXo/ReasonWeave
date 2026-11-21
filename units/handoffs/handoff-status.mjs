@@ -160,6 +160,8 @@ function getSessionId() {
     process.env.WORKBUDDY_SESSION_ID ||
     process.env.CODEBUDDY_CONVERSATION_ID ||
     process.env.CODEBUDDY_SESSION_ID ||
+    process.env.CODEBUDDY_SANDBOX_BROKER_SESSION_ID ||
+    process.env.WORKBUDDY_SANDBOX_BROKER_SESSION_ID ||
     process.env.WINDSURF_CONVERSATION_ID ||
     process.env.TERM_SESSION_ID ||
     process.env.SESSION_ID ||

@@ -24,9 +24,16 @@
 - **Git** `>= 2.20.0`
 - *(可选)* **OpenGrep**（用于 `review-gate` 静态安全扫描，未安装时采取 fail-open 告警不阻断）
 
-### 2. 全局挂载 CLI
-解压或克隆本仓库到本地任意目录（例如 `~/Documents/lab`），在根目录运行：
+### 2. 全局安装 CLI (两种模式)
 
+#### 模式 A：NPM 全局分发（小白极速模式 · 推荐）
+无需克隆本能力库源码，在终端直接运行：
+```bash
+npm install -g lab-agent-toolkit
+```
+
+#### 模式 B：源码开发者模式（克隆本库 + 全局 npm link）
+解压或克隆本仓库到本地任意目录（例如 `~/Documents/lab`），在根目录运行：
 ```bash
 cd lab
 npm link
@@ -36,19 +43,36 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| 🌐 `lab` | 能力库总管、环境体检、路径动态解析、ZSpec 脚手架、下游一键全量同步分发 (`sync-consumers`)，全量转发 `baton` / `worktree` / `audit-runner` / `orphan` / `spec-guard` / `adr` / `preflight` |
-| 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、会话环境身份锁、密码学审计凭据防伪、防注入出站提示词、一单到底与会话ID统一、严禁跨会话处理工单、静默管道与事件唤醒（Baton v2.36.0） |
+| 🌐 `lab` | 能力库总管、`lab init` 全套一键初始化、环境体检、路径动态解析、ZSpec 脚手架、下游一键全量同步分发 (`sync-consumers`)，全量转发核心工具 |
+| 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、会话环境身份锁、密码学审计凭据防伪、防注入出站提示词、一单到底与会话ID统一、严禁跨会话处理工单、静默管道与事件唤醒（Baton v2.37.0） |
 | 🌳 `baton-worktree` | 基于 Git Worktree 的多 Agent 物理目录隔离调度引擎 |
 | 🛡️ `baton-audit-runner` | 双盲审计自动化运行器（无上下文独立重跑测试，Exit Code 真实裁决） |
 | 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫、反未接线与反假接线三层治理门禁（S1–S3 求解器、L1/L2/L3 正交解耦、Tier 1/2 自查与模板，v1.3.0） |
 | 🛡️ `spec-guard` / `drift-gate` | 架构规约与物理接线守卫（P3' 三元映射对账、三维热力表、ADR 机器信任根验签、约定阈值解耦，v2.2.0） |
 | 📐 `adr-init` | 架构决策记录 (ADR) 快速引导初始化 |
 
-> 💻 **Windows 用户提示**：支持 Windows 10/11 原生免配置运行。推荐使用 **PowerShell** 或 **Windows Terminal**（原生支持 `$(lab path <unit>)` 动态路径）；`npm link` 会自动注册 `.cmd` 与 `.ps1` 包装，无需开启开发者模式或管理员权限；换行符 CRLF `\r\n` 与托盘气泡通知已在底层 100% 原生适配。详见 [INSTALL.md §2.1](INSTALL.md)。
+---
 
-> **已装过旧版本？** 本轮新增了多个 bin，且接入桩正文已演进至最新版（契约 v2.36.0 / sha `4c82924b`）。升级必须：①在 lab 仓重跑 `npm link`；②在每个消费方仓根跑 `baton install` + `baton link --check`（或直接使用 `lab sync-consumers` 全自动同步）。详见 [INSTALL.md §4](INSTALL.md) 与 [消费方升级提示词](docs/CONSUMER-PROMPTS.md)（场景五）。
+### 3. 在新老项目中一键引入 AEF 全套规范 (10 秒闭环)
 
-### 3. 环境自检 (Doctor)
+进入任意项目根目录执行：
+```bash
+cd /path/to/my-project
+lab init
+```
+脚手架自动就绪：
+- 📜 **最高宪法与业务事实源** (`constitution.md`, `group/product`, `group/architecture`, `group/contracts`)
+- 🤖 **全 AI 客户端支持与接入桩** (`AGENTS.md`, `CODEBUDDY.md`, `.cursorrules`, `.github/copilot-instructions.md`)
+- 🔄 **任务交接中枢** (`.handoffs/` 与 `.handoffs/.handoff-hub.json`)
+- 🛡️ **仓库不变量探针与配置** (`scripts/preflight.sh`, `preflight.conf`)
+- 🚪 **Git 提交物理门禁** (`.githooks/pre-commit` 分发器，自动挂载 `core.hooksPath`)
+- 🧹 **死代码与孤儿防线** (`30-orphan-guard`)
+- 📐 **架构决策记录** (`docs/adr/INDEX.md`, 起步 ADR-0001)
+- 📋 **待办捕获跟踪** (`docs/backlogs/IRONRULES.md`, 单条任务模板)
+
+---
+
+### 4. 环境自检 (Doctor)
 在终端执行自检，确认依赖就绪：
 
 ```bash
@@ -204,8 +228,8 @@ ln -sf ~/dev-templates/hooks/pre-commit-miniprogram .git/hooks/pre-commit
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:1f50c3b4 -->
-### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.36.1 为准）
+<!-- stub:sha256:b1d4ab0a -->
+### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.37.0 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。

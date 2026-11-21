@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.36.1';
+const BATON_VERSION = '2.37.0';
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -296,6 +296,8 @@ function isAgentEnvironment() {
     process.env.WORKBUDDY_SESSION_ID ||
     process.env.CODEBUDDY_SESSION_ID ||
     process.env.CODEBUDDY_CONVERSATION_ID ||
+    process.env.CODEBUDDY_SANDBOX_BROKER_SESSION_ID ||
+    process.env.WORKBUDDY_SANDBOX_BROKER_SESSION_ID ||
     process.env.AI_AGENT ||
     process.env.CONTINUE_GLOBAL_DIR ||
     process.env.WINDSURF_AGENT ||
@@ -406,14 +408,17 @@ function exemptBy(date, since) {
 }
 function stripFM(content) {
   if (!content) return '';
-  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+  const norm = String(content).replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
+  return norm.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
 }
 
 const RECEIPT_BODY_SINCE = '2026-10-13';
 /** 回执正文要素是否达标。唯一源 = RESPONSE-TEMPLATE.md（锚节「修复状态」）；此处兼容仓内「结论」锚节
- *  与历史 v2.6 骨架的「状态」别名——存量回执不回改，只约束契约生效日（RECEIPT_BODY_SINCE）后的新回执。 */
+ *  与历史 v2.6 骨架的「状态」别名——存量回执不回改，只约束契约生效日（RECEIPT_BODY_SINCE）后的新回执。
+ *  归一化：支持跨平台 Windows CMD/PowerShell 换行与转义字符（\r\n 与字面量 \n 归一），杜绝内容门禁误杀。 */
 function receiptBodyProblems(raw) {
-  const body = stripFM(raw);
+  const norm = String(raw || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
+  const body = stripFM(norm);
   const problems = [];
   if (!body.trim()) problems.push('正文为空');
   if (!/^##\s+\S/m.test(body)) problems.push('无任何 ## 节');
@@ -923,6 +928,8 @@ const KNOWN_SESSION_ENV_KEYS = [
   'WORKBUDDY_SESSION_ID',
   'CODEBUDDY_CONVERSATION_ID',
   'CODEBUDDY_SESSION_ID',
+  'CODEBUDDY_SANDBOX_BROKER_SESSION_ID',
+  'WORKBUDDY_SANDBOX_BROKER_SESSION_ID',
   'WINDSURF_CONVERSATION_ID',
   'TERM_SESSION_ID',
   'SESSION_ID',
@@ -1757,7 +1764,8 @@ function cmdAccept(args) {
  * 状态翻 forwarded 表达「待执行方继续改」。 */
 function cmdReject(args) {
   const noteIdx = args.indexOf('-n');
-  const note = noteIdx !== -1 ? args[noteIdx + 1]?.trim() : undefined;
+  const rawNote = noteIdx !== -1 ? args[noteIdx + 1]?.trim() : undefined;
+  const note = rawNote !== undefined ? rawNote.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n') : undefined;
   const byIdx = args.indexOf('--by');
   const asIdx = args.indexOf('--as');
   const byArg = byIdx !== -1 ? args[byIdx + 1]?.trim() : undefined;
@@ -2013,8 +2021,9 @@ function writeReceiptFile(rFile, rFm, note, skeleton) {
 /** 从回执正文抽取一行「结论」摘要（唯一依据 RESPONSE-TEMPLATE.md 的 ## 结论 (Verdict) 硬锚节；优先提取「- **结论**：...」或首个非空行）。 */
 function extractConclusion(raw) {
   if (!raw) return '';
+  const norm = String(raw).replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
   for (const t of ['结论', 'Conclusion', 'Verdict']) {
-    for (const body of receiptSections(raw, t)) {
+    for (const body of receiptSections(norm, t)) {
       const lines = body.split('\n').map(s => s.trim()).filter(Boolean);
       for (const l of lines) {
         if (l.startsWith('#')) continue;
@@ -2102,14 +2111,16 @@ function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
 }
 
 function cmdReceipt(args) {
-  const shouldDeliver = args.includes('--deliver');
+  const explicitDeliver = args.includes('--deliver');
+  const isDraft = args.includes('--draft');
   const hasNeedsChange = args.includes('--needs-change');
   const hasNoNeedsChange = args.includes('--no-needs-change');
   const isAutoNonce = args.includes('--auto-nonce');
   const auditNonceInput = flagValue(args, '--audit-nonce');
   const asInput = flagValue(args, '--as') || flagValue(args, '--by');
   const noteIdx = args.indexOf('-n');
-  const note = noteIdx !== -1 ? args[noteIdx + 1]?.trim() : undefined;
+  const rawNote = noteIdx !== -1 ? args[noteIdx + 1]?.trim() : undefined;
+  const note = rawNote !== undefined ? rawNote.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n') : undefined;
   // evidence flags（P0-c）：CLI 传入可核验证据，落进 frontmatter 供门禁/check 校验
   const evidenceFlags = {
     commits: flagValue(args, '--evidence-commits'),
@@ -2122,7 +2133,7 @@ function cmdReceipt(args) {
   const valueIdx = new Set();
   for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
   const rawId = args.find((a, i) => !a.startsWith('-') && !valueIdx.has(i));
-  if (!rawId) { console.error('用法: handoff receipt <id> [-n "<回执正文>"] [--deliver] [--as <lane>] [--needs-change] [--no-needs-change] [--audit-nonce "<nonce>"] [--evidence-paths "a,b"] [--evidence-commits "sha"] [--evidence-repo key] [--evidence-note "..."]'); process.exit(2); }
+  if (!rawId) { console.error('用法: handoff receipt <id> [-n "<回执正文>"] [--deliver|--draft] [--as <lane>] [--needs-change] [--no-needs-change] [--audit-nonce "<nonce>"] [--evidence-paths "a,b"] [--evidence-commits "sha"] [--evidence-repo key] [--evidence-note "..."]'); process.exit(2); }
   const id = resolveTicketId(rawId);
   const hFile = path.join(H_DIR, `${id}.md`);
   if (!fs.existsSync(hFile)) { console.error('找不到交接: ' + hFile); process.exit(1); }
@@ -2132,7 +2143,7 @@ function cmdReceipt(args) {
     const hFm = readFM(fs.readFileSync(hFile, 'utf8'));
     const st = hFm?.status;
     // 防提前闭环（v2.13 / v2.25 P0-3 强化 / ADR-0008 Phase 2 显式声明）：发起方禁止自填回执，且仓内模式强制校验执行身份
-    const cur = resolveExecutionLane(asInput, { fromLane: hFm?.from_lane, toLane: hFm?.to_lane, op: shouldDeliver ? 'deliver' : 'receipt', ticketId: id });
+    const cur = resolveExecutionLane(asInput, { fromLane: hFm?.from_lane, toLane: hFm?.to_lane, op: explicitDeliver ? 'deliver' : 'receipt', ticketId: id });
     if (MODE === 'intra-repo') {
       const toLane = String(hFm?.to_lane || '').toLowerCase();
       const fromLane = String(hFm?.from_lane || '').toLowerCase();
@@ -2201,6 +2212,10 @@ function cmdReceipt(args) {
     } else if (hFm && hFm.needs_change !== undefined) {
       needsChange = Boolean(hFm.needs_change);
     }
+
+    const isPositiveVerdict = concl && !isVerdictRejected(concl) && !isVerdictBlocked(concl);
+    // 鲁棒性默认自动交付：当回执正文明确且结论正向且无变更时，默认直接交付，彻底解决 Agent 漏传 --deliver 导致 wait 挂死
+    const shouldDeliver = !isDraft && (explicitDeliver || Boolean(note !== undefined && isPositiveVerdict && !needsChange));
 
     // 审计防伪门禁 (Audit Nonce · ADR-0008 交付中间件解耦与下车通道)：
     // 针对 to_lane=audit 实施任务绑定与防伪核验。
@@ -2337,7 +2352,8 @@ function cmdReceipt(args) {
 /** 执行方显式终态交付（deliver）：会话收尾且自检全过时宣布完成交付并落印 delivered_at，推进为 delivered 态 */
 function cmdDeliver(args) {
   const noteIdx = args.indexOf('-n');
-  const note = noteIdx !== -1 ? args[noteIdx + 1]?.trim() : undefined;
+  const rawNote = noteIdx !== -1 ? args[noteIdx + 1]?.trim() : undefined;
+  const note = rawNote !== undefined ? rawNote.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n') : undefined;
   const asInput = flagValue(args, '--as') || flagValue(args, '--by');
   const valFlags = ['-n', '--evidence-commits', '--evidence-paths', '--evidence-repo', '--evidence-note', '--as', '--by'];
   const valueIdx = new Set();
@@ -3168,9 +3184,24 @@ function checkStubCarrier() {
   if (home) {
     targets.push(path.join(home, '.claude/CLAUDE.md'));
     targets.push(path.join(home, '.config/opencode/AGENTS.md'));
+    if (fs.existsSync(path.join(home, '.workbuddy/MEMORY.md'))) {
+      targets.push(path.join(home, '.workbuddy/MEMORY.md'));
+    }
+    if (fs.existsSync(path.join(home, '.CODEBUDDY.md'))) {
+      targets.push(path.join(home, '.CODEBUDDY.md'));
+    }
   }
   if (fs.existsSync(path.join(cdir, 'GEMINI.md'))) {
     targets.push(path.join(cdir, 'GEMINI.md'));
+  }
+  if (fs.existsSync(path.join(cdir, 'CODEBUDDY.md'))) {
+    targets.push(path.join(cdir, 'CODEBUDDY.md'));
+  }
+  if (fs.existsSync(path.join(cdir, '.cursorrules'))) {
+    targets.push(path.join(cdir, '.cursorrules'));
+  }
+  if (fs.existsSync(path.join(cdir, '.github/copilot-instructions.md'))) {
+    targets.push(path.join(cdir, '.github/copilot-instructions.md'));
   }
   const stdZH = STUB_CANON(STUB_BLOCK_ZH);
   const stdEN = STUB_CANON(STUB_BLOCK_EN);
@@ -3702,6 +3733,52 @@ function detectRepo(cwd) {
   return null;
 }
 
+/** 跨平台系统剪贴板写入（Fail-open：异常或 CI 静默跳过，杜绝阻断主工作流）。 */
+function copyToClipboard(text) {
+  if (!text || process.env.CI || process.env.BATON_NO_CLIPBOARD) return false;
+  try {
+    const raw = String(text).trim();
+    if (process.platform === 'darwin') {
+      const p = spawn('pbcopy', [], { stdio: ['pipe', 'ignore', 'ignore'] });
+      p.stdin.write(raw);
+      p.stdin.end();
+      return true;
+    } else if (process.platform === 'win32') {
+      const p = spawn('clip.exe', [], { stdio: ['pipe', 'ignore', 'ignore'] });
+      p.stdin.write(raw);
+      p.stdin.end();
+      return true;
+    } else if (process.platform === 'linux') {
+      try {
+        const p = spawn('xclip', ['-selection', 'clipboard'], { stdio: ['pipe', 'ignore', 'ignore'] });
+        p.stdin.write(raw);
+        p.stdin.end();
+        return true;
+      } catch {
+        const p = spawn('wl-copy', [], { stdio: ['pipe', 'ignore', 'ignore'] });
+        p.stdin.write(raw);
+        p.stdin.end();
+        return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
+/** 提示词物理持久化镜像（固化至 .handoffs/.latest-prompt.txt，杜绝 Agent 上下文丢失提示词）。 */
+function writeLatestPrompt(promptText, title, ticketId) {
+  try {
+    const parentDir = path.dirname(H_DIR);
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+    const promptPath = path.join(parentDir, '.latest-prompt.txt');
+    const header = `# Latest Baton Outbound Prompt [${ticketId || ''}]\n# Generated at: ${new Date().toISOString()}\n\n`;
+    fs.writeFileSync(promptPath, header + String(promptText).trim() + '\n', 'utf8');
+    return promptPath;
+  } catch {
+    return null;
+  }
+}
+
 function cmdPrompt(args) {
   const [rawId] = args.filter(a => !a.startsWith('--'));
   if (!rawId) { console.error('用法: handoff prompt <id>'); process.exit(2); }
@@ -3724,6 +3801,18 @@ function cmdPrompt(args) {
     const convId = fm.conversation_id || getSessionId();
     const promptId = convId || id;
 
+    const promptCardTextZh = (ws === 'worktree')
+      ? `请 [${toRole}] 在隔离工作树接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工作树路径] ${path.join('.worktrees', id)}\n[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd()
+      : `请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd();
+
+    const promptCardTextEn = (ws === 'worktree')
+      ? `Please [${toRole}] take handoff in isolated worktree:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Worktree] ${path.join('.worktrees', id)}\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd()
+      : `Please [${toRole}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd();
+
+    const chosenPromptText = isZh ? promptCardTextZh : promptCardTextEn;
+    writeLatestPrompt(chosenPromptText, cleanTitle, id);
+    const clipOk = copyToClipboard(chosenPromptText);
+
     // 审计动作契约（v2.13）：to_lane=audit 时注入强制审计动作，提示词与接入桩同步。
     const auditContract = (String(fm.to_lane || '').toLowerCase() === 'audit')
       ? (isZh
@@ -3737,13 +3826,13 @@ function cmdPrompt(args) {
       console.log(`\n## 交接提示词\n`);
       console.log(`> 直接复制下方提示词，发送给接收方 Agent 接单：\n`);
       console.log(`\`\`\`text`);
-      if (ws === 'worktree') {
-        const wtRel = path.join('.worktrees', id);
-        console.log(`请 [${toRole}] 在隔离工作树接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工作树路径] ${wtRel}\n[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd());
-      } else {
-        console.log(`请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd());
-      }
+      console.log(chosenPromptText);
       console.log(`\`\`\`\n`);
+      if (clipOk) {
+        console.log(`📋 [系统剪贴板已写入] 提示词已自动写入系统剪贴板，可随时在接收方窗口 Cmd+V / Ctrl+V 一键粘贴！`);
+      }
+      console.log(`📁 [提示词镜像固化] 已同步落盘至 .handoffs/.latest-prompt.txt\n`);
+      console.log(`💡 [Agent 出站纪律] 当前 Agent 请将上述 \`\`\`text ... \`\`\` 代码块完整置于本次回复的最末尾（出站卡片后严禁附加任何客套话），供人类一键复制！\n`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
         console.log(`（发送方注 · 任务在专属工作树 ${wtRel} 物理隔离进行，切勿在主代码目录就地修改，验收完成后自动回收。）\n`);
@@ -3765,13 +3854,13 @@ function cmdPrompt(args) {
       console.log(`\n## Baton Pass Prompt\n`);
       console.log(`> Copy the prompt below to pass to the receiver Agent:\n`);
       console.log(`\`\`\`text`);
-      if (ws === 'worktree') {
-        const wtRel = path.join('.worktrees', id);
-        console.log(`Please [${toRole}] take handoff in isolated worktree:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Worktree] ${wtRel}\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd());
-      } else {
-        console.log(`Please [${toRole}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd());
-      }
+      console.log(chosenPromptText);
       console.log(`\`\`\`\n`);
+      if (clipOk) {
+        console.log(`📋 [Copied to Clipboard] Prompt automatically copied to clipboard, ready for Cmd+V / Ctrl+V!`);
+      }
+      console.log(`📁 [Prompt Mirrored] Persisted to .handoffs/.latest-prompt.txt\n`);
+      console.log(`💡 [Agent Outbound Rule] Current Agent MUST place the exact \`\`\`text ... \`\`\` block above at the very end of your response for one-click human relay!\n`);
       if (ws === 'worktree') {
         const wtRel = path.join('.worktrees', id);
         console.log(`(Sender note: task executes in isolated worktree ${wtRel}. Do not edit main directory directly.)\n`);
@@ -3824,14 +3913,25 @@ function cmdPrompt(args) {
   const convId = readFM(content)?.conversation_id || getSessionId();
   const promptId = convId || id;
 
+  const promptCardTextZh = `请 [${targetLabel}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd();
+  const promptCardTextEn = `Please [${targetLabel}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd();
+  const chosenPromptText = isZh ? promptCardTextZh : promptCardTextEn;
+  writeLatestPrompt(chosenPromptText, cleanTitle, id);
+  const clipOk = copyToClipboard(chosenPromptText);
+
   if (isZh) {
     console.log(`📋 跨仓交接 (${id}) · target=${pTarget || 'unknown'}:`);
     console.log(`   主题: ${cleanTitle}`);
     console.log(`\n## 交接提示词\n`);
     console.log(`> 直接复制下方提示词，发送给接收方 Agent 接单：\n`);
     console.log(`\`\`\`text`);
-    console.log(`请 [${targetLabel}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd());
+    console.log(chosenPromptText);
     console.log(`\`\`\`\n`);
+    if (clipOk) {
+      console.log(`📋 [系统剪贴板已写入] 提示词已自动写入系统剪贴板，可随时在接收方窗口 Cmd+V / Ctrl+V 一键粘贴！`);
+    }
+    console.log(`📁 [提示词镜像固化] 已同步落盘至 .handoffs/.latest-prompt.txt\n`);
+    console.log(`💡 [Agent 出站纪律] 当前 Agent 请将上述 \`\`\`text ... \`\`\` 代码块完整置于本次回复的最末尾（出站卡片后严禁附加任何客套话），供人类一键复制！\n`);
     console.log(`（若已挂起后台监听，回执登记后状态机会自动感知唤醒发起方闭环。）\n`);
   } else {
     console.log(`📋 Cross-Repo Baton (${id}) · target=${pTarget || 'unknown'}:`);
@@ -3839,8 +3939,13 @@ function cmdPrompt(args) {
     console.log(`\n## Baton Pass Prompt\n`);
     console.log(`> Copy the prompt below to pass to the receiver Agent:\n`);
     console.log(`\`\`\`text`);
-    console.log(`Please [${targetLabel}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd());
+    console.log(chosenPromptText);
     console.log(`\`\`\`\n`);
+    if (clipOk) {
+      console.log(`📋 [Copied to Clipboard] Prompt automatically copied to clipboard, ready for Cmd+V / Ctrl+V!`);
+    }
+    console.log(`📁 [Prompt Mirrored] Persisted to .handoffs/.latest-prompt.txt\n`);
+    console.log(`💡 [Agent Outbound Rule] Current Agent MUST place the exact \`\`\`text ... \`\`\` block above at the very end of your response for one-click human relay!\n`);
     console.log(`(If background listener is running, the state machine will automatically wake up upon receipt.)\n`);
   }
 }
@@ -3853,9 +3958,22 @@ function cmdInstall(args) {
     if (fs.existsSync(path.join(process.cwd(), 'GEMINI.md'))) {
       targets.push(path.join(process.cwd(), 'GEMINI.md'));
     }
+    if (fs.existsSync(path.join(process.cwd(), 'CODEBUDDY.md')) || args.includes('--codebuddy')) {
+      targets.push(path.join(process.cwd(), 'CODEBUDDY.md'));
+    }
+    if (fs.existsSync(path.join(process.cwd(), '.cursorrules')) || args.includes('--cursor')) {
+      targets.push(path.join(process.cwd(), '.cursorrules'));
+    }
+    if (fs.existsSync(path.join(process.cwd(), '.github/copilot-instructions.md')) || args.includes('--copilot')) {
+      targets.push(path.join(process.cwd(), '.github/copilot-instructions.md'));
+    }
   }
   if (!args.includes('--project')) {
     targets.push(path.join(home, '.claude/CLAUDE.md'), path.join(home, '.config/opencode/AGENTS.md'));
+    if (home) {
+      targets.push(path.join(home, '.workbuddy/MEMORY.md'));
+      targets.push(path.join(home, '.CODEBUDDY.md'));
+    }
   }
   // include README if requested or default (v2.12)；--global 只装全局，不写 cwd README（F3）
   if (!args.includes('--no-readme') && !args.includes('--global')) {
@@ -4803,6 +4921,8 @@ async function cmdWait(args) {
     let initialRMtime = 0;
     let initialRDelivered = false;
     let initialRDeliveredTime = '';
+    let initialAutoDeliverCandidate = false;
+    let initialNegativeReceiptSettled = false;
     try {
       if (fs.existsSync(rFile)) {
         initialRMtime = fs.statSync(rFile).mtimeMs;
@@ -4811,6 +4931,17 @@ async function cmdWait(args) {
         if (rFm && isDeliveryValid(rFm.delivered_at, hFm.rejected_at)) {
           initialRDelivered = true;
           initialRDeliveredTime = rFm.delivered_at;
+        } else if (hFm.status === 'received' && rFm && (rFm.handoff_id === id || rFm.id === id || !rFm.handoff_id)) {
+          const rBody = stripFM(rRaw);
+          const concl = extractConclusion(rBody);
+          const isPositive = concl && !isVerdictRejected(concl) && !isVerdictBlocked(concl);
+          const isAudit = MODE === 'intra-repo' && String(hFm?.to_lane || '').toLowerCase() === 'audit';
+          const auditNonceValid = !isAudit || (Boolean(rFm.audit_nonce) && rFm.audit_nonce === hFm.audit_nonce);
+          if (isPositive && !rFm.needs_change && !hFm.needs_change && auditNonceValid) {
+            initialAutoDeliverCandidate = true;
+          } else if ((rFm.needs_change || isVerdictRejected(concl) || isVerdictBlocked(concl)) && auditNonceValid) {
+            initialNegativeReceiptSettled = true;
+          }
         }
       }
     } catch {}
@@ -4829,6 +4960,8 @@ async function cmdWait(args) {
       status: initStatus,
       lastHMtime: initialHMtime,
       lastRMtime: initialRMtime,
+      _candidateForAutoDeliver: initialAutoDeliverCandidate,
+      _negativeReceiptSettled: initialNegativeReceiptSettled,
     });
   }
 
@@ -4839,18 +4972,40 @@ async function cmdWait(args) {
     const isRejectedByPeer = Boolean(t.hFm.rejected_at) &&
       Boolean(t.hFm.rejected_by) &&
       t.hFm.rejected_by.toLowerCase() !== String(t.hFm.from_lane || '').toLowerCase();
+    const isAutoDeliverCandidate = Boolean(t._candidateForAutoDeliver);
+    const isNegativeReceiptSettled = Boolean(t._negativeReceiptSettled);
 
     return (t.status === 'delivered' && isDeliveredAfterReject) ||
            t.status === 'closed' ||
            isRejectedByPeer ||
            (Boolean(t.hFm.delivered_at) && isDeliveredAfterReject) ||
-           (t.status === 'received' && isLegacyExempt);
+           (t.status === 'received' && isLegacyExempt) ||
+           isAutoDeliverCandidate ||
+           isNegativeReceiptSettled;
   };
   const getReadyTickets = () => [...ticketMap.values()].filter(isTicketReady);
+
+  const promoteAutoDeliverCandidates = () => {
+    const nowIso = new Date().toISOString();
+    for (const [id, t] of ticketMap.entries()) {
+      if (t._candidateForAutoDeliver && t.status !== 'delivered' && t.status !== 'closed') {
+        try {
+          setFM(t.hFile, { status: 'delivered', delivered_at: nowIso, auto_delivered: true });
+          setFM(t.rFile, { delivered_at: nowIso, auto_delivered: true });
+          t.status = 'delivered';
+          t.hFm.status = 'delivered';
+          t.hFm.delivered_at = nowIso;
+          t._candidateForAutoDeliver = false;
+          console.log(`ℹ️ [Baton 自愈交付] 工单 ${id} 回执有效且已落盘，自动推进至 delivered 终态并唤醒发起方！`);
+        } catch {}
+      }
+    }
+  };
 
   if (mode === 'any') {
     const ready = getReadyTickets();
     if (ready.length > 0) {
+      promoteAutoDeliverCandidates();
       clearUnwatchedDebt(ids);
       console.log(`✅ [就绪] 聚合监听（模式: ANY）已有工单处于终态: ${ready[0].id} (${ready[0].status})`);
       printWaitWakeupSummary(ready[0].id, ready[0].hFile, ready[0].rFile, ready[0].hFm);
@@ -4859,6 +5014,7 @@ async function cmdWait(args) {
   } else {
     const ready = getReadyTickets();
     if (ready.length === ids.length) {
+      promoteAutoDeliverCandidates();
       clearUnwatchedDebt(ids);
       console.log(`✅ [全部就绪] 聚合监听（模式: ALL）全部 ${ids.length} 份工单均已处于交付终态！`);
       for (const t of ready) {
@@ -5200,7 +5356,19 @@ async function cmdWait(args) {
               t.status = 'delivered';
               t.hFm.status = 'delivered';
               t.hFm.delivered_at = deliverTime;
+              t._candidateForAutoDeliver = false;
             } else {
+              const rBody = stripFM(rRaw);
+              const concl = extractConclusion(rBody);
+              const isPositive = concl && !isVerdictRejected(concl) && !isVerdictBlocked(concl);
+              const isAudit = MODE === 'intra-repo' && String(t.hFm?.to_lane || '').toLowerCase() === 'audit';
+              const auditNonceValid = !isAudit || (Boolean(rFm?.audit_nonce) && rFm.audit_nonce === t.hFm.audit_nonce);
+
+              if (isPositive && !rFm?.needs_change && !t.hFm?.needs_change && auditNonceValid) {
+                t._candidateForAutoDeliver = true;
+              } else if ((rFm?.needs_change || isVerdictRejected(concl) || isVerdictBlocked(concl)) && auditNonceValid) {
+                t._negativeReceiptSettled = true;
+              }
               // 回执文件更新但执行方尚未宣布交付：仅跨仓记录 seen，绝不抢跑翻 received 触发唤醒
               if (MODE !== 'intra-repo' && t.status !== 'received') {
                 setFM(t.hFile, { receipt_seen_at: new Date().toISOString() });
@@ -5217,8 +5385,8 @@ async function cmdWait(args) {
       if (shouldWakeup) {
         // 执行方平息缓冲（Settle Window · 防抢跑核心）：
         // 探针在此处静默缓冲若干秒，若检测到工作区内任何相关文件仍有写入活动则顺延，直到执行方会话彻底平息再唤醒发起方。
-        if (settleDelayMs > 0 && readyTickets.some(t => t.status === 'delivered')) {
-          console.log(`\n⏳ [交付平息缓冲] 检测到交付信号（就绪 ${readyTickets.length}/${ids.length} 项），等待执行方会话彻底结束（平息缓冲 ${formatDuration(settleDelayMs)}）...`);
+        if (settleDelayMs > 0 && readyTickets.some(t => t.status === 'delivered' || t._candidateForAutoDeliver || t._negativeReceiptSettled)) {
+          console.log(`\n⏳ [交付平息缓冲] 检测到交付/回执信号（就绪 ${readyTickets.length}/${ids.length} 项），等待执行方会话彻底结束（平息缓冲 ${formatDuration(settleDelayMs)}）...`);
           let settleStart = Date.now();
           const settleHardCapMs = Math.max(settleDelayMs * 3, 30_000); // 最大平息硬上限，杜绝后置持续扰动导致的无限等待与 CPU 空转
           const settleGlobalStart = settleStart;
@@ -5246,6 +5414,9 @@ async function cmdWait(args) {
               console.log(`   [写入活动中] 检测到执行方后置操作，重置平息缓冲计时器...`);
             }
           }
+
+          // 平息完成后：对自愈候选工单安全落盘推进为 delivered
+          promoteAutoDeliverCandidates();
           console.log(`🎉 [会话已平息] 执行方会话已彻底结束，正式唤醒发起方！`);
         }
 
@@ -5259,6 +5430,8 @@ async function cmdWait(args) {
 
           if (isPeerRej) {
             console.log(`\n⚠️ [工单被驳回退回] 检测到交接 ${singleT.id} 已被【${singleT.hFm.rejected_by}】驳回退回（Needs Change / 待整改）！`);
+          } else if (singleT._negativeReceiptSettled) {
+            console.log(`\n⚠️ [回执未通过唤醒] 检测到交接 ${singleT.id} 回执已落盘，结论为未通过/受阻，唤醒发起方处理！`);
           } else {
             console.log(`\n🎉 [交付已就绪] 检测到交接 ${singleT.id} 状态已转为 ${singleT.status}！`);
           }
