@@ -1,5 +1,12 @@
 # Changelog — units/orphan
 
+## [v1.4.2] - 2026-11-22
+
+### Fixed
+- **CLI 版本号与帮助 Banner 动态对齐**：
+  - `lab-orphan` 启动帮助 banner 移除硬编码 `v1.0.0`，改为动态读取 `VERSION.md` 事实源；
+  - 显式接线 `--version` / `-v` / `version` 命令行选项，避免下发 `--version` 时退出码为 1 或提示未知命令。
+
 ## [v1.4.1] - 2026-11-22
 
 ### Added

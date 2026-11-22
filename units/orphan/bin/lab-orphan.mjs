@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Solver } from '../core/solver.mjs';
 import { SolverProtocol } from '../core/protocol-s1-s3.mjs';
 import { DiffChecker } from '../core/diff-checker.mjs';
@@ -15,12 +16,25 @@ import { PythonAdapter } from '../adapters/python/index.mjs';
 import { WebAdapter } from '../adapters/web/index.mjs';
 import { OrphanDepsSolver } from '../core/orphan-deps.mjs';
 
+const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const ORPHAN_VERSION = (() => {
+  try {
+    const vFile = path.resolve(SCRIPT_ROOT, '..', 'VERSION.md');
+    if (fs.existsSync(vFile)) {
+      const line = fs.readFileSync(vFile, 'utf8').trim().split('\n')[0];
+      const match = line.match(/v?(\d+\.\d+\.\d+)/);
+      if (match) return match[1];
+    }
+  } catch {}
+  return '1.4.1';
+})();
+
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
 
 function showHelp() {
   console.log(`
-lab-orphan CLI — 全局死代码与孤儿资产清道夫 (units/orphan v1.0.0)
+lab-orphan CLI — 全局死代码与孤儿资产清道夫 (units/orphan v${ORPHAN_VERSION})
 
 用法:
   lab orphan test-solver                运行 S1-S3 求解器自检协议 (注入假死检出/在用保护/逐字节一致)
@@ -248,6 +262,12 @@ async function runScanSecrets() {
 
 // ── 路由执行 ──────────────────────────────────────────────────────────
 switch (command) {
+  case '--version':
+  case '-v':
+  case 'version':
+    console.log(`lab-orphan CLI · v${ORPHAN_VERSION} (units/orphan)`);
+    process.exit(0);
+    break;
   case 'test-solver':
   case 'test':
     await runTestSolver();

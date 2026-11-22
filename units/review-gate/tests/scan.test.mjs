@@ -57,6 +57,9 @@ exit 0
 
       assert.match(stdout, /wrote .* \(engine: opengrep\)/);
       assert.ok(fs.existsSync(tmpOut), 'Output file should be written');
+      const data = JSON.parse(fs.readFileSync(tmpOut, 'utf8'));
+      assert.equal(data.engine, 'opengrep', 'Output JSON should contain engine: opengrep');
+      assert.equal(data.fallback, false, 'Output JSON should contain fallback: false');
       const recordedArgs = fs.readFileSync(argsFile, 'utf8');
       assert.ok(!recordedArgs.includes('--disable-nosem'), 'Default mode should not include --disable-nosem');
     } finally {
@@ -99,6 +102,9 @@ exit 0
       assert.match(stdout, /Anti-Suppression 穿透模式/);
       assert.match(stdout, /wrote .* \(engine: opengrep\)/);
       assert.ok(fs.existsSync(tmpOut), 'Output file should be written');
+      const dataPen = JSON.parse(fs.readFileSync(tmpOut, 'utf8'));
+      assert.equal(dataPen.engine, 'opengrep', 'Output JSON in penetration mode should contain engine: opengrep');
+      assert.equal(dataPen.fallback, false, 'Output JSON in penetration mode should contain fallback: false');
       const recordedArgs = fs.readFileSync(argsFile, 'utf8');
       assert.ok(recordedArgs.includes('--disable-nosem'), 'Penetration mode must include --disable-nosem');
     } finally {

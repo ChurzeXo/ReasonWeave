@@ -25,6 +25,17 @@ import { traceAllAdrsWiring } from '../core/wiring_tracer.mjs';
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATES_DIR = path.join(PKG_ROOT, 'templates');
+const SPEC_GUARD_VERSION = (() => {
+  try {
+    const vFile = path.join(PKG_ROOT, 'VERSION.md');
+    if (fs.existsSync(vFile)) {
+      const line = fs.readFileSync(vFile, 'utf8').trim().split('\n')[0];
+      const match = line.match(/v?(\d+\.\d+\.\d+)/);
+      if (match) return match[1];
+    }
+  } catch {}
+  return '2.2.0';
+})();
 
 const args = process.argv.slice(2);
 const command = args[0] || 'check';
@@ -39,7 +50,7 @@ function getRepoRoot() {
 
 function printHelp() {
   console.log(`
-🛡️  spec-guard (drift-gate) - 架构规约与漂移守卫 CLI (v2.0.0)
+🛡️  spec-guard (drift-gate) - 架构规约与漂移守卫 CLI (v${SPEC_GUARD_VERSION})
 
 用法:
   spec-guard check [options]           对账全仓规约断言覆盖率与架构漂移
@@ -379,6 +390,12 @@ function handleMutate() {
 const targetAdrArg = args[1] && !args[1].startsWith('--') ? args[1] : null;
 
 switch (command) {
+  case '--version':
+  case '-v':
+  case 'version':
+    console.log(`spec-guard CLI · v${SPEC_GUARD_VERSION} (units/spec-guard)`);
+    process.exit(0);
+    break;
   case 'init':
     handleInit();
     break;

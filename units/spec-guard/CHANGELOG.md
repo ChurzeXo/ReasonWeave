@@ -1,5 +1,12 @@
 # Changelog - spec-guard (drift-gate)
 
+## [2.2.1] - 2026-11-22
+
+### Fixed
+- **CLI 版本号与帮助 Banner 动态对齐**：
+  - `spec-guard` 帮助 banner 移除硬编码 `v2.0.0`，改为动态读取 `VERSION.md` 事实源；
+  - 显式接线 `--version` / `-v` / `version` 命令行选项，避免下发 `--version` 时报错 `未知命令: --version` 且以 exit 1 退出。
+
 ## [2.2.0] - 2026-11-14
 
 ### Added

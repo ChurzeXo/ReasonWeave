@@ -53,6 +53,9 @@ for arg in "$@"; do
 done
 
 OUT="${POSITIONAL_ARGS[0]:-review-gate/baseline/baseline.json}"
+if [ -d "$OUT" ] || [ "$OUT" = "." ]; then
+  OUT="${OUT%/}/review-gate-report.json"
+fi
 
 # ===== 穿透扫描选项（ADR-0011 / ADR-0012：忽略行内 # nosem 免检）=====
 NO_SUPPRESS_ARGS=()
@@ -77,6 +80,32 @@ fi
 if [ -n "$OG" ] && ([ -x "$OG" ] || command -v "$OG" >/dev/null 2>&1); then
   "$OG" scan ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"} ${NO_SUPPRESS_ARGS[@]+"${NO_SUPPRESS_ARGS[@]}"} --disable-version-check --timeout 60 \
     ${EXCLUDES} --json --output "$OUT" .
+  if command -v node >/dev/null 2>&1; then
+    node -e '
+      const fs = require("fs");
+      try {
+        const file = process.argv[1];
+        if (fs.existsSync(file)) {
+          const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+          raw.engine = "opengrep";
+          raw.fallback = false;
+          fs.writeFileSync(file, JSON.stringify(raw, null, 2));
+        }
+      } catch (e) {}
+    ' "$OUT"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import sys, json, os
+try:
+  file = sys.argv[1]
+  if os.path.exists(file):
+    with open(file, "r") as f: data = json.load(f)
+    data["engine"] = "opengrep"
+    data["fallback"] = False
+    with open(file, "w") as f: json.dump(data, f, indent=2)
+except: pass
+' "$OUT"
+  fi
   echo "wrote $OUT (engine: opengrep)"
 else
   echo "⚠️  OpenGrep 未安装 — 触发轻量级降级矩阵 (ADR-0011 §2.2)"

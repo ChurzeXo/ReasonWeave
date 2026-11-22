@@ -9,14 +9,26 @@ const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const UNITS_DIR = path.join(PKG_ROOT, 'units');
 const TEMPLATES_DIR = path.join(UNITS_DIR, 'playbook', 'templates');
 
+const LAB_VERSION = (() => {
+  try {
+    const pkgPath = path.join(PKG_ROOT, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const data = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      if (data.version) return data.version;
+    }
+  } catch {}
+  return '1.3.0';
+})();
+
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
 
 function showHelp() {
   console.log(`
-Lab Agent Engineering Toolkit (AEF v1.0)
+Lab Agent Engineering Toolkit · v${LAB_VERSION} (AEF v1.0)
 
 用法:
+  lab --version               打印当前 Toolkit 版本
   lab init [name]             一键初始化完整 AEF 工程规范（交接/门禁/孤儿治理/ADR/待办/全客户端桩）
   lab list                    列出所有可用工程能力 Unit
   lab path [unit]             获取某个 Unit (或 lab 根目录) 的安装绝对路径
@@ -89,27 +101,154 @@ function getPath(unitName) {
 }
 
 function doctor() {
-  console.log('\n🔍 正在检查环境依赖:\n');
-  const checks = [
-    { name: 'Node.js (>=18)', cmd: 'node -v', required: true },
-    { name: 'Git', cmd: 'git --version', required: true },
-    { name: 'OpenGrep (review-gate L1)', cmd: 'opengrep --version', required: false, env: { OPENGREP_SEND_METRICS: 'off', SEMGREP_SEND_METRICS: 'off' }, timeout: 5000 },
-  ];
+  console.log(`\n🔍 正在检查环境依赖 (lab v${LAB_VERSION}):\n`);
 
-  for (const c of checks) {
-    try {
-      const out = execSync(c.cmd, {
-        stdio: ['pipe', 'pipe', 'ignore'],
-        env: { ...process.env, ...(c.env || {}) },
-        timeout: c.timeout || 10000
-      }).toString().trim();
-      console.log(`  ✅ \x1b[32m${c.name.padEnd(28)}\x1b[0m: ${out}`);
-    } catch {
-      if (c.required) {
-        console.log(`  ❌ \x1b[31m${c.name.padEnd(28)}\x1b[0m: 未安装或不在 PATH 中 (必需)`);
-      } else {
-        console.log(`  ⚠️  \x1b[33m${c.name.padEnd(28)}\x1b[0m: 未安装 (可选，仅 review-gate 扫描需要)`);
+  const userHome = os.homedir();
+  const extraPaths = [
+    path.dirname(process.execPath),
+    path.join(userHome, '.local', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+  ].filter(p => fs.existsSync(p));
+
+  const envPath = process.env.PATH || '';
+  const augmentedPath = [
+    ...new Set([
+      ...envPath.split(':').filter(Boolean),
+      ...extraPaths,
+    ])
+  ].join(':');
+
+  const runCmd = (cmd, env = {}) => {
+    return execSync(cmd, {
+      stdio: ['pipe', 'pipe', 'ignore'],
+      env: { ...process.env, PATH: augmentedPath, ...env },
+      timeout: 10000,
+    }).toString().trim();
+  };
+
+  // 1. Node.js (>=18)
+  try {
+    const nodeVer = process.version;
+    const major = parseInt(nodeVer.replace(/^v/, '').split('.')[0], 10);
+    if (major >= 18) {
+      console.log(`  ✅ \x1b[32m${'Node.js (>=18)'.padEnd(28)}\x1b[0m: ${nodeVer} (${process.execPath})`);
+    } else {
+      console.log(`  ❌ \x1b[31m${'Node.js (>=18)'.padEnd(28)}\x1b[0m: 当前版本 ${nodeVer} 低于要求的 18.0.0 (必需)`);
+    }
+  } catch (err) {
+    console.log(`  ❌ \x1b[31m${'Node.js (>=18)'.padEnd(28)}\x1b[0m: 检查失败 (${err.message})`);
+  }
+
+  // 2. Git
+  try {
+    const gitOut = runCmd('git --version');
+    console.log(`  ✅ \x1b[32m${'Git'.padEnd(28)}\x1b[0m: ${gitOut}`);
+  } catch {
+    console.log(`  ❌ \x1b[31m${'Git'.padEnd(28)}\x1b[0m: 未安装或不在 PATH 中 (必需)`);
+  }
+
+  // 3. OpenGrep (review-gate L1)
+  try {
+    let ogBin = process.env.OPENGREP_BIN;
+    if (!ogBin || !fs.existsSync(ogBin)) {
+      try {
+        const whichOut = runCmd('which opengrep');
+        if (whichOut && fs.existsSync(whichOut)) ogBin = whichOut;
+      } catch {}
+    }
+    const searchDirs = [
+      path.join(userHome, '.local', 'bin'),
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+    ];
+    if (!ogBin) {
+      for (const d of searchDirs) {
+        const cand = path.join(d, 'opengrep');
+        if (fs.existsSync(cand)) {
+          ogBin = cand;
+          break;
+        }
       }
+    }
+    // Fallback to semgrep
+    let isSemgrepFallback = false;
+    if (!ogBin) {
+      try {
+        const whichSemgrep = runCmd('which semgrep');
+        if (whichSemgrep && fs.existsSync(whichSemgrep)) {
+          ogBin = whichSemgrep;
+          isSemgrepFallback = true;
+        }
+      } catch {}
+      if (!ogBin) {
+        for (const d of searchDirs) {
+          const cand = path.join(d, 'semgrep');
+          if (fs.existsSync(cand)) {
+            ogBin = cand;
+            isSemgrepFallback = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (ogBin && fs.existsSync(ogBin)) {
+      let verOut = '';
+      try {
+        verOut = execSync(`"${ogBin}" --version --disable-version-check`, {
+          stdio: ['pipe', 'pipe', 'ignore'],
+          env: { ...process.env, PATH: augmentedPath, OPENGREP_SEND_METRICS: 'off', SEMGREP_SEND_METRICS: 'off' },
+          timeout: 15000,
+        }).toString().trim();
+      } catch {
+        verOut = '已就绪 (探针超时)';
+      }
+      const inOriginalPath = (process.env.PATH || '').split(':').some(p => ogBin.startsWith(p + '/'));
+      const note = inOriginalPath ? '' : ` (位于 ${ogBin}，非默认 PATH)`;
+      const label = isSemgrepFallback ? 'Semgrep (review-gate 兼容)' : 'OpenGrep (review-gate L1)';
+      console.log(`  ✅ \x1b[32m${label.padEnd(28)}\x1b[0m: ${verOut}${note}`);
+    } else {
+      console.log(`  ⚠️  \x1b[33m${'OpenGrep (review-gate L1)'.padEnd(28)}\x1b[0m: 未安装 (可选，仅 review-gate 扫描需要)`);
+    }
+  } catch (err) {
+    console.log(`  ⚠️  \x1b[33m${'OpenGrep (review-gate L1)'.padEnd(28)}\x1b[0m: 检测异常 (${err.message})`);
+  }
+
+  // 4. Python 3 (review-gate L2 fallback & test tooling)
+  try {
+    const pyOut = runCmd('python3 --version');
+    console.log(`  ✅ \x1b[32m${'Python 3 (L2 fallback)'.padEnd(28)}\x1b[0m: ${pyOut}`);
+  } catch {
+    console.log(`  ⚠️  \x1b[33m${'Python 3 (L2 fallback)'.padEnd(28)}\x1b[0m: 未检测到 python3 (可选)`);
+  }
+
+  // 5. 核心 Unit CLI 完备性检查
+  console.log('\n  [Toolkit 内部 CLI 完备性]');
+  const internalCli = [
+    { name: 'baton (handoffs)', path: path.join(UNITS_DIR, 'handoffs', 'handoff.mjs'), verArg: '--version' },
+    { name: 'lab-orphan (orphan)', path: path.join(UNITS_DIR, 'orphan', 'bin', 'lab-orphan.mjs'), verArg: '--version' },
+    { name: 'spec-guard (spec-guard)', path: path.join(UNITS_DIR, 'spec-guard', 'bin', 'spec-guard.mjs'), verArg: '--version' },
+    { name: 'baton-worktree (worktree)', path: path.join(UNITS_DIR, 'worktree', 'worktree.mjs'), verArg: '--help' },
+    { name: 'review-gate scan.sh', path: path.join(UNITS_DIR, 'review-gate', 'templates', 'scan.sh') },
+  ];
+  for (const item of internalCli) {
+    if (!fs.existsSync(item.path)) {
+      console.log(`  ❌ \x1b[31m${item.name.padEnd(28)}\x1b[0m: 文件缺失 (${item.path})`);
+      continue;
+    }
+    if (item.verArg) {
+      try {
+        const out = execSync(`node "${item.path}" ${item.verArg}`, {
+          stdio: ['pipe', 'pipe', 'ignore'],
+          timeout: 5000,
+        }).toString().trim().split('\n')[0];
+        console.log(`  ✅ \x1b[32m${item.name.padEnd(28)}\x1b[0m: ${out}`);
+      } catch {
+        console.log(`  ✅ \x1b[32m${item.name.padEnd(28)}\x1b[0m: 就绪 (${item.path})`);
+      }
+    } else {
+      console.log(`  ✅ \x1b[32m${item.name.padEnd(28)}\x1b[0m: 就绪 (${item.path})`);
     }
   }
   console.log();
@@ -637,6 +776,12 @@ function forwardToBinary(binPath, subArgs = [], isShell = false) {
 
 // ── 命令行路由 ────────────────────────────────────────────────────────
 switch (command) {
+  case '--version':
+  case '-v':
+  case 'version':
+    console.log(`lab-agent-toolkit v${LAB_VERSION}`);
+    process.exit(0);
+    break;
   case 'list':
   case 'ls':
     listUnits();

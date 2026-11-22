@@ -1,5 +1,9 @@
 # Changelog — review-gate
 
+## v1.2.2 (2026-11-22)
+- **OpenGrep 原生扫描产物补齐结构化引擎元数据**：修复 `scan.sh` 在 OpenGrep 原生扫描路径下输出 JSON 缺少顶层 `engine: "opengrep"` 与 `fallback: false` 字段的问题，实现与降级扫描模式对齐的对称契约。
+- **输出路径健壮性增强**：修复 `$OUT` 参数传入目录（如 `.` 或文件夹）时文件写入异常的问题，自动回退到 `${OUT%/}/review-gate-report.json`。
+
 ## v1.2.1 (2026-11-22)
 - **B-1 [BLOCKER] macOS bash 3.2 兼容自愈**：修复 `scan.sh` 与 `pre-commit` 在 `set -euo pipefail` 下空数组展开（`${NO_SUPPRESS_ARGS[@]}` 与 `${CONFIG_ARGS[@]}`）触发 `unbound variable` 崩溃的问题，统一改用 POSIX/bash 3.2+ 安全语法 `${ARR[@]+"${ARR[@]}"}`。
 - **M-2 降级诚实律产物标记**：Ruff Bandit 本地降级扫描时，将结构化引擎元数据（`engine: fallback-ruff-bandit`、`fallback: true`）直接写入产物 JSON，供下游门禁和流水线可靠判读。
