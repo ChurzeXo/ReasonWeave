@@ -8,6 +8,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_VERSION = (() => {
+  try {
+    const vPath = path.join(SCRIPT_ROOT, 'VERSION.md');
+    if (fs.existsSync(vPath)) {
+      const line = fs.readFileSync(vPath, 'utf8').trim().split('\n')[0];
+      const m = line.match(/v?(\d+\.\d+\.\d+)/);
+      if (m) return m[1];
+    }
+  } catch {}
+  return '0.1.0';
+})();
 
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
@@ -274,7 +288,7 @@ function cleanAll(options = {}) {
 
 function showHelp() {
   console.log(`
-Baton Worktree CLI — Agent 物理隔离调度引擎 (units/worktree v0.1.0)
+Baton Worktree CLI — Agent 物理隔离调度引擎 (units/worktree v${WORKTREE_VERSION})
 
 用法:
   baton-worktree allocate <ticket-id> [--base <branch>] [--json]
@@ -305,6 +319,12 @@ const baseIndex = args.indexOf('--base');
 const baseBranch = baseIndex !== -1 ? args[baseIndex + 1] : undefined;
 
 switch (command) {
+  case '--version':
+  case '-v':
+  case 'version':
+    console.log(`baton-worktree CLI · v${WORKTREE_VERSION} (units/worktree)`);
+    process.exit(0);
+    break;
   case 'allocate':
   case 'alloc':
     allocate(args[1], { base: baseBranch, json: isJson });

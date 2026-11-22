@@ -9,6 +9,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const REVIEW_GATE_VERSION = (() => {
+  try {
+    const vPath = path.join(SCRIPT_ROOT, 'VERSION.md');
+    if (fs.existsSync(vPath)) {
+      const line = fs.readFileSync(vPath, 'utf8').trim().split('\n')[0];
+      const m = line.match(/v?(\d+\.\d+\.\d+)/);
+      if (m) return m[1];
+    }
+  } catch {}
+  return '1.2.2';
+})();
 
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
@@ -284,7 +298,7 @@ ${commands.join('\n')}
 
 function showHelp() {
   console.log(`
-Baton Audit Runner CLI — 双盲审计自动化运行器 (units/review-gate v1.1.0)
+Baton Audit Runner CLI — 双盲审计自动化运行器 (units/review-gate v${REVIEW_GATE_VERSION})
 
 用法:
   baton-audit-runner run <ticket-id> [选项]
@@ -312,6 +326,12 @@ const wtIdx = args.indexOf('--worktree');
 const explicitWt = wtIdx !== -1 ? args[wtIdx + 1] : undefined;
 
 switch (command) {
+  case '--version':
+  case '-v':
+  case 'version':
+    console.log(`baton-audit-runner CLI · v${REVIEW_GATE_VERSION} (units/review-gate)`);
+    process.exit(0);
+    break;
   case 'run':
   case 'check':
     runAudit(args[1], {
