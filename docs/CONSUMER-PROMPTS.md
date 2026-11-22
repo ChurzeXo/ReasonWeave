@@ -13,8 +13,8 @@
 5. [场景四：轻量项目仅接入纪律机件（不做 ZSpec 宏观重构）](#场景四轻量项目仅接入纪律机件不做-zspec-宏观重构)
 6. [场景五：已接入消费方升级到最新版能力库](#场景五已接入消费方升级到最新版能力库)
 7. [场景六：消费方接入与升级 spec-guard v2.0 机器信任根与接线守卫](#场景六消费方接入与升级-spec-guard-v20-机器信任根与接线守卫)
-8. [场景七：消费方接入或升级 orphan v1.3.0 反假接线三层治理与 AGENTS/GEMINI 极简路由](#场景七消费方接入或升级-orphan-v130-反假接线三层治理与-agentsgemini-极简路由)
-9. [场景八：消费方基于 Lab v1.3.0 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）](#场景八消费方基于-lab-v130-新架构全面排查整改与优化vibe-security-穿透防线--依赖瘦身--sddreppit-落地)
+8. [场景七：消费方接入或升级 orphan v1.4.2 反假接线三层治理与 AGENTS/GEMINI 极简路由](#场景七消费方接入或升级-orphan-v142-反假接线三层治理与-agentsgemini-极简路由)
+9. [场景八：消费方基于 Lab v1.3.1 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）](#场景八消费方基于-lab-v131-新架构全面排查整改与优化vibe-security-穿透防线--依赖瘦身--sddreppit-落地)
 
 ---
 
@@ -34,7 +34,7 @@ cd ~/Documents/lab && npm link
 baton install && baton link --check && lab doctor && baton check
 ```
 
-完整升级工序与坑位见 [INSTALL.md §4](../INSTALL.md)，逐场景可执行提示词见下方**场景五**；若需在已有真实代码的下游业务仓接入 `orphan v1.3.0` 的 `AGENTS.md`/`GEMINI.md` 本地路径映射（由消费方 Agent 在业务仓创建，全局安装或空仓不执行），见**场景七**。
+完整升级工序与坑位见 [INSTALL.md §4](../INSTALL.md)，逐场景可执行提示词见下方**场景五**；若需在已有真实代码的下游业务仓接入 `orphan v1.4.2` 的 `AGENTS.md`/`GEMINI.md` 本地路径映射（由消费方 Agent 在业务仓创建，全局安装或空仓不执行），见**场景七**。
 
 ---
 
@@ -140,7 +140,7 @@ baton install && baton link --check && lab doctor && baton check
   - [ ] `backlog`（待办捕获，`docs/backlogs/`）
   - [ ] `preflight`（不变量探针与提交门禁）
   - [ ] `review-gate`（代码静态扫描与评审防线）
-  - [ ] `handoffs`（工作流交接中枢，`baton` / `handoff` 命令，契约 v2.36.0）
+  - [ ] `handoffs`（工作流交接中枢，`baton` / `handoff` 命令，契约 v2.38.1）
   - [ ] `worktree`（物理工作树隔离，`baton-worktree`）
   - [ ] `orphan`（死代码与孤儿资产清道夫，`lab orphan`）
   - [ ] `spec-guard` / `drift-gate`（架构规约与漂移守卫）
@@ -177,7 +177,7 @@ baton install && baton link --check && lab doctor && baton check
    - 待办捕获：按 `$(lab path backlog)/README.md` 将待办记录至 `docs/backlogs/`。
    - 提交门禁：按 `$(lab path preflight)/README.md` 将 `$(lab path preflight)/templates/preflight.sh` 接入为提交前检查。
    - 代码质量：按 `$(lab path review-gate)/README.md` 接入本地扫描。
-   - 任务交接：运行 `baton install` 注入标准接入桩（契约 v2.36.0，严格会话ID统一，严禁跨会话处理工单）。
+   - 任务交接：运行 `baton install` 注入标准接入桩（契约 v2.38.1，严格会话ID统一，严禁跨会话处理工单）。
 3. **铁律**：严禁复制规则全文，只保留动态指针。接入后运行一次 `git status` 汇报。
 ```
 
@@ -185,7 +185,7 @@ baton install && baton link --check && lab doctor && baton check
 
 ### 场景五：已接入消费方升级到最新版能力库
 
-> 📋 **适用场景**：本项目已接入 lab 能力库，lab 仓刚发布功能更新（当前 **Agent Baton v2.36.0 / 接入桩 sha `4c82924b`**，包含 **全局统一会话ID与一单到底 (`id === conversation_id`)、严禁跨会话处理工单硬门禁 (`CROSS_SESSION_MUTATION_BLOCKED`)、入站极简裁决提示词、出站 Round 轮次单一事实源与独立计算、会话亲和性与并发监听、ADR-0010 会话环境身份锁与防跨角色漂移、密码学审计凭据与 HMAC-SHA256 签章防伪、出站防注入提示词三段式、并发异步派发 `forward --async`、`--auto-nonce` 自动绑定**，以及新增 `orphan`、`spec-guard`、`worktree` 单元与多个 CLI）。
+> 📋 **适用场景**：本项目已接入 lab 能力库，lab 仓刚发布功能更新（当前 **Agent Baton v2.38.1 / 接入桩 sha `efc4fb85`**，包含 **全局统一会话ID与一单到底 (`id === conversation_id`)、严禁跨会话处理工单硬门禁 (`CROSS_SESSION_MUTATION_BLOCKED`)、入站极简裁决提示词、出站 Round 轮次单一事实源与独立计算、会话亲和性与并发监听、ADR-0010 会话环境身份锁与防跨角色漂移、密码学审计凭据与 HMAC-SHA256 签章防伪、出站防注入提示词三段式、并发异步派发 `forward --async`、`--auto-nonce` 自动绑定**，以及新增 `orphan`、`spec-guard`、`worktree` 单元、全 CLI 物理契约对齐 (ADR-0013) 与多个 CLI）。
 > 📋 **使用方式**：复制下方整块 Markdown，发给**本项目**的 AI Agent 会话；每个消费方仓各发一次。上游细节见 [INSTALL.md §4](../INSTALL.md)。
 
 ````markdown
@@ -193,8 +193,8 @@ baton install && baton link --check && lab doctor && baton check
 
 背景：本机是「单一 lab 仓 + 软链 / 动态指针」模型，没有 submodule、npm 版本依赖或 commit 钉值，因此不需要逐仓 bump 版本号。但有两样东西不会自动刷新，必须显式处理：
 ① 全局 CLI 的 bin shim（新增 lab-orphan / spec-guard / drift-gate / agent-baton 等）只在 npm link 时生成；
-② 各载体（AGENTS.md / CLAUDE.md / GEMINI.md / README.md 及全局载体）里的 Baton 接入桩正文已变更至最新契约 v2.36.0，旧桩会被判「桩版本漂移」并 exit 1。
-本次升级重点落地了：全局统一会话ID与一单到底（`id === conversation_id`，消除多端混淆）、防跨会话处理工单硬门禁（`CROSS_SESSION_MUTATION_BLOCKED`）、入站极简裁决提示词、出站 Round 轮次单一事实源与独立计算、会话亲和性与基于 `Atomics.wait` 的低耗并发监听、ADR-0010 会话与环境身份锁（Fail-Closed 防跨角色漂移）、密码学审计私钥凭据与 HMAC-SHA256 签章防伪（防共享磁盘明文 Nonce 冒用）、出站防注入三段式提示词、并发异步转递（--async）与多工单聚合监听。
+② 各载体（AGENTS.md / CLAUDE.md / GEMINI.md / README.md 及全局载体）里的 Baton 接入桩正文已变更至最新契约 v2.38.1，旧桩会被判「桩版本漂移」并 exit 1。
+本次升级重点落地了：全局统一会话ID与一单到底（`id === conversation_id`，消除多端混淆）、防跨会话处理工单硬门禁（`CROSS_SESSION_MUTATION_BLOCKED`）、入站极简裁决提示词、出站 Round 轮次单一事实源与独立计算、会话亲和性与基于 `Atomics.wait` 的低耗并发监听、ADR-0010 会话与环境身份锁（Fail-Closed 防跨角色漂移）、密码学审计私钥凭据与 HMAC-SHA256 签章防伪（防共享磁盘明文 Nonce 冒用）、出站防注入三段式提示词、并发异步转递（--async）与多工单聚合监听、ADR-0013 全 CLI 物理契约对齐与动态版本 SSOT。
 
 ### 执行工序（按顺序，全部在终端真实运行，不要只静态读码）
 1. 定位并更新 lab 仓：
@@ -205,7 +205,7 @@ baton install && baton link --check && lab doctor && baton check
 3. 在**本项目根目录**刷新接入桩并自检：
    ```bash
    baton install             # 幂等：刷新项目载体 + 全局载体的接入桩（需固定中文桩可加 --lang zh）
-   baton link --check        # 必须 RC=0，显示「桩版本 == 引擎版本 (v2.36.0)」
+   baton link --check        # 必须 RC=0，显示「桩版本 == 引擎版本 (v2.38.1)」
    baton check               # 本仓交接 / 回执合规自检；历史存量工单告警不阻断当前工单
    ```
 4. 核对新能力可达（只读）：
@@ -214,7 +214,7 @@ baton install && baton link --check && lab doctor && baton check
    for u in handoffs orphan spec-guard worktree; do test -f "$(lab path $u)/README.md" || echo "MISSING: $u"; done
    which lab-orphan spec-guard drift-gate 2>/dev/null || where.exe lab-orphan spec-guard drift-gate
    ```
-5. 检查本项目 AGENTS.md / CLAUDE.md / README.md 的接入桩：版本串为 v2.36.0 且每个文件只有一份桩（无重复块）。若某载体是手写指针（缺 `<!-- handoff-stub:v2.1 begin -->` 标记）导致 install 跳过，请用 `$(lab path handoffs)/README.md` 的标准桩替换该段后重跑 `baton install`。另外：`baton doctor` 会用正则抓载体里第一个 `契约 v<版本>` 做比对，正文若残留手写的旧版本号请删掉（版本串只留在标准桩内），否则升级后仍误报漂移。
+5. 检查本项目 AGENTS.md / CLAUDE.md / README.md 的接入桩：版本串为 v2.38.1 且每个文件只有一份桩（无重复块）。若某载体是手写指针（缺 `<!-- handoff-stub:v2.1 begin -->` 标记）导致 install 跳过，请用 `$(lab path handoffs)/README.md` 的标准桩替换该段后重跑 `baton install`。另外：`baton doctor` 会用正则抓载体里第一个 `契约 v<版本>` 做比对，正文若残留手写的旧版本号请删掉（版本串只留在标准桩内），否则升级后仍误报漂移。
 
 ### 禁止事项（踩过的坑）
 - 不要用 lab 源模板覆盖本项目定制的 `review-gate/scan.sh`、`scripts/preflight.sh`、`.githooks/` 等副本（多为项目校准值）。
@@ -223,10 +223,10 @@ baton install && baton link --check && lab doctor && baton check
 - 不要修改 lab 仓内任何文件；本项目之外的仓库一律不动。
 
 ### 验收判据（全部实测满足才算完成）
-- [ ] `baton link --check` / `baton doctor` RC=0，输出「桩版本 == 引擎版本 (v2.36.0)」
+- [ ] `baton link --check` / `baton doctor` RC=0，输出「桩版本 == 引擎版本 (v2.38.1)」
 - [ ] `lab doctor` RC=0；`baton check` RC=0
 - [ ] `lab path orphan`、`lab path spec-guard` 可解析且对应 README.md 存在
-- [ ] 各载体接入桩唯一、版本串为 v2.36.0
+- [ ] 各载体接入桩唯一、版本串为 v2.38.1
 - [ ] `git status --porcelain` 只有接入桩刷新带来的预期改动，无意外文件
 
 ### 汇报
@@ -246,7 +246,7 @@ baton install && baton link --check && lab doctor && baton check
 请将本项目已接入的架构规约与漂移守卫升级至 spec-guard v2.0，并对全仓 ADR 与生产代码执行实测对账与治愈。
 
 ### 背景与升级目标
-上位能力库 `lab-agent-toolkit` (units/spec-guard) 已正式发布 v2.0.0，重点落地三大工业级守卫机件：
+上位能力库 `lab-agent-toolkit` (units/spec-guard) 已正式发布 v2.2.1，重点落地三大工业级守卫机件：
 1. **实测数据机器信任根（ADR-064 对账）**：任何包含量化性能指标（ms, s, MB, FPS, %, Tokens, P95, INT8 等）的 ADR，严禁纯文本自述，必须显式引用 `evidence_ref: evidence/*.json` 与不可伪造的机器签名摘要（`digest: sha256:...`），容差恒等于 0%；
 2. **生产代码物理接线探针（No-Cheat 铁律）**：反查 ADR 决策在生产代码（排除测试目录）中的真实存活性，严厉拦截 `🔒Frozen` 但生产代码零符号命中的孤儿决策（ORPHAN_DECISION）；
 3. **全景三元热力表**：一键输出「断言 (Assertion) ↔ 证据 (Evidence) ↔ 接线 (Wiring)」三元闭环。
@@ -259,7 +259,7 @@ baton install && baton link --check && lab doctor && baton check
 - 确认全局已挂载最新能力库：
   ```bash
   which spec-guard || (cd ~/Documents/lab && npm link)
-  spec-guard --help  # 确认输出 (v2.0.0)
+  spec-guard --help  # 确认输出 (v2.2.1)
   ```
 
 #### 2. 全仓三元体检与基线摸底
@@ -322,14 +322,14 @@ baton install && baton link --check && lab doctor && baton check
 
 ---
 
-### 场景七：消费方接入或升级 orphan v1.3.0 反假接线三层治理与 AGENTS/GEMINI 极简路由
+### 场景七：消费方接入或升级 orphan v1.4.2 反假接线三层治理与 AGENTS/GEMINI 极简路由
 
-> 📋 **适用场景**：**已有真实业务代码**的下游消费方（或新项目搭完首个真实模块与运行时后），接入或升级 `orphan v1.3.0`（L1/L2/L3 三层正交反假接线规范、Tier 1/2 分级自查、Agent 自主呈批开单协议与 `AGENTS.md`/`GEMINI.md` 极简接入模板）。  
+> 📋 **适用场景**：**已有真实业务代码**的下游消费方（或新项目搭完首个真实模块与运行时后），接入或升级 `orphan v1.4.2`（L1/L2/L3 三层正交反假接线规范、Tier 1/2 分级自查、Agent 自主呈批开单协议与 `AGENTS.md`/`GEMINI.md` 极简接入模板）。  
 > ⚠️ **边界提示**：`lab-agent-toolkit` 自身及 0 代码空目录**不执行**本场景（只需在 `lab` 仓执行 `git pull --ff-only && npm link && lab doctor` 完成全局安装即可，严禁在空仓硬填 `<...>` 占位符）。  
 > 📋 **使用方式**：复制以下内容发送给下游业务项目的 AI Agent 会话：
 
 ````markdown
-请同步 `lab-agent-toolkit` 最新 `orphan v1.3.0` 反假接线规范与极简接入模板，完成本项目的接线治理对齐。
+请同步 `lab-agent-toolkit` 最新 `orphan v1.4.2` 反假接线规范与极简接入模板，完成本项目的接线治理对齐。
 
 ### 执行工序（SSOT 指针制，严禁复制长篇正文）
 1. **拉取与核验指针**：
@@ -350,19 +350,20 @@ baton install && baton link --check && lab doctor && baton check
 
 ---
 
-### 场景八：消费方基于 Lab v1.3.0 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）
+### 场景八：消费方基于 Lab v1.3.1 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）
 
-> 📋 **适用场景**：消费方项目（如 Tappy, iggle, Swoop, Prospero 等）需按 `lab-agent-toolkit` v1.3.0 新架构进行深度的**安全穿透排查（阻断 AI 免检注释掩盖漏洞）**、**依赖清单可达性瘦身（清理死依赖与孤儿包）**、**硬编码敏感凭据扫描**，以及**规约驱动开发 (SDD) 与 RePPIT 五步闭环**的工程实践落地。  
+> 📋 **适用场景**：消费方项目（如 Tappy, iggle, Swoop, Prospero 等）需按 `lab-agent-toolkit` v1.3.1 新架构进行深度的**安全穿透排查（阻断 AI 免检注释掩盖漏洞）**、**依赖清单可达性瘦身（清理死依赖与孤儿包）**、**硬编码敏感凭据扫描**，以及**规约驱动开发 (SDD) 与 RePPIT 五步闭环**的工程实践落地。  
 > 📋 **使用方式**：复制下方整块 Markdown 发送给**消费方项目**的 AI Agent 会话（如 WorkBuddy、Claude Code、Cursor 等）。
 
 ````markdown
-请根据上位工程能力库 `lab-agent-toolkit` v1.3.0 新架构规范，对本项目进行一次全面的架构排查、安全穿透体检、依赖可达性瘦身与规约治理对齐。
+请根据上位工程能力库 `lab-agent-toolkit` v1.3.1 新架构规范，对本项目进行一次全面的架构排查、安全穿透体检、依赖可达性瘦身与规约治理对齐。
 
-### 背景与新架构核心能力（ADR-0011 / ADR-0012 / Baton v2.38.1）
-1. **Vibe Security 穿透扫描（units/review-gate v1.2.1）**：禁止通过 `# nosem` / `# nosemgrep` 等内联忽略注释掩盖 AI 或历史代码引入的高危漏洞；提供无 OpenGrep 时的诚实 Bandit 兜底（`engine: fallback-ruff-bandit`）。
-2. **依赖可达性深度瘦身（units/orphan v1.4.1）**：深度静态分析 `requirements.txt` / `package.json` 中的声明包在源码中的真实可达性，精准定位并清理未引用的孤儿包与死依赖。
-3. **零调用假凭证与高危硬编码扫描（units/orphan v1.4.1）**：一键识别项目中遗留的 API Token、AWS 密钥、私钥等假凭证或硬编码泄露，推动凭据环境变量化。
-4. **规约驱动开发 (SDD) 与 RePPIT 五步工程闭环（specs/）**：
+### 背景与新架构核心能力（ADR-0011 / ADR-0012 / ADR-0013 / Baton v2.38.1）
+1. **Vibe Security 穿透扫描（units/review-gate v1.2.2）**：禁止通过 `# nosem` / `# nosemgrep` 等内联忽略注释掩盖 AI 或历史代码引入的高危漏洞；提供无 OpenGrep 时的诚实 Bandit 兜底（`engine: fallback-ruff-bandit`），对齐 ADR-0013 顶层 `engine`/`fallback`/`version` 同构元数据。
+2. **依赖可达性深度瘦身（units/orphan v1.4.2）**：深度静态分析 `requirements.txt` / `package.json` 中的声明包在源码中的真实可达性，精准定位并清理未引用的孤儿包与死依赖，ANSI banner 干净流输出。
+3. **零调用假凭证与高危硬编码扫描（units/orphan v1.4.2）**：一键识别项目中遗留的 API Token、AWS 密钥、私钥等假凭证或硬编码泄露，推动凭据环境变量化。
+4. **全 CLI 物理契约对齐与沙箱隔离（ADR-0013 / Backlog-14）**：全 CLI 支持 `--version` / `-v` / `--help` / `-h` 并以 0 退出，单测强制隔离于 `os.tmpdir()` 临时仓，杜绝污染宿主真实环境与环境寄生。
+5. **规约驱动开发 (SDD) 与 RePPIT 五步工程闭环（specs/）**：
    - 确立 **Tier 1 (轻量 <= 50 行，自测+接线证据)** 与 **Tier 2 (核心/跨端 > 50 行，Spec Kit + ADR + 双盲审计)** 两级分级守卫；
    - 落地 **Rule 8 (先红后绿，Exploit-First Proof)** 缺陷修复自证；
    - 落地 **只读工具 Profile 纪律**（`--profile readonly` 物理阻断调研与审计期的非证据代码修改）。

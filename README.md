@@ -47,8 +47,8 @@ npm link
 | 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、Rule 8 分级 SDD 验收与先红后绿负向测试证明、`--profile readonly` 生产源码写保护物理硬门禁、会话身份锁、密码学审计凭据防伪、防注入出站提示词、一单到底、严禁跨会话处理工单、静默管道与事件唤醒（Baton v2.38.1） |
 | 🌳 `baton-worktree` | 基于 Git Worktree 的多 Agent 物理目录隔离调度引擎 |
 | 🛡️ `baton-audit-runner` | 双盲审计自动化运行器（无上下文独立重跑测试，Exit Code 真实裁决） |
-| 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫、反未接线与反假接线三层治理门禁（S1–S3 求解器、L1/L2/L3 正交解耦、新增 `check-deps [--strict]` 孤儿依赖求解器与 `scan-secrets [--strict]` 零调用假凭证探针，v1.4.1） |
-| 🛡️ `spec-guard` / `drift-gate` | 架构规约与物理接线守卫（P3' 三元映射对账、三维热力表、ADR 机器信任根验签、约定阈值解耦，v2.2.0） |
+| 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫、反未接线与反假接线三层治理门禁（S1–S3 求解器、L1/L2/L3 正交解耦、新增 `check-deps [--strict]` 孤儿依赖求解器与 `scan-secrets [--strict]` 零调用假凭证探针，v1.4.2） |
+| 🛡️ `spec-guard` / `drift-gate` | 架构规约与物理接线守卫（P3' 三元映射对账、三维热力表、ADR 机器信任根验签、约定阈值解耦，v2.2.1） |
 | 📐 `adr-init` | 架构决策记录 (ADR) 快速引导初始化 |
 
 ---
@@ -88,9 +88,10 @@ npm test          # 可选：全量回归
 
 ### 1. `lab` — 架构与路径总管
 ```bash
+lab --version               # 查看能力库版本 (ADR-0013)
 lab list                    # 列出所有可用的工程单元 (Units)
 lab path [unit]             # 动态获取 Unit 绝对路径 (如: lab path handoffs)
-lab doctor                  # 本地前置环境健康自检
+lab doctor                  # 本地前置环境健康自检（支持物理文件与 PATH 状态区分）
 lab sync-consumers [dir]    # 一键全自动批量同步与体检所有下游消费仓（自动 npm link、刷新接入桩、架构配置就绪与合规自检）
 lab zspec init "<项目名>"    # 为新项目一键初始化 ZSpec (AEF v1.0) 工业架构
 lab zspec add-unit <端名>   # 为多端项目添加工程单元 (如: ios, android, web)
@@ -98,7 +99,7 @@ lab zspec guide             # 查看面向 AI Agent 的 ZSpec 实施指南
 lab migrate [项目路径]      # 将老项目中硬编码的路径一键平滑升级
 ```
 
-### 2. `baton` / `handoff` — 任务交割与注意力节流引擎 (v2.36.0)
+### 2. `baton` / `handoff` — 任务交割与注意力节流引擎 (v2.38.1)
 > **跨仓/同仓 Agent 间任务交割像调 API 一样无损直达**  
 > 拒绝人肉传话与上下文衰减。一条命令穿透仓库边界，接口与协作契约严密对齐，独立窗口双盲审计，事件驱动无感闭环。
 
@@ -114,7 +115,7 @@ baton deliver <ID> --as <lane>      # 执行方终态交付并翻 delivered（�
 baton reject <ID> -n "<理由>" --as <lane>   # 实测未过 / 受阻：直接退回整改（轮次唯一自增点）
 baton accept <ID> -n "<结论>" --as <lane>   # 发起方独立实测后闭环（close 为同义别名）
 baton check [ID] [--fix]            # 闭环状态、回执证据与 needs_change 漂移核验
-baton install / baton doctor        # 刷新接入桩 / 校验桩版本 == 引擎版本 (v2.36.0)
+baton install / baton doctor        # 刷新接入桩 / 校验桩版本 == 引擎版本 (v2.38.1)
 ```
 
 ### 3. `baton-worktree` — 物理隔离调度引擎
@@ -141,11 +142,11 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 | 模块 (Unit) | 路径 | 核心作用 |
 |---|---|---|
 | **adr** | [`units/adr/`](units/adr/) | 架构决策记录（ADR），三档强度 light / standard / frozen，跨会话架构记忆 |
-| **spec-guard** | [`units/spec-guard/`](units/spec-guard/) | 全局架构漂移与规约守卫（v2.2.0），ADR 机器信任根验签、物理接线探针、P3' 三元映射对账（三维热力表）、自定义发现规则与 overlay、约定阈值语义解耦、零覆盖假绿防卫、暂存区增量感知门禁（<0.05s） |
-| **orphan** | [`units/orphan/`](units/orphan/) | 死代码与孤儿资产清道夫、反假接线三层正交治理（v1.4.1，ADR-0009 / ADR-0011），只读 Git HEAD + S1–S3 求解器 + L1/L2/L3 规范、`check-deps [--strict]` 孤儿依赖分析、`scan-secrets [--strict]` 假凭证探针 |
+| **spec-guard** | [`units/spec-guard/`](units/spec-guard/) | 全局架构漂移与规约守卫（v2.2.1），ADR 机器信任根验签、物理接线探针、P3' 三元映射对账（三维热力表）、自定义发现规则与 overlay、约定阈值语义解耦、零覆盖假绿防卫、暂存区增量感知门禁（<0.05s） |
+| **orphan** | [`units/orphan/`](units/orphan/) | 死代码与孤儿资产清道夫、反假接线三层正交治理（v1.4.2，ADR-0009 / ADR-0011），只读 Git HEAD + S1–S3 求解器 + L1/L2/L3 规范、`check-deps [--strict]` 孤儿依赖分析、`scan-secrets [--strict]` 假凭证探针 |
 | **backlog** | [`units/backlog/`](units/backlog/) | 待办捕获：越界 / 待拍板 / 未来功能，一任务一文件，不打断当前工作流 |
 | **preflight** | [`units/preflight/`](units/preflight/) | 仓库不变量探针 + Git 提交门禁（v1.1.0），A1~A5 探针（含配置化单一事实源与派生状态防漂移对账），防止“做完才发现还有一件事” |
-| **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`)，v1.2.1 新增 `--no-suppress` 穿透扫描、Ruff Bandit 诚实降级结构化 JSON 标记与 macOS bash 3.2 兼容自愈 |
+| **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`)，v1.2.2 新增 `--no-suppress` 穿透扫描、Ruff Bandit 诚实降级结构化 JSON 标记与 macOS bash 3.2 兼容自愈、顶层同构 engine 元数据 |
 | **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton v2.38.1），统一会话ID、防跨会话硬门禁、会话身份锁、Rule 8 分级 SDD 验收与负向测试先行证明、`--profile readonly` 生产源码写保护物理硬门禁、密码学审计凭据签章、出站防注入提示词、无条件下车、五态状态机与事件唤醒 |
 | **worktree** | [`units/worktree/`](units/worktree/) | 基于 Git Worktree 的物理目录隔离调度引擎，为多 Agent 并发分配独立沙盒并智能共享依赖缓存 |
 | **specs** | [`specs/`](specs/) | Spec Kit 活文档模板全集（`specs/templates/` 01-research 到 05-evidence），赋能 RePPIT 5 步规约驱动开发闭环 (ADR-0012) |
