@@ -60,7 +60,7 @@ npm link
 | CLI | 作用 |
 |---|---|
 | `lab` | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 |
-| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、统一会话ID、防跨会话硬门禁、会话锁、密码学防伪回执、事件驱动唤醒（v2.37.0） |
+| `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、统一会话ID、防跨会话硬门禁、会话锁、密码学防伪回执、事件驱动唤醒（v2.38.1） |
 | `baton-worktree` | 为工单分配 / 回收独立物理工作树 |
 | `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执 |
 | `lab-orphan` | 死代码与孤儿资产清道夫（也可 `lab orphan <cmd>`） |

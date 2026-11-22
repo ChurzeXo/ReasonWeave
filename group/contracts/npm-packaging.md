@@ -10,7 +10,7 @@
 | 命令 | 对应执行入口 | 功能角色 |
 |---|---|---|
 | `lab` | `bin/lab.mjs` | 能力库总管命令（`lab init` 全套一键初始化, `lab list`, `lab path <unit>`, `lab doctor`, `lab sync-consumers`） |
-| `baton` / `handoff` / `agent-baton` | `units/handoffs/handoff.mjs` | 工作流交接与回执闭环引擎（v2.37.0，身份防御、会话锁与密码学防伪凭据） |
+| `baton` / `handoff` / `agent-baton` | `units/handoffs/handoff.mjs` | 工作流交接与回执闭环引擎（v2.38.1，身份防御、会话锁与密码学防伪凭据） |
 | `baton-worktree` | `units/worktree/worktree.mjs` | 多 Agent 物理工作树隔离调度引擎 |
 | `baton-audit-runner` | `units/review-gate/clean-runner.mjs` | 双盲审计自动化独立重跑器 |
 | `lab-orphan` | `units/orphan/bin/lab-orphan.mjs` | 全局死代码与孤儿资产清道夫、反未接线联邦门禁 |

@@ -24,7 +24,17 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATON_VERSION = '2.37.0';
+const BATON_VERSION = (() => {
+  try {
+    const vPath = path.join(SCRIPT_ROOT, 'VERSION.md');
+    if (fs.existsSync(vPath)) {
+      const line = fs.readFileSync(vPath, 'utf8').trim().split('\n')[0];
+      const m = line.match(/v?(\d+\.\d+\.\d+)/);
+      if (m) return m[1];
+    }
+  } catch {}
+  return '2.38.1';
+})();
 
 // ── Workspace Provider 扩展驱动挂载（微内核解耦 · ADR-0003）──────────────────
 function resolveWorkspaceDriver() {
@@ -4124,6 +4134,17 @@ function cmdLink(args) {
   if (checkOnly) {
     let ok = true;
     console.log(`🔍 [Baton 诊断] 引擎版本: v${BATON_VERSION}`);
+    const vPath = path.join(SCRIPT_ROOT, 'VERSION.md');
+    if (fs.existsSync(vPath)) {
+      const vContent = fs.readFileSync(vPath, 'utf8').trim().split('\n')[0];
+      const vm = vContent.match(/v?(\d+\.\d+\.\d+)/);
+      if (vm && vm[1] !== BATON_VERSION) {
+        console.error(`❌ [事实源漂移] VERSION.md (v${vm[1]}) ≠ 引擎版本 (v${BATON_VERSION})！`);
+        ok = false;
+      } else if (vm) {
+        console.log(`✅ [事实源对账] VERSION.md (v${vm[1]}) == 引擎版本 (v${BATON_VERSION})`);
+      }
+    }
     for (const binName of ['baton', 'handoff']) {
       const p = path.join(dir, binName);
       const pCmd = path.join(dir, `${binName}.cmd`);

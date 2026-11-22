@@ -621,7 +621,7 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.37\.0\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.38\.1\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
@@ -766,31 +766,50 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.37.0，无 v2.20.0 漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.38.1，无旧版本漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.37.0'), '应当输出 v2.37.0');
+    assert.ok(verRes.stdout.includes('v2.38.1'), '应当输出 v2.38.1');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
+    assert.ok(!verRes.stdout.includes('v2.37.0'), '严禁残留旧版本 v2.37.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.37.0'), '-v 应当输出 v2.37.0');
+    assert.ok(vRes.stdout.includes('v2.38.1'), '-v 应当输出 v2.38.1');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.37.0'), 'version 应当输出 v2.37.0');
+    assert.ok(versionRes.stdout.includes('v2.38.1'), 'version 应当输出 v2.38.1');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.37.0'), '英文帮助中必须展示 v2.37.0');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.38.1'), '英文帮助中必须展示 v2.38.1');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
     assert.ok(enHelpRes.stdout.includes('baton lane'), '英文帮助应包含 lane 命令');
+  });
+
+  it('20b. SSOT 单一事实源对账：BATON_VERSION 必须严格等于 units/handoffs/VERSION.md 首行版本号，且 link --check 包含事实源对账', () => {
+    const vPath = path.resolve('units/handoffs/VERSION.md');
+    assert.ok(fs.existsSync(vPath), 'VERSION.md 必须存在');
+    const firstLine = fs.readFileSync(vPath, 'utf8').trim().split('\n')[0];
+    const match = firstLine.match(/v?(\d+\.\d+\.\d+)/);
+    assert.ok(match, 'VERSION.md 必须包含语义化版本号');
+    const expectedVer = match[1];
+
+    const tmpDir = createTestRepo();
+    const verRes = runBaton(tmpDir, '--version');
+    assert.equal(verRes.status, 0);
+    assert.ok(verRes.stdout.includes(`v${expectedVer}`), `CLI --version 必须包含 VERSION.md 版本 v${expectedVer}`);
+
+    const checkRes = runBaton(tmpDir, 'link --check');
+    assert.equal(checkRes.status, 0);
+    assert.ok(checkRes.stdout.includes(`VERSION.md (v${expectedVer}) == 引擎版本 (v${expectedVer})`), 'link --check 必须输出事实源对账通过信息');
   });
 
   it('21. CLI 可达性门禁韧性（baton 主命令正常但 handoff 别名指向外部目录时降级为 warning，不阻断 check 收尾）', () => {
