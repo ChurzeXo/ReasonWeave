@@ -10,7 +10,7 @@
 > 1. **`tool_profile: readonly` 生产源码写保护拦截**：
 >    - 在 `cmdReceipt` / `cmdDeliver` 与 `cmdCheck` 中实现硬约束：工单声明 `tool_profile: readonly` 时，回执中的 `evidence_paths` 严禁包含生产源码改动（仅允许 `.handoffs/`、`specs/`、`/tmp/` 或 `.log`/`.json`/`.txt`/`.md` 只读证据），若有违规物理拦截 exit 1；
 >    - 在 `baton show` 中显式标明 `(只读探查：严格禁止修改生产源码)`，并在出站提示词卡片注入 `[工具约束]` 声明；
-> 2. **单元测试补齐**：新增 `tests/tool-profile.test.mjs`，覆盖工单创建、展示标注与违规提交拦截。
+> 2. **单元测试补齐与夹具健壮性**：新增 `tests/tool-profile.test.mjs`，覆盖工单创建、展示标注与违规提交拦截；集成 `createTestRepo()` 独立隔离 Hub 夹具与严格 `extractTicketId()` 匹配，彻底杜绝未初始化 Hub 外部工作区单测失败与 `[a-f0-9\-]` 错识 ticket id 的假阳性。
 
 > **v2.38.0 里程碑（2026-11-22 · Tiered SDD 规约驱动与 Tool-Profile 治理 · 负向先红后绿契约 · 闭环 ADR-0012 与 Backlog-13）**：
 > 1. **`RESPONSE-TEMPLATE.md` 新增 Rule 8（分级 SDD 验收与负向测试先行证明）**：
