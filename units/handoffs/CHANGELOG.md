@@ -6,6 +6,20 @@
 
 ---
 
+> **v2.38.1 里程碑（2026-11-22 · Tool-Profile 严格物理门禁与只读约束治理 · 闭环 ADR-0009 反假接线）**：
+> 1. **`tool_profile: readonly` 生产源码写保护拦截**：
+>    - 在 `cmdReceipt` / `cmdDeliver` 与 `cmdCheck` 中实现硬约束：工单声明 `tool_profile: readonly` 时，回执中的 `evidence_paths` 严禁包含生产源码改动（仅允许 `.handoffs/`、`specs/`、`/tmp/` 或 `.log`/`.json`/`.txt`/`.md` 只读证据），若有违规物理拦截 exit 1；
+>    - 在 `baton show` 中显式标明 `(只读探查：严格禁止修改生产源码)`，并在出站提示词卡片注入 `[工具约束]` 声明；
+> 2. **单元测试补齐**：新增 `tests/tool-profile.test.mjs`，覆盖工单创建、展示标注与违规提交拦截。
+
+> **v2.38.0 里程碑（2026-11-22 · Tiered SDD 规约驱动与 Tool-Profile 治理 · 负向先红后绿契约 · 闭环 ADR-0012 与 Backlog-13）**：
+> 1. **`RESPONSE-TEMPLATE.md` 新增 Rule 8（分级 SDD 验收与负向测试先行证明）**：
+>    - 确立 Tier 1（轻量变更）与 Tier 2（关键变更/架构/安全）双层验收判据；
+>    - 在回执模板中将“垂直切片对账（0 孤儿断链）”与“负向先红后绿证据（未修前 Exit != 0，修复后 Exit == 0）”固化为显式 Checklist。
+> 2. **`handoff new` 新增 `--profile <readonly|full>` 支持**：
+>    - 支持在工单元数据中显式声明 `tool_profile: readonly`，供 RePPIT 只读调研阶段受控自验；
+> 3. 闭环 ADR-0012 与 Backlog-13 Phase 0 & Phase 3。
+
 > **v2.37.0 里程碑（2026-11-21 · 跨平台与跨客户端鲁棒性系统级加固 · Windows换行与字面量转义归一 · 回执默认自动交付防挂死 · cmdWait平息自愈交付 · 出站提示词系统剪贴板与物理镜像 · 扩展Cursor与Copilot载体 · 补齐 Test 39）**：动因——用户反馈不同 AI 客户端（WorkBuddy, Claude Code, Cursor, Antigravity, OpenCode 等）在 Mac/Windows 跨平台执行过程中，仍存在不按规范写转递提示词、回执漏传 `--deliver` 导致发起方 `wait` 无限挂死 3600 秒、以及 Windows 终端传参丢失换行符导致内容门禁误杀等痼疾。本版本以“不依赖 Agent 自觉”为设计宗旨，实施系统级鲁棒性根治：
 > 1. **Windows 换行与转义归一化（消解内容门禁误杀）**：
 >    - `receiptBodyProblems(raw)`、`stripFM(content)`、`extractConclusion(raw)` 及 `cmdReceipt`/`cmdDeliver`/`cmdReject` 入口全面引入换行与转义归一化（`norm = String(raw).replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')`）；

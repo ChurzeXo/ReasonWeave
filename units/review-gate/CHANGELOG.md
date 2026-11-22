@@ -1,5 +1,17 @@
 # Changelog — review-gate
 
+## v1.2.1 (2026-11-22)
+- **B-1 [BLOCKER] macOS bash 3.2 兼容自愈**：修复 `scan.sh` 与 `pre-commit` 在 `set -euo pipefail` 下空数组展开（`${NO_SUPPRESS_ARGS[@]}` 与 `${CONFIG_ARGS[@]}`）触发 `unbound variable` 崩溃的问题，统一改用 POSIX/bash 3.2+ 安全语法 `${ARR[@]+"${ARR[@]}"}`。
+- **M-2 降级诚实律产物标记**：Ruff Bandit 本地降级扫描时，将结构化引擎元数据（`engine: fallback-ruff-bandit`、`fallback: true`）直接写入产物 JSON，供下游门禁和流水线可靠判读。
+- **单元测试补齐**：新增 `units/review-gate/tests/scan.test.mjs`，覆盖语法校验、默认模式实跑、穿透模式参数传递以及降级 JSON 结构核验。
+
+## v1.2.0 (2026-11-22)
+- **新增 Anti-Suppression 穿透审计与确定性轻量降级矩阵（ADR-0011 / ADR-0012 落地）**：
+  - `templates/scan.sh` 支持 `--no-suppress` 参数（或 `NO_SUPPRESS=1` 环境变量），传递 `--disable-nosem` 给 OpenGrep，强制忽略源码行内 `# nosem` / `// nosem` 免检注释，穿透追查被掩盖的高危漏洞；
+  - 集成确定性轻量降级矩阵：在 OpenGrep 未安装时平滑降级至 `ruff check --select S`（Flake8-Bandit 规则集）本地扫描，诚实输出 `fallback-ruff-bandit` 引擎标记，严禁虚报实测；
+  - `templates/pre-commit` 门禁适配降级探针，在缺失独立 OpenGrep 环境下依然能对暂存 Python 代码执行安全门禁；
+  - 闭环 Backlog-12 Phase 1 与 ADR-0011 / ADR-0012。
+
 ## v1.1.0 (2026-11-09)
 - **新增双盲审计自动化运行器（Clean Context Runner · `clean-runner.mjs`）**：
   - 核心 CLI 导出：`baton-audit-runner run <ticket-id> [--worktree <path>] [--cmd "<command>"] [--auto-receipt]`；

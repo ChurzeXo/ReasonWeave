@@ -37,10 +37,93 @@ EXCLUDE_RULES=(
 )
 
 # ===== 基线输出路径（项目内约定；pre-commit 默认读同一路径）=====
-OUT="${1:-review-gate/baseline/baseline.json}"
+OUT=""
+POSITIONAL_ARGS=()
+NO_SUPPRESS="${NO_SUPPRESS:-0}"
 
-EXCLUDES=$(printf -- '--exclude-rule %s ' "${EXCLUDE_RULES[@]}")
+for arg in "$@"; do
+  case "$arg" in
+    --no-suppress)
+      NO_SUPPRESS=1
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$arg")
+      ;;
+  esac
+done
+
+OUT="${POSITIONAL_ARGS[0]:-review-gate/baseline/baseline.json}"
+
+# ===== 穿透扫描选项（ADR-0011 / ADR-0012：忽略行内 # nosem 免检）=====
+NO_SUPPRESS_ARGS=()
+if [ "$NO_SUPPRESS" = "1" ]; then
+  echo "🔍 [review-gate] 启用 Anti-Suppression 穿透模式：忽略源码行内 # nosem 免检注释"
+  NO_SUPPRESS_ARGS=(--disable-nosem)
+fi
+
+EXCLUDES=$(printf -- '--exclude-rule %s ' ${EXCLUDE_RULES[@]+"${EXCLUDE_RULES[@]}"})
 mkdir -p "$(dirname "$OUT")"
-~/.local/bin/opengrep scan "${CONFIG_ARGS[@]}" --disable-version-check --timeout 60 \
-  ${EXCLUDES} --json --output "$OUT" .
-echo "wrote $OUT"
+
+# ===== 工具可用性探测与降级矩阵（ADR-0011 / ADR-0012 诚实降级）=====
+if [ -n "${OPENGREP_BIN:-}" ]; then
+  OG="$OPENGREP_BIN"
+else
+  OG="${HOME}/.local/bin/opengrep"
+  if ! [ -x "$OG" ]; then
+    OG=$(command -v opengrep || true)
+  fi
+fi
+
+if [ -n "$OG" ] && ([ -x "$OG" ] || command -v "$OG" >/dev/null 2>&1); then
+  "$OG" scan ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"} ${NO_SUPPRESS_ARGS[@]+"${NO_SUPPRESS_ARGS[@]}"} --disable-version-check --timeout 60 \
+    ${EXCLUDES} --json --output "$OUT" .
+  echo "wrote $OUT (engine: opengrep)"
+else
+  echo "⚠️  OpenGrep 未安装 — 触发轻量级降级矩阵 (ADR-0011 §2.2)"
+  RUFF=$(command -v ruff || true)
+  if [ -n "$RUFF" ]; then
+    echo "ℹ️  [Fallback 阶梯 · 诚实声明] 降级至 Ruff Bandit (S 规则集) 本地扫描"
+    RUFF_RAW=$("$RUFF" check --select S --output-format json . 2>/dev/null || true)
+    if command -v node >/dev/null 2>&1; then
+      node -e '
+        const fs = require("fs");
+        let findings = [];
+        try { findings = JSON.parse(process.argv[1] || "[]"); } catch (e) {}
+        const payload = {
+          engine: "fallback-ruff-bandit",
+          fallback: true,
+          version: "ruff-bandit",
+          results: findings.map(f => ({
+            check_id: f.code,
+            path: f.filename,
+            start: { line: f.location?.row, col: f.location?.column },
+            end: { line: f.end_location?.row, col: f.end_location?.column },
+            extra: { message: f.message, severity: "WARNING" }
+          }))
+        };
+        fs.writeFileSync(process.argv[2], JSON.stringify(payload, null, 2));
+      ' "$RUFF_RAW" "$OUT"
+    elif command -v python3 >/dev/null 2>&1; then
+      python3 -c '
+import sys, json
+findings = []
+try: findings = json.loads(sys.argv[1]) if sys.argv[1] else []
+except: pass
+payload = {
+  "engine": "fallback-ruff-bandit",
+  "fallback": True,
+  "version": "ruff-bandit",
+  "results": findings
+}
+with open(sys.argv[2], "w") as f:
+  json.dump(payload, f, indent=2)
+' "$RUFF_RAW" "$OUT"
+    else
+      echo "$RUFF_RAW" > "$OUT"
+    fi
+    echo "wrote $OUT (engine: fallback-ruff-bandit)"
+  else
+    echo "❌ 既无 opengrep 也无 ruff，无法完成扫描。"
+    exit 1
+  fi
+fi

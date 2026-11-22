@@ -55,11 +55,16 @@ baton status --json
 ### `baton new`
 Create a new structured handoff ticket.
 ```bash
-# Syntax: baton new <target|lane> <type> "<title>"
+# Syntax: baton new <target|lane> <type> "<title>" [--profile readonly|full] [--workspace same|worktree|separate]
 baton new audit task "Refactor User Authentication"
 baton new api feature "Implement Rate Limiting Middleware"
+
+# Read-only exploration profile (ADR-0012 §2.6 / ADR-0009 anti-fake wiring)
+# Enforces production code write-protection: executor cannot modify production files
+baton new audit task "Security Architecture Review" --profile readonly
 ```
 *Types supported*: `task`, `bug`, `feature`, `question`, `continuation`.
+*Profiles supported*: `full` (default), `readonly` (strictly forbids production code mutations in receipts).
 
 ### `baton forward`
 Mark ticket(s) as forwarded to the receiving lane, optionally stripping cognitive biases, dispatching concurrently, or sleeping until receipt(s) arrive.

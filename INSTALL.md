@@ -5,20 +5,21 @@
 
 ---
 
-## 0. 当前版本快照（2026-11-19）
+## 0. 当前版本快照（2026-11-22）
 
 | 组件 | 版本 | 备注 |
 |---|---|---|
-| **Agent Baton / handoffs** | **v2.36.0** | 接入桩 sha `4c82924b`；统一工单与会话ID (`id === conversation_id`)、严禁跨会话处理工单硬门禁、会话身份锁、密码学审计凭据、极简入站裁决提示词；Hub 注册 lab 跨仓 target；跨仓/仓内工作流中枢 |
+| **Agent Baton / handoffs** | **v2.38.1** | 接入桩统一；支持 Rule 8 分级 SDD 验收与负向测试先行证明 (ADR-0012)、`--profile readonly` 生产源码写保护物理硬门禁、Windows 换行与转义归一化、cmdWait 平息自愈交付、密码学审计凭据防伪 |
 | **spec-guard / drift-gate** | **v2.2.0** | 架构规约与物理接线守卫（ADR-064 机器信任根验签、三维热力表、约定阈值解耦、增量感知门禁） |
 | **preflight** | **v1.1.0** | 仓库不变量探针（A1~A5 配置化对账防漂移、工程落地指引） |
-| **orphan** | **v1.3.0** | 死代码与孤儿资产清道夫、反假接线三层正交治理（ADR-0009、S1–S3 求解器、L1/L2/L3 正交解耦、Tier 1/2 自查、自主呈批开单及新项目 `AGENTS.md`/`GEMINI.md` 接入模板） |
+| **orphan** | **v1.4.1** | 全局死代码与孤儿资产清道夫（ADR-0009 / ADR-0011）：S1–S3 求解器、L1/L2/L3 正交解耦、新增 `check-deps [--strict]` 孤儿依赖求解器与 `scan-secrets [--strict]` 零调用高熵假凭证探针、PyPI 生态别名映射 |
 | **worktree** | v0.1.0 | 多 Agent 物理工作树隔离调度 |
-| **review-gate** | v1.1.0 | SAST + 双盲审计独立重跑器 |
-| **adr / backlog / playbook** | v1.0.1 / v1.2.0 / — | 架构记忆、待办捕获、AEF 执行手册 |
+| **review-gate** | **v1.2.1** | SAST + 双盲审计独立重跑器（ADR-0011 / ADR-0012）：新增 `scan.sh --no-suppress` 穿透扫描、Ruff Bandit 诚实降级结构化 JSON 引擎标记、macOS bash 3.2 兼容自愈 |
+| **specs / playbook** | — | Spec Kit 活文档模板全集 (`specs/templates/` 01-research 到 05-evidence) 与 RePPIT 五步工程闭环手册 |
+| **adr / backlog** | v1.0.1 / v1.2.0 | 架构决策记录 (ADR-0011, ADR-0012 🔒Frozen)、待办捕获跟踪 (Backlog 12 & 13) |
 
 > 版本事实源 = `units/<unit>/VERSION.md` 与 `$(lab path handoffs)/README.md`。
-> `package.json` 当前为 `1.1.0`（随全局能力演进做 minor 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
+> `package.json` 当前为 `1.3.0`（随全局能力演进做 minor 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
 
 ---
 

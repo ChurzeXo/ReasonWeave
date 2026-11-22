@@ -1452,6 +1452,7 @@ function cmdNewIntra(args) {
   const ty = type.toLowerCase();
   let ws = HUB_CONFIG.workspace_default || 'same';
   let fromLane = process.env.HANDOFF_LANE || '';
+  let toolProfile = 'full';
   const restClean = [];
   for (let i = 0; i < rest.length; i++) {
     if ((rest[i] === '--workspace' || rest[i] === '-ws') && rest[i + 1]) {
@@ -1460,6 +1461,11 @@ function cmdNewIntra(args) {
         ws = candidate;
       }
       i++;
+    } else if (rest[i] === '--profile' && rest[i + 1]) {
+      toolProfile = rest[i + 1].toLowerCase();
+      i++;
+    } else if (rest[i].startsWith('--profile=')) {
+      toolProfile = rest[i].slice('--profile='.length).toLowerCase();
     } else if ((rest[i] === '--from' || rest[i] === '-from') && rest[i + 1]) {
       fromLane = rest[i + 1].toLowerCase();
       i++;
@@ -1508,6 +1514,9 @@ function cmdNewIntra(args) {
     created: todayISO(),
     closed: '',
   };
+  if (toolProfile !== 'full') {
+    fm.tool_profile = toolProfile;
+  }
   if (l === 'audit') {
     fm.audit_nonce = generateAuditNonce(id);
   }
@@ -2180,6 +2189,22 @@ function cmdReceipt(args) {
         for (const p of problems) console.error('  - ' + p);
         console.error(`   👉 可运行: baton receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS" --evidence-paths "<文件路径>"`);
         console.error(`   （或附说明：--evidence-note "说明原因"）`);
+        process.exit(1);
+      }
+    }
+
+    // tool_profile=readonly 约束门禁 (ADR-0012 §2.6 / ADR-0009 反假接线)
+    if (hFm?.tool_profile === 'readonly') {
+      const pathsStr = evidenceFlags.paths || '';
+      const evPaths = pathsStr.split(',').map(s => s.trim()).filter(Boolean);
+      const forbiddenMutations = evPaths.filter(p => {
+        const clean = p.replace(/^[+~]/, '');
+        if (clean.startsWith('.handoffs/') || clean.startsWith('specs/') || clean.startsWith('/tmp/') || clean.startsWith('tmp/')) return false;
+        return !clean.endsWith('.log') && !clean.endsWith('.json') && !clean.endsWith('.txt') && !clean.endsWith('.md');
+      });
+      if (forbiddenMutations.length > 0) {
+        console.error(`❌ [Tool Profile 约束违例] 工单声明 tool_profile=readonly（只读探查），但回执 evidence_paths 包含生产代码修改: [${forbiddenMutations.join(', ')}]`);
+        console.error(`   只读工单严禁提交代码改动，仅允许只读探测与回执/证据交付。`);
         process.exit(1);
       }
     }
@@ -3011,10 +3036,16 @@ function cmdShow(args) {
         ? ['handoff_id', 'mode', 'from_lane', 'to_lane', 'needs_change', 'audit_nonce', 'blind', 'date', 'delivered_at', 'delivered_by_lane']
         : ['handoff_id', 'needs_change', 'needs_iggle_change', 'from_repo', 'to_repo', 'date', 'delivered_at'])
     : (MODE === 'intra-repo'
-        ? ['mode', 'project', 'from_lane', 'to_lane', 'conversation_id', 'workspace', 'timing', 'type', 'status', 'round', 'needs_change', 'audit_nonce', 'blind', 'reject_count', 'created', 'rejected_at', 'rejected_by', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']
-        : ['target', 'type', 'status', 'conversation_id', 'round', 'needs_change', 'needs_iggle_change', 'reject_count', 'created', 'rejected_at', 'rejected_by', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']);
+        ? ['mode', 'project', 'from_lane', 'to_lane', 'conversation_id', 'workspace', 'timing', 'type', 'status', 'round', 'tool_profile', 'needs_change', 'audit_nonce', 'blind', 'reject_count', 'created', 'rejected_at', 'rejected_by', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']
+        : ['target', 'type', 'status', 'conversation_id', 'round', 'tool_profile', 'needs_change', 'needs_iggle_change', 'reject_count', 'created', 'rejected_at', 'rejected_by', 'delivered_at', 'accepted_at', 'reopened_at', 'closed']);
   for (const k of keys) {
-    if (fm && fm[k] !== undefined && fm[k] !== '') console.log(`- ${k}: ${fm[k]}`);
+    if (fm && fm[k] !== undefined && fm[k] !== '') {
+      if (k === 'tool_profile') {
+        console.log(`- tool_profile: ${fm[k]}${fm[k] === 'readonly' ? ' (只读探查：严格禁止修改生产源码)' : ''}`);
+      } else {
+        console.log(`- ${k}: ${fm[k]}`);
+      }
+    }
   }
   // 若存在对应回执且有驳回记录，提取并展示最近驳回理由 (P1-2)
   if (!isResp) {
@@ -3450,6 +3481,27 @@ function cmdCheckIntra(args = []) {
       console.log(`🔧 已安全补齐缺失的 conversation_id: ${id} → ${fixedConv}`);
     }
 
+    // tool_profile 严格核验 (ADR-0012 §2.6 / ADR-0009 反假接线)
+    if (fm.tool_profile) {
+      const validProfiles = ['readonly', 'full'];
+      if (!validProfiles.includes(fm.tool_profile)) {
+        problems.push(`[交接] tool_profile 非法(${fm.tool_profile})，仅支持 readonly 或 full: ${f}`);
+      }
+      if (fm.tool_profile === 'readonly' && fs.existsSync(rPath)) {
+        const rRaw = fs.readFileSync(rPath, 'utf8');
+        const rFm = readFM(rRaw) || {};
+        const evPaths = (rFm.evidence_paths || '').split(',').map(s => s.trim()).filter(Boolean);
+        const forbiddenMutations = evPaths.filter(p => {
+          const clean = p.replace(/^[+~]/, '');
+          if (clean.startsWith('.handoffs/') || clean.startsWith('specs/') || clean.startsWith('/tmp/') || clean.startsWith('tmp/')) return false;
+          return !clean.endsWith('.log') && !clean.endsWith('.json') && !clean.endsWith('.txt') && !clean.endsWith('.md');
+        });
+        if (forbiddenMutations.length > 0) {
+          problems.push(`[交接] tool_profile=readonly 约束违例：回执 evidence_paths 包含源码改动 [${forbiddenMutations.join(', ')}]: ${f}`);
+        }
+      }
+    }
+
     // 状态机语义不变量校验（v2.25 · P1-1 修复）
     if (fm.status === 'closed') {
       if (fm.rejected_at) {
@@ -3798,16 +3850,18 @@ function cmdPrompt(args) {
     const round = Number(fm.round || 1);
     const roundLineZh = round > 1 ? `[任务轮次] Round ${round}（第 ${round} 轮复审）\n` : '';
     const roundLineEn = round > 1 ? `[Task Round] Round ${round} (Review Round ${round})\n` : '';
+    const profileLineZh = fm.tool_profile === 'readonly' ? `[工具约束] tool_profile=readonly（只读探查：严格禁止修改生产源码）\n` : '';
+    const profileLineEn = fm.tool_profile === 'readonly' ? `[Tool Profile] tool_profile=readonly (Read-only: Prohibited from modifying production code)\n` : '';
     const convId = fm.conversation_id || getSessionId();
     const promptId = convId || id;
 
     const promptCardTextZh = (ws === 'worktree')
-      ? `请 [${toRole}] 在隔离工作树接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工作树路径] ${path.join('.worktrees', id)}\n[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd()
-      : `请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd();
+      ? `请 [${toRole}] 在隔离工作树接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工作树路径] ${path.join('.worktrees', id)}\n[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd()
+      : `请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd();
 
     const promptCardTextEn = (ws === 'worktree')
-      ? `Please [${toRole}] take handoff in isolated worktree:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Worktree] ${path.join('.worktrees', id)}\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd()
-      : `Please [${toRole}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd();
+      ? `Please [${toRole}] take handoff in isolated worktree:\n[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Worktree] ${path.join('.worktrees', id)}\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd()
+      : `Please [${toRole}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd();
 
     const chosenPromptText = isZh ? promptCardTextZh : promptCardTextEn;
     writeLatestPrompt(chosenPromptText, cleanTitle, id);

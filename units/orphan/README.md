@@ -46,6 +46,7 @@ units/orphan/
 │   ├── protocol-s1-s3.mjs  # S1-S3 自检门禁套件
 │   ├── solver.mjs          # 统一求解器
 │   ├── diff-checker.mjs    # 增量差异比对与门禁判定
+│   ├── orphan-deps.mjs     # 依赖清单与凭证求解器 (ADR-0011 / ADR-0012)
 │   └── cleaner.mjs         # 安全修剪与 Diff 生成器
 ├── adapters/               # 各技术栈专属适配器
 │   ├── android/            # Android (Manifest / R / XML / Kotlin / Qualifiers)
@@ -75,6 +76,12 @@ lab orphan check-diff --base origin/main
 # 4. 受控安全清理（支持 dry-run 演练预览统一 Patch）
 lab orphan clean [--candidates candidates.json] --dry-run
 lab orphan clean --force
+
+# 5. 依赖清单与在用导入对账（消除未导入孤儿包导致的虚假 CVE 报警风暴，支持 --strict 阻断）
+lab orphan check-deps [--strict]
+
+# 6. 零调用垃圾假凭证与高熵 Token 扫描（支持 --strict 门禁退出码）
+lab orphan scan-secrets [--strict]
 ```
 
 ---

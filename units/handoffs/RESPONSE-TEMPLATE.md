@@ -32,6 +32,12 @@
    - Rejection (NO-GO): `审计完成，裁决 NO-GO（工单已退回实现方进入 Round <N>）`
    - Pass (GO): `审计完成，裁决 GO` (or `交付完成，回执已就绪`)
    The initiator is solely responsible for calculating and carrying the next `Round` in subsequent outbound handoff cards.
+8. **Tiered SDD & Exploit-First Security Proof (ADR-0012)**:
+   - **Tier 1 (Lightweight · Low Blast Radius)**: Single parameter passthrough, documentation fix, localized single-branch fix. Normal unit test and fast gate pass suffices; no need for heavy proposal comparison or negative exploit tests.
+   - **Tier 2 (Critical · High Blast Radius / Security / Cross-Unit)**:
+     - **Vertical Slice Proof**: Must prove end-to-end integration (impl + registration + caller entrypoint + test; `lab-orphan check-diff` must show 0 orphan exports).
+     - **Exploit-First Proof (先红后绿)**: For bug/vulnerability remediation, the executor MUST prove the negative test failed before the fix (`exit != 0` on unpatched codebase) and passes after the fix (`exit == 0`). "Self-reported fix" without initial exploit proof is rejected.
+     - **Tool Profile Governance**: When the handoff specifies `tool_profile: readonly`, the executor is strictly forbidden from mutating production code (`evidence_paths` must only contain readonly logs/reports/reviews or sandbox files; production code changes will be hard blocked by `baton receipt`).
 
 ---
 
@@ -66,6 +72,9 @@ date: YYYY-MM-DD
   <exact command used to verify, e.g. npm test or pnpm check>
   \`\`\`
 - Result Output: <All tests passed, 0 failures, 0 regressions>
+- Tier 2 规约与负向验收证据（关键变更 / 架构调整 / 缺陷修复必填）：
+  - 垂直切片对账：`lab-orphan check-diff --staged` 结果（0 孤儿断链）
+  - 负向测试先红后绿证据（Bug/漏洞修复必填）：修复前 Exploit 测试 Exit != 0，修复后 Exit 0
 - 审计三态对照矩阵（红队 / 渗透 / 安全审计必填）：
   | 用例 ID | 目标行为 | 预期判据 (Taxonomy) | 实测状态 | 物理调用数 | 结论 |
   |---|---|---|---|---|---|

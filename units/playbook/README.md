@@ -97,7 +97,9 @@ playbook/
 │   ├── 16-change-control.md  中途需求变更 CR 流程   ← 新增
 │   ├── 17-prompts.md         两段复制即用的提示词    ← 新增
 │   ├── 18-shift-left.md      「收尾才暴露问题」根因+对策 ← 新增
-│   └── 19-anti-orphan-vertical-slicing.md 全栈反未接线与垂直切片交付法则 ← 新增
+│   ├── 19-anti-orphan-vertical-slicing.md 全栈反未接线与垂直切片交付法则 ← 新增
+│   ├── 20-vibe-security-and-anti-suppression.md Vibe Coding 虚假安全感穿透防御与依赖可达性治理 ← 新增
+│   └── 21-spec-driven-reppit-closed-loop.md SDD 规约驱动开发与 RePPIT 分级工程防线 ← 新增
 ├── templates/                可直接改写的模板
 ├── references/               AEF 原文 + 外部链接索引
 └── examples/owisel.md        真实案例拆解

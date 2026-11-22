@@ -1,0 +1,23 @@
+# 01 - Research: <Feature / Ticket Name>
+
+> **Stage 1 (只读调研 · Read-Only Invariant)**: 仅收集并记录事实，严禁修改业务代码，严禁在未推演方案前草率假定架构。
+
+## 1. 现状调用拓扑 (Current Topology)
+- **相关模块与文件路径**：
+  - `path/to/module1.ts`：负责 ...
+  - `path/to/module2.ts`：负责 ...
+- **核心入口与控制流**：
+  `Entrypoint -> Module A -> Module B`
+
+## 2. 依赖项与版本状态 (Dependencies)
+- **当前依赖与版本**：
+  - `<package-name>` @ `<version>`
+- **未导入依赖清查（孤儿依赖探针）**：
+  - 是否存在清单中有但未使用的孤儿依赖？（是/否）
+
+## 3. 既有不变量与约束 (Existing Invariants)
+- **不可破坏的既有契约**：
+  - 1. ...
+  - 2. ...
+- **环境或工具链限制**：
+  - ...

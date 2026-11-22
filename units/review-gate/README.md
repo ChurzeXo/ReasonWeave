@@ -64,6 +64,8 @@
 
 - **手动全量扫描**：`opengrep scan --config p/default --config p/kotlin --config p/java --disable-version-check .`
 - **可复现基线**：`RULESETS="..." bash scan.sh /tmp/og.json`（正常仅你已接受的信号）
+- **穿透式无免检扫描 (Anti-Suppression · ADR-0011)**：`bash scan.sh --no-suppress /tmp/og.json`（或 `NO_SUPPRESS=1 bash scan.sh`），强制忽略行内 `# nosem` / `// nosem`，穿透排查被免检注释掩盖的严重漏洞。
+- **诚实降级扫描 (ADR-0011 §2.2)**：若未安装 OpenGrep，`scan.sh` 与 `pre-commit` 自动平滑降级至 `ruff check --select S`（Bandit 规则集）本地扫描，并在产物 JSON 中结构化注入 `engine: fallback-ruff-bandit` 与 `fallback: true`。
 - **提交时自动**：`git commit` → pre-commit 扫暂存代码文件，对照基线，新发现才阻断。
 - **重新基线**（有意为之接受新发现后）：`RULESETS="..." bash scan.sh review-gate/baseline/baseline.json`（覆盖），然后提交基线 JSON。
 - **个案豁免**：源码行尾加 `# nosem` / `// nosem`。

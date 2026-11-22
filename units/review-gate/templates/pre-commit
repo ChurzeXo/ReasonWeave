@@ -17,11 +17,22 @@ set -uo pipefail
 
 # 非交互 hook 可能没把 ~/.local/bin 放进 PATH
 export PATH="$HOME/.local/bin:$PATH"
-OG=$(command -v opengrep || true)
-if [ -z "$OG" ]; then
-  echo "⚠️  OpenGrep not found — skipping static-analysis gate."
-  echo "    Install: https://github.com/opengrep/opengrep/releases (macOS arm64 standalone binary)"
-  exit 0
+OG="${OPENGREP_BIN:-$HOME/.local/bin/opengrep}"
+if ! [ -x "$OG" ] && ! command -v "$OG" >/dev/null 2>&1; then
+  OG=$(command -v opengrep || true)
+fi
+
+USE_RUFF_FALLBACK=0
+if [ -z "$OG" ] || (! [ -x "$OG" ] && ! command -v "$OG" >/dev/null 2>&1); then
+  RUFF=$(command -v ruff || true)
+  if [ -n "$RUFF" ]; then
+    echo "⚠️  OpenGrep not found — falling back to Ruff Bandit (S rules) for staged code."
+    USE_RUFF_FALLBACK=1
+  else
+    echo "⚠️  OpenGrep not found — skipping static-analysis gate."
+    echo "    Install: https://github.com/opengrep/opengrep/releases (macOS arm64 standalone binary)"
+    exit 0
+  fi
 fi
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -66,11 +77,16 @@ EXCLUDE_RULES=(
   "python.lang.security.audit.insecure-transport.urllib.insecure-urlopen.insecure-urlopen"
   "python.lang.security.audit.insecure-file-permissions.insecure-file-permissions"
 )
-EXCLUDES=$(printf -- '--exclude-rule %s ' "${EXCLUDE_RULES[@]}")
+EXCLUDES=$(printf -- '--exclude-rule %s ' ${EXCLUDE_RULES[@]+"${EXCLUDE_RULES[@]}"})
 
-echo "🔍 OpenGrep gate: scanning ${#EXISTING[@]} staged file(s)..."
-"$OG" scan "${CONFIG_ARGS[@]}" --disable-version-check --timeout 60 ${EXCLUDES} \
-  --json --output "$TMP" "${EXISTING[@]}" >/dev/null 2>&1 || true
+if [ "$USE_RUFF_FALLBACK" = "1" ]; then
+  echo "🔍 Ruff Bandit fallback gate: scanning ${#EXISTING[@]} staged file(s)..."
+  "$RUFF" check --select S --output-format json "${EXISTING[@]}" > "$TMP" 2>/dev/null || true
+else
+  echo "🔍 OpenGrep gate: scanning ${#EXISTING[@]} staged file(s)..."
+  "$OG" scan ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"} --disable-version-check --timeout 60 ${EXCLUDES} \
+    --json --output "$TMP" "${EXISTING[@]}" >/dev/null 2>&1 || true
+fi
 
 PY=$(command -v python3 || command -v python || true)
 if [ -z "$PY" ]; then

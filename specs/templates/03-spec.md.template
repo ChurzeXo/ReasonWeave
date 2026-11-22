@@ -1,0 +1,33 @@
+# 03 - Technical Specification: <Feature / Ticket Name>
+
+> **Stage 3 (技术规格与契约冻结)**: 明确接口、数据模型、修改文件白名单与负向安全护栏。
+
+## 1. 数据模型与契约 (Data Model & Schema)
+```typescript
+// 核心数据结构 / DTO 声明
+```
+
+## 2. 接口与入参规范 (API & Signatures)
+- **方法/路由**：`<name>`
+- **入参约束**：...
+- **出参/状态码**：...
+
+## 3. 影响文件白名单 (Touch List)
+> 严禁在白名单外随意修改或创建文件。
+| 文件路径 | 改动类型 (新增/修改) | 职责说明 |
+|---|---|---|
+| `path/to/file1.ts` | 修改 | ... |
+| `path/to/file2.ts` | 新增 | ... |
+
+## 4. 负向安全护栏与滥用用例 (Negative Guardrails & Abuse Cases · ADR-0011 / ADR-0012)
+- **明令禁止的原语 (Forbidden Primitives)**：
+  - 严禁使用动态代码求值（如 `eval` / `exec`）；
+  - 严禁使用无转义系统命令执行（如 `shell=True`）；
+  - 严禁使用行内裸免检注释（如裸 `# noqa` / `# nosem`）。
+- **滥用场景与边界测试用例 (Abuse Cases)**：
+  - [Abuse-01]：<恶意输入或未授权访问载荷，预期系统抛出 400/403 阻断>
+  - [Abuse-02]：<并发/超长输入/越界参数处理>
+
+## 5. 架构不变量 (Invariants for spec-guard Triad Mapping)
+- `INV-1`: <不变量描述，必须绑定代码 @Invariant 或可执行单测>
+- `INV-2`: <不变量描述>

@@ -1,5 +1,22 @@
 # Changelog — units/orphan
 
+## [v1.4.1] - 2026-11-22
+
+### Added
+- **M-2 门禁阻断语义与生态别名对账**：
+  - `lab orphan check-deps` 与 `scan-secrets` 新增 `--strict` 门禁模式，在检出未导入孤儿包或硬编码高熵凭证时以 exit 1 状态码退出，支持嵌入 CI/Preflight 阻断流水线；
+  - `OrphanDepsSolver` 新增 Python PyPI 规范名映射表（如 `python-dotenv` 自动识别 `dotenv` 导入、`pyyaml` 映射 `yaml`、`scikit-learn` 映射 `sklearn`），避免误报在用依赖；
+  - `scanSecrets` 增加单行重复命中去重；
+  - 新增 `tests/orphan-deps.test.mjs` 夹具单测，覆盖 Python/Node 依赖分析、真实 vs 假凭证过滤与 `--strict` 门禁退出。
+
+## [v1.4.0] - 2026-11-22
+
+### Added
+- **新增孤儿依赖与凭证探针（ADR-0011 / ADR-0012 落地）**：
+  - 新增 `core/orphan-deps.mjs`：支持 Python (`requirements.txt`) 与 Node (`package.json`) 依赖清单与源码 `import` / `require` 集合对账；
+  - CLI 新增 `lab orphan check-deps`：自动检测未导入的孤儿第三方包，物理消除 90%+ 虚假 CVE 报警风暴；
+  - CLI 新增 `lab orphan scan-secrets`：扫描硬编码可疑凭证与高熵 Token，识别零调用垃圾假凭证。
+
 ## [v1.3.0] - 2026-11-19
 
 ### Added

@@ -13,6 +13,7 @@ import { Cleaner } from '../core/cleaner.mjs';
 import { AndroidAdapter } from '../adapters/android/index.mjs';
 import { PythonAdapter } from '../adapters/python/index.mjs';
 import { WebAdapter } from '../adapters/web/index.mjs';
+import { OrphanDepsSolver } from '../core/orphan-deps.mjs';
 
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
@@ -25,8 +26,13 @@ lab-orphan CLI — 全局死代码与孤儿资产清道夫 (units/orphan v1.0.0)
   lab orphan test-solver                运行 S1-S3 求解器自检协议 (注入假死检出/在用保护/逐字节一致)
   lab orphan scan [选项]                全量扫描当前 HEAD，探测死代码与孤儿资产
   lab orphan check-diff [选项]          增量提交门禁校验 (检测本次改动是否引入新孤儿)
+  lab orphan check-deps [--strict]      扫描依赖清单 (requirements.txt / package.json) 探测未导入孤儿包
+  lab orphan scan-secrets [--strict]    扫描零调用假凭证与硬编码高熵 Token (支持 --strict 阻断退出)
   lab orphan clean [选项]               受控安全清理 (支持 dry-run 演练)
   lab orphan help                       显示本帮助信息
+
+check-deps / scan-secrets 选项:
+  --strict                       门禁阻断模式：检出孤儿依赖或可疑凭证时以 exit 1 非零状态码退出
 
 scan 选项:
   --out <file>                   指定候选结果写入路径 (默认: stdout 打印概要)
@@ -188,6 +194,58 @@ async function runClean() {
   }
 }
 
+async function runCheckDeps() {
+  const isStrict = args.includes('--strict') || args.includes('--fail-on-orphans');
+  const solver = new OrphanDepsSolver({ repoDir: process.cwd() });
+  const results = await solver.scan();
+  if (results.length === 0) {
+    console.log('✅ 未发现受支持的依赖清单文件 (requirements.txt / package.json)。');
+    return;
+  }
+
+  let totalOrphans = 0;
+  for (const r of results) {
+    console.log(`\n📦 [依赖清单] ${r.manifest} (${r.type})`);
+    console.log(`   - 声明总数: ${r.total_declared}，在用导入: ${r.active_imported}，孤儿依赖: ${r.orphans.length}`);
+    if (r.orphans.length > 0) {
+      totalOrphans += r.orphans.length;
+      console.log(`   ⚠️  未导入的孤儿第三方包 (0 import 引用):`);
+      for (const p of r.orphans) {
+        console.log(`      - ${p}`);
+      }
+    } else {
+      console.log(`   ✅ 无孤儿依赖，全部声明均被源码 import。`);
+    }
+  }
+
+  if (totalOrphans > 0) {
+    console.log(`\n💡 提示: 请先清理上述未导入的 ${totalOrphans} 个孤儿依赖，可物理消除虚假 CVE 报警风暴 (ADR-0011)。`);
+    if (isStrict) {
+      console.error(`\n❌ [Gate Block] --strict 门禁生效：存在 ${totalOrphans} 个未导入孤儿依赖，阻断退出。`);
+      process.exit(1);
+    }
+  }
+}
+
+async function runScanSecrets() {
+  const isStrict = args.includes('--strict') || args.includes('--fail-on-findings');
+  const solver = new OrphanDepsSolver({ repoDir: process.cwd() });
+  const findings = solver.scanSecrets();
+  if (findings.length === 0) {
+    console.log('✅ 未发现硬编码可疑凭证或高熵 Token。');
+    return;
+  }
+
+  console.log(`\n🔍 发现 ${findings.length} 处可疑硬编码凭证:`);
+  for (const f of findings) {
+    console.log(`   - ${f.file}:${f.line} -> ${f.match.slice(0, 40)}...`);
+  }
+  if (isStrict) {
+    console.error(`\n❌ [Gate Block] --strict 门禁生效：检出 ${findings.length} 处硬编码凭证/高熵 Token，阻断退出。`);
+    process.exit(1);
+  }
+}
+
 // ── 路由执行 ──────────────────────────────────────────────────────────
 switch (command) {
   case 'test-solver':
@@ -199,6 +257,14 @@ switch (command) {
     break;
   case 'check-diff':
     await runCheckDiff();
+    break;
+  case 'check-deps':
+  case 'orphan-deps':
+    await runCheckDeps();
+    break;
+  case 'scan-secrets':
+  case 'secrets':
+    await runScanSecrets();
     break;
   case 'clean':
     await runClean();

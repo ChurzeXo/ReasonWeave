@@ -3,12 +3,13 @@ id: 12
 title: feat(review-gate/orphan): Vibe Coding 虚假安全感防御：免检穿透审计、孤儿依赖清洗与可达性闭环
 type: feature
 priority: high
-status: open
+status: closed
 owner: lab/review-gate + lab/orphan
 dep_on: none
 handoff_ref: 'ADR-0011'
 created: 2026-11-21
-updated: 2026-11-21
+updated: 2026-11-22
+completed: 2026-11-22
 ---
 
 - **要做什么**：
