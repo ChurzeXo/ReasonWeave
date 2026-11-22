@@ -104,3 +104,31 @@ describe('全 CLI 对称契约与版本单一事实源（SSOT）门禁测试', (
     });
   }
 });
+
+describe('文档与规约联动对账门禁（Doc-Code Invariant & Anti-Drift）', () => {
+  it('INSTALL.md 核心快照表与 package.json / 各 Unit VERSION.md 保持 100% 对齐', () => {
+    const installDoc = fs.readFileSync(path.join(REPO_ROOT, 'INSTALL.md'), 'utf8');
+    assert.ok(installDoc.includes(PKG.version), `INSTALL.md 未包含当前 package.json 版本 ${PKG.version}`);
+    for (const target of CLI_TARGETS) {
+      if (target.name === 'lab') continue;
+      assert.ok(
+        installDoc.includes(`v${target.expectedVersion}`) || installDoc.includes(target.expectedVersion),
+        `INSTALL.md 缺少 ${target.name} 当前版本 v${target.expectedVersion}`
+      );
+    }
+  });
+
+  it('README.md 与 使用说明.md 包含当前 Baton 核心版本与各 Unit 真实版本', () => {
+    const readmeDoc = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
+    const userDoc = fs.readFileSync(path.join(REPO_ROOT, '使用说明.md'), 'utf8');
+    const batonVer = CLI_TARGETS.find(t => t.name.startsWith('baton (units/handoffs)')).expectedVersion;
+    assert.ok(readmeDoc.includes(`v${batonVer}`), `README.md 未同步 Baton 最新版本 v${batonVer}`);
+    assert.ok(userDoc.includes(`v${batonVer}`), `使用说明.md 未同步 Baton 最新版本 v${batonVer}`);
+  });
+
+  it('docs/CONSUMER-PROMPTS.md 升级提示词与当前 Baton 契约版本一致', () => {
+    const promptDoc = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'CONSUMER-PROMPTS.md'), 'utf8');
+    const batonVer = CLI_TARGETS.find(t => t.name.startsWith('baton (units/handoffs)')).expectedVersion;
+    assert.ok(promptDoc.includes(`v${batonVer}`), `docs/CONSUMER-PROMPTS.md 缺少当前 Baton 版本 v${batonVer}`);
+  });
+});
