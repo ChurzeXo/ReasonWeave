@@ -17,6 +17,8 @@ units/               独立工程单元（各模块自治上下文）
   ├── adr/           架构决策记录机制与模板
   ├── spec-guard/    全局架构漂移与规约守卫 (P3' 对账矩阵)
   ├── backlog/       待办捕获制度与模板
+  ├── worktree/      基于 Git Worktree 的物理目录隔离调度引擎
+  ├── orphan/        全局死代码与孤儿资产清道夫公共单元 (Core + Adapters)
   └── playbook/      Agent Engineering Framework 方法论全集
 specs/               Spec Kit 规划与实施产物
 docs/                辅助文档与待办 (docs/backlogs/)
@@ -40,6 +42,10 @@ docs/                辅助文档与待办 (docs/backlogs/)
 - 修改脚本文件（`*.sh` / `*.mjs`）必须保持 POSIX 兼容性或纯 Node 原生模块依赖。
 - 未经请求不得随意引入重量级第三方依赖。
 - **改源不改造实例（SSOT 核心铁律）**：动任何“种子/默认值/派生镜像/配置”前，必须先确认单一事实源（SSOT）；严禁绕过源直接在库中敲裸 UPDATE 或就地 patch 物化副本，任何源的修改必须与迁移同步脚本/重物化在同一 commit 提交。
+- **全 CLI 物理契约对齐律（CLI Contract Invariant · ADR-0013）**：所有 CLI 工具入口（`package.json` `bin`）必须提供 `--version` / `-v` / `--help` / `-h` 并以 Exit 0 退出；版本号必须动态解析自本模块 `VERSION.md`（或根目录 `package.json`），严禁手写静态版本字面量；由 `tests/cli-contract.test.mjs` 门禁常驻核验。
+- **单测零环境寄生与沙箱隔离律（Hermetic Testing Sandbox · ADR-0013）**：单测严禁在宿主仓直接写操作或依赖宿主 ambient 状态；涉及文件/Git/Hub 操作必须强制使用 `createTestRepo()` 在 `os.tmpdir()` 创建独立沙箱并在 `finally` 阶段可靠清场；运行前必须清洗宿主注入的外部会话环境变量；脚本路径解析统一使用 `import.meta.url`。
+- **结构化输出优先与单事实提取（Structured Output Protocol · ADR-0013）**：程序间交互必须优先使用 `--json`；纯文本解析严禁使用 `[a-f0-9\-]+` 等极易发生贪婪截断的简陋正则，统一使用权威提取函数（`extractTicketId`）。
+- **产物同构与防御性探针（Schema Invariance & Defensive Probe · ADR-0013）**：多执行引擎（原生 vs 降级）工具的产物必须输出一致的顶层控制元数据（`engine`, `fallback`, `version`）；环境探针（`lab doctor`）严禁盲目吞没异常，必须明确区分物理文件缺失、进程超时与 PATH 未配置。
 
 ## 反未接线与反假接线宪章（Anti-Orphan & Anti-Fake-Wiring · 强制）
 
