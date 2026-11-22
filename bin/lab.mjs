@@ -25,10 +25,10 @@ const command = args[0] || 'help';
 
 function showHelp() {
   console.log(`
-Lab Agent Engineering Toolkit · v${LAB_VERSION} (AEF v1.0)
+ReasonWeave CLI · v${LAB_VERSION} (AEF v1.0 · alias: lab, rw)
 
 用法:
-  lab --version               打印当前 Toolkit 版本
+  reasonweave / lab / rw --version 打印当前版本
   lab init [name]             一键初始化完整 AEF 工程规范（交接/门禁/孤儿治理/ADR/待办/全客户端桩）
   lab list                    列出所有可用工程能力 Unit
   lab path [unit]             获取某个 Unit (或 lab 根目录) 的安装绝对路径
@@ -101,7 +101,7 @@ function getPath(unitName) {
 }
 
 function doctor() {
-  console.log(`\n🔍 正在检查环境依赖 (lab v${LAB_VERSION}):\n`);
+  console.log(`\n🔍 正在检查环境依赖 (ReasonWeave v${LAB_VERSION}):\n`);
 
   const userHome = os.homedir();
   const extraPaths = [
@@ -287,11 +287,11 @@ function migrate(targetDir, isDryRun) {
     // 规则 0: 接入桩命令形态自相矛盾语义专门平滑修复
     {
       reg: /先用全路径\s+`node\s+[^`]+`\s*兜底，再跑一次\s+`node\s+[^`]+\s*link`\s*自愈。?/g,
-      repl: '运行 `handoff link` 自愈（或通过 lab-agent-toolkit 重新 `npm link`）。',
+      repl: '运行 `handoff link` 自愈（或通过 reasonweave 重新 `npm link`）。',
     },
     {
       reg: /先用全路径\s+`handoff\s+<op>`\s*兜底，再跑一次\s+`handoff\s+link`\s*自愈。?/g,
-      repl: '运行 `handoff link` 自愈（或通过 lab-agent-toolkit 重新 `npm link`）。',
+      repl: '运行 `handoff link` 自愈（或通过 reasonweave 重新 `npm link`）。',
     },
     {
       reg: new RegExp(`node\\s+${labPathRegexStr}/handoffs/handoff\\.mjs`, 'g'),
@@ -779,7 +779,7 @@ switch (command) {
   case '--version':
   case '-v':
   case 'version':
-    console.log(`lab-agent-toolkit v${LAB_VERSION}`);
+    console.log(`reasonweave v${LAB_VERSION}`);
     process.exit(0);
     break;
   case 'list':

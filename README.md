@@ -1,6 +1,6 @@
-# Lab — Agent 工程能力库 (Agent Engineering Toolkit)
+# ReasonWeave — Agent 工程能力库 (Agent Engineering Framework & Toolkit)
 
-> 一套**可复用的 Agent / AI 辅助工程纪律机件与规范全集**（采用 ZSpec / AEF v1.0 架构）。  
+> 一套**可复用的 Agent / AI 辅助工程纪律机件与规范全集**（原 lab-agent-toolkit，现已全面更名并以 ReasonWeave 为唯一权威标准；采用 ZSpec / AEF v1.0 架构）。  
 > 每个模块独立、正交，按需挑选接入项目；规范以「单一事实源」方式集中在本库，项目里只放**动态指针 + 一句指令**，规范不内联、不漂移。
 
 ---
@@ -29,7 +29,7 @@
 #### 模式 A：NPM 全局分发（小白极速模式 · 推荐）
 无需克隆本能力库源码，在终端直接运行：
 ```bash
-npm install -g lab-agent-toolkit
+npm install -g reasonweave
 ```
 
 #### 模式 B：源码开发者模式（克隆本库 + 全局 npm link）
@@ -43,7 +43,7 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| 🌐 `lab` | 能力库总管、`lab init` 全套一键初始化、环境体检、路径动态解析、ZSpec 脚手架、下游一键全量同步分发 (`sync-consumers`)，全量转发核心工具 |
+| 🌐 `reasonweave` / `lab` / `rw` | 能力库总管、`lab init` 全套一键初始化、环境体检、路径动态解析、ZSpec 脚手架、下游一键全量同步分发 (`sync-consumers`)，全量转发核心工具 |
 | 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、Rule 8 分级 SDD 验收与先红后绿负向测试证明、`--profile readonly` 生产源码写保护物理硬门禁、会话身份锁、密码学审计凭据防伪、防注入出站提示词、一单到底、严禁跨会话处理工单、静默管道与事件唤醒（Baton v2.38.1） |
 | 🌳 `baton-worktree` | 基于 Git Worktree 的多 Agent 物理目录隔离调度引擎 |
 | 🛡️ `baton-audit-runner` | 双盲审计自动化运行器（无上下文独立重跑测试，Exit Code 真实裁决） |

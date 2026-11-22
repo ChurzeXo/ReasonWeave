@@ -1,7 +1,7 @@
-# Lab Agent Engineering Toolkit
+# ReasonWeave — Agent Engineering Toolkit
 
 ## Overview
-本仓库是可复用的 Agent / AI 辅助工程能力库，为软件项目提供正交、可插拔的研发纪律机件与规范。
+本仓库是可复用的 Agent / AI 辅助工程能力库（ReasonWeave，原 lab-agent-toolkit），为软件项目提供正交、可插拔的研发纪律机件与规范。
 
 ## Repository Layout (ZSpec / AEF v1.0)
 ```

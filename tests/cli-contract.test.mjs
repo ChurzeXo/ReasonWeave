@@ -21,6 +21,12 @@ const PKG = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'ut
 
 const CLI_TARGETS = [
   {
+    name: 'reasonweave',
+    binPath: path.join(REPO_ROOT, 'bin', 'lab.mjs'),
+    expectedVersion: PKG.version,
+    sourceFile: 'package.json',
+  },
+  {
     name: 'lab',
     binPath: path.join(REPO_ROOT, 'bin', 'lab.mjs'),
     expectedVersion: PKG.version,
@@ -110,7 +116,7 @@ describe('文档与规约联动对账门禁（Doc-Code Invariant & Anti-Drift）
     const installDoc = fs.readFileSync(path.join(REPO_ROOT, 'INSTALL.md'), 'utf8');
     assert.ok(installDoc.includes(PKG.version), `INSTALL.md 未包含当前 package.json 版本 ${PKG.version}`);
     for (const target of CLI_TARGETS) {
-      if (target.name === 'lab') continue;
+      if (target.name === 'lab' || target.name === 'reasonweave') continue;
       assert.ok(
         installDoc.includes(`v${target.expectedVersion}`) || installDoc.includes(target.expectedVersion),
         `INSTALL.md 缺少 ${target.name} 当前版本 v${target.expectedVersion}`

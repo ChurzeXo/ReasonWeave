@@ -1,7 +1,7 @@
 # NPM 打包与分发契约 (NPM Packaging Contract)
 
 ## 1. 打包策略定位
-本能力库采用 **统一整包分发模式**（Package Name: `lab-agent-toolkit` 或带有组织 scope 的 `@org/lab`）：
+本能力库采用 **统一整包分发模式**（Package Name: `reasonweave`，原 `lab-agent-toolkit`）：
 - **全家桶开箱即用**：消费方只需安装一个包，即可获得 `handoff`、`adr-init`、`lab` 三大 CLI，以及各 Unit 的全部探针、模板与 AEF 方法论资产。
 - **运行态数据绝对隔离**：严格通过 `package.json` 的 `files` 白名单机制，绝对物理隔离 `units/handoffs/receipts/`、`archive/` 等运行时业务票据和本地历史痕迹。
 

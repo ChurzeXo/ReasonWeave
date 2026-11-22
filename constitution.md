@@ -1,7 +1,7 @@
-# Lab Constitution
+# ReasonWeave Constitution
 
 **Version:** 1.0  
-**Project:** Agent Engineering Framework & Tooling Lab (`lab`)  
+**Project:** ReasonWeave (Agent Engineering Framework & Tooling Lab)  
 **Last Updated:** 2026-11-03  
 
 > 本文件是 `lab/` 能力库的最高工程宪法，所有维护本库的 Agent 及 Unit 必须无条件遵守。  

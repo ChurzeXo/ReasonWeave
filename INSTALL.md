@@ -1,4 +1,4 @@
-# Lab Agent Toolkit — 安装与升级指南 (Installation & Upgrade Guide)
+# ReasonWeave (formerly Lab Agent Toolkit) — 安装与升级指南 (Installation & Upgrade Guide)
 
 > 面向拿到源码压缩包 / Git 仓库的使用者与消费方 Agent：首次安装约 1 分钟（§2）；**已装过旧版本请先读 §4「升级」**，本次有一步必做且容易漏。
 > 能力库采用「单一事实源 + 动态指针」模型：规范只存本库，项目里只放 `$(lab path <unit>)` 指针，**不复制规则正文**。
@@ -40,11 +40,11 @@
 ### 2.1 模式 A：NPM 全局分发安装（小白推荐 · 30 秒开箱即用）
 无需克隆本能力库源码，在任意终端执行：
 ```bash
-npm install -g lab-agent-toolkit
+npm install -g reasonweave
 ```
 验证安装：
 ```bash
-lab doctor
+reasonweave doctor
 ```
 
 ### 2.2 模式 B：源码开发者模式（克隆本库 + 全局 npm link）
@@ -59,7 +59,7 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| `lab` | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检 (`lab doctor`)、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 (v1.3.1，支持 `lab --version`) |
+| `reasonweave`（别名 `lab`, `rw`） | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检 (`lab doctor`)、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 (v1.3.1，支持 `--version`) |
 | `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、统一会话ID、防跨会话硬门禁、会话锁、密码学防伪回执、事件驱动唤醒（v2.38.1） |
 | `baton-worktree` | 为工单分配 / 回收独立物理工作树（v0.1.0，支持 `--version`） |
 | `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执（v1.2.2，支持 `--version`） |
