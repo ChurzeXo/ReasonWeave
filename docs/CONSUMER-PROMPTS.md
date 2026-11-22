@@ -14,6 +14,7 @@
 6. [场景五：已接入消费方升级到最新版能力库](#场景五已接入消费方升级到最新版能力库)
 7. [场景六：消费方接入与升级 spec-guard v2.0 机器信任根与接线守卫](#场景六消费方接入与升级-spec-guard-v20-机器信任根与接线守卫)
 8. [场景七：消费方接入或升级 orphan v1.3.0 反假接线三层治理与 AGENTS/GEMINI 极简路由](#场景七消费方接入或升级-orphan-v130-反假接线三层治理与-agentsgemini-极简路由)
+9. [场景八：消费方基于 Lab v1.3.0 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）](#场景八消费方基于-lab-v130-新架构全面排查整改与优化vibe-security-穿透防线--依赖瘦身--sddreppit-落地)
 
 ---
 
@@ -345,5 +346,120 @@ baton install && baton link --check && lab doctor && baton check
 
 ### 汇报要求
 3 句话内说明：① 修改了哪些文件及对应段行数；② `preflight.sh` 与 L1/L2 实测结果；③ 是否存在越界/历史假接线需要 `baton new` 开单整改（如有，附 `文件:行号` + 复现证据）。
+````
+
+---
+
+### 场景八：消费方基于 Lab v1.3.0 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）
+
+> 📋 **适用场景**：消费方项目（如 Tappy, iggle, Swoop, Prospero 等）需按 `lab-agent-toolkit` v1.3.0 新架构进行深度的**安全穿透排查（阻断 AI 免检注释掩盖漏洞）**、**依赖清单可达性瘦身（清理死依赖与孤儿包）**、**硬编码敏感凭据扫描**，以及**规约驱动开发 (SDD) 与 RePPIT 五步闭环**的工程实践落地。  
+> 📋 **使用方式**：复制下方整块 Markdown 发送给**消费方项目**的 AI Agent 会话（如 WorkBuddy、Claude Code、Cursor 等）。
+
+````markdown
+请根据上位工程能力库 `lab-agent-toolkit` v1.3.0 新架构规范，对本项目进行一次全面的架构排查、安全穿透体检、依赖可达性瘦身与规约治理对齐。
+
+### 背景与新架构核心能力（ADR-0011 / ADR-0012 / Baton v2.38.1）
+1. **Vibe Security 穿透扫描（units/review-gate v1.2.1）**：禁止通过 `# nosem` / `# nosemgrep` 等内联忽略注释掩盖 AI 或历史代码引入的高危漏洞；提供无 OpenGrep 时的诚实 Bandit 兜底（`engine: fallback-ruff-bandit`）。
+2. **依赖可达性深度瘦身（units/orphan v1.4.1）**：深度静态分析 `requirements.txt` / `package.json` 中的声明包在源码中的真实可达性，精准定位并清理未引用的孤儿包与死依赖。
+3. **零调用假凭证与高危硬编码扫描（units/orphan v1.4.1）**：一键识别项目中遗留的 API Token、AWS 密钥、私钥等假凭证或硬编码泄露，推动凭据环境变量化。
+4. **规约驱动开发 (SDD) 与 RePPIT 五步工程闭环（specs/）**：
+   - 确立 **Tier 1 (轻量 <= 50 行，自测+接线证据)** 与 **Tier 2 (核心/跨端 > 50 行，Spec Kit + ADR + 双盲审计)** 两级分级守卫；
+   - 落地 **Rule 8 (先红后绿，Exploit-First Proof)** 缺陷修复自证；
+   - 落地 **只读工具 Profile 纪律**（`--profile readonly` 物理阻断调研与审计期的非证据代码修改）。
+
+---
+
+### 执行工序（全部在终端实机运行，严格实测驱动）
+
+#### 1. 全局工具链与接入桩核验
+- 确认全局能力库就绪且版本一致：
+  ```bash
+  which lab baton lab-orphan spec-guard
+  lab doctor && baton doctor
+  ```
+- 确认接入桩为最新版 `v2.38.1`：
+  ```bash
+  baton link --check
+  ```
+  若有漂移，执行 `baton install` 刷新。
+
+#### 2. Vibe Security 穿透安全体检（禁止免检注释掩盖）
+- 在本项目根目录运行穿透模式静态安全扫描：
+  ```bash
+  $(lab path review-gate)/scan.sh --no-suppress .
+  ```
+- **排查与整改规范**：
+  - 若扫描出命中项被 `# nosem` 或 `# nosemgrep` 忽略：**严禁保留假安全注释**。
+  - 针对真实漏洞（如 SQL 拼接、不安全命令执行、反序列化、SSRF、弱哈希）：立即进行安全重构（参数化查询、严格白名单校验、安全算法替换）。
+  - 若为已知假阳性：必须在代码中补充明确的前置输入校验守卫，并在提交说明中给出数学/逻辑证明，禁止裸留忽略注释。
+  - 核查扫描输出是否包含诚实引擎标记（若无 OpenGrep，确认输出 `"engine": "fallback-ruff-bandit"`）。
+
+#### 3. 依赖清单可达性分析与孤儿包清理
+- 运行依赖可达性分析：
+  ```bash
+  lab orphan check-deps .
+  ```
+- **排查与整改规范**：
+  - 审查被标记为 `ORPHAN` 的未引用依赖包：
+    - 若属于**废弃/无用残留包**（如曾经试用但未接入的第三方库）：直接从 `requirements.txt` 或 `package.json` 中删除，精简依赖树与构建体积；
+    - 若属于**开发/测试辅助工具**（如 pytest, mypy, eslint, prettier）：确保放置于对应的 dev 依赖分块或在依赖配置文件中清晰注释其用途；
+    - 若属于动态反射加载包：补齐静态接线或在构建脚本中显式声明。
+  - 治理完成后，运行强门禁模式验证：
+    ```bash
+    lab orphan check-deps --strict .
+    ```
+    确保返回码为 0。
+
+#### 4. 零调用假凭证与高危硬编码排查
+- 运行密钥敏感信息扫描：
+  ```bash
+  lab orphan scan-secrets .
+  ```
+- **排查与整改规范**：
+  - 若发现硬编码的 API Key、私钥、AWS Token 等敏感字符串：
+    1. 将密钥剥离出代码，改由环境变量读取（如 `os.getenv("SECRET_KEY")` 或 `process.env.SECRET_KEY`）；
+    2. 本地开发配置统一放入 `.env` 并确保 `.gitignore` 包含 `.env`；
+    3. 示例配置文件统一使用 `.env.example`（仅放 dummy 占位符）。
+  - 治理完成后，运行强门禁模式验证：
+    ```bash
+    lab orphan scan-secrets --strict .
+    ```
+    确保返回码为 0。
+
+#### 5. 规约驱动开发 (SDD) 与 RePPIT 闭环模板接入
+- 查看上位能力库提供的 RePPIT 五步工程闭环模板：
+  ```bash
+  ls -l "$(lab path)/specs/templates/"
+  ```
+  - `01-research.md` (调研/探路): 问题陈述、受影响模块、不变量、假设反证
+  - `02-proposal.md` (提案/RFC): 架构意图、设计权衡、破坏性变更声明
+  - `03-plan.md` (实施计划): 阶段切片、原子任务、回滚预案
+  - `04-implement.md` (实现规约): 接口/Schema 契约、硬断言、只读保护
+  - `05-evidence.md` (实测证据): 确定性测试、复现命令、基准对比
+- **工程纪律对齐**：
+  - 在后续功能研发中，涉及超过 50 行或触及核心逻辑的 **Tier 2** 改动，在根目录下建立 `specs/<feature>/` 并套用上述模板；
+  - 任何缺陷修复必须严格践行 **Rule 8 先红后绿（Exploit-First Proof）**：必须先在 `05-evidence.md` 中提供可稳定复现的失败用例证据，再提交修复代码自证全绿；
+  - 在调研、提案和审计阶段，倡导使用 `baton ... --profile readonly` 锁定工作区，防止非证据代码被误改。
+
+#### 6. 门禁验证与合规收尾
+- 运行本项目现有门禁检查：
+  ```bash
+  baton check
+  test -f scripts/preflight.sh && bash scripts/preflight.sh
+  git status
+  ```
+
+---
+
+### 验收与汇报要求
+排查整改完成后，请汇报：
+1. **安全与依赖体检结果**：
+   - `scan.sh --no-suppress` 发现并整改了哪些安全隐患；
+   - `lab orphan check-deps` 清理了哪些冗余依赖包；
+   - `lab orphan scan-secrets` 凭证扫描与环境变量化情况。
+2. **规范挂载情况**：
+   - 接入桩版本核验（`v2.38.1`）；
+   - SDD / RePPIT 规范与 Tier 1/2 分级执行确认。
+3. **最终 `git status` 变更文件列表与验证结论**。
 ````
 
