@@ -1,10 +1,11 @@
 # NPM 打包与分发契约 (NPM Packaging Contract)
 
 ## 1. 打包策略定位
-本能力库采用 **统一私有整包分发模式**（Package Name: `@churzexo/reasonweave`，托管于 GitHub Packages 私有源）：
+本能力库采用 **统一整包分发模式**（Package Name: `reasonweave`，托管于 npm 官方公共仓库 `registry.npmjs.org`）：
 - **全家桶开箱即用**：消费方只需安装一个包，即可获得 `reasonweave`、`lab`、`baton`、`lab-skills` 等全套 CLI，以及各 Unit 的全部探针、模板与 AEF 方法论资产。
 - **绝不绕过 npm**：全面纳入 npm 生命周期管理，支持 `npm install -g`、`npm update -g`、`npm list -g` 与 `npm uninstall -g`。
 - **运行态数据绝对隔离**：严格通过 `package.json` 的 `files` 白名单机制，绝对物理隔离 `units/handoffs/receipts/`、`archive/` 等运行时业务票据和本地历史痕迹。
+- **使用者零认证负担**：安装方无需配置任何 PAT、Token 或 `.npmrc`，直接一条命令秒装。
 
 ## 2. 核心 CLI 与 Bin 导出
 
@@ -21,24 +22,16 @@
 
 ## 3. 消费方集成模式
 
-### 3.1 客户端前置鉴权配置（只需一次）
-在终端用户或开发者的 `~/.npmrc` 中配置 GitHub Packages 私有源认证：
-```ini
-@churzexo:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=ghp_你的GitHubToken
-```
-> **注**：Token 仅需具备 `read:packages` 权限即可完成拉取与安装。
-
-### 3.2 全局标准安装与生命周期管理 (推荐)
+### 3.1 全局标准安装与生命周期管理 (推荐)
 ```bash
-# 1. 全局安装
-npm install -g @churzexo/reasonweave
+# 1. 全局安装（零配置，无需任何 Token）
+npm install -g reasonweave
 
 # 2. 全局状态查询
-npm list -g @churzexo/reasonweave
+npm list -g reasonweave
 
 # 3. 全局一键升级
-npm update -g @churzexo/reasonweave
+npm update -g reasonweave
 
 # 4. 进入任意项目目录，10 秒一键初始化全套规范 (Baton + Preflight + 门禁 + ADR + Backlog + 全客户端桩)
 cd /path/to/my-project
@@ -50,14 +43,20 @@ lab init
   按 $(lab path preflight)/README.md 接入不变量门禁。
   ```
 
-### 3.3 项目局部安装模式
+### 3.2 项目局部安装模式
 ```bash
-npm install -D @churzexo/reasonweave
+npm install -D reasonweave
 npx lab doctor
 ```
 
 ## 4. 发布与校验流水线
 ```bash
+# 1. 运行全套门禁
+npm test
+
+# 2. 发布到官方 npm (由 CI 自动化或本地执行)
+npm publish --access public
+```
 # 1. 运行自检
 npm test
 

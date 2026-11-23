@@ -1,5 +1,5 @@
 {
-  "name": "@churzexo/reasonweave",
+  "name": "reasonweave",
   "version": "1.3.2",
   "description": "Agent Engineering Framework (AEF) & Disciplines Toolkit for multi-agent software engineering",
   "type": "module",
@@ -9,7 +9,7 @@
     "url": "git+https://github.com/ChurzeXo/ReasonWeave.git"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public"
   },
   "bin": {
     "reasonweave": "bin/lab.mjs",

@@ -37,30 +37,23 @@
 
 ## 2. 首次安装 (Installation)
 
-### 2.1 模式 A：NPM 标准全局安装（GitHub Packages 私有源 · 推荐，零绕过）
+### 2.1 模式 A：NPM 官方标准全局安装（推荐，零配置 · 零凭据）
 面向新电脑、CI/CD 环境或下游消费方 Agent，完全通过标准 npm 生命周期管理（支持 `install`、`update`、`list`、`uninstall`）：
 
-1. **配置私有源鉴权（终端只需执行一次，替换 `ghp_xxx` 为只读 Token）**：
+1. **全局安装（无需任何 GitHub PAT 或账号配置）**：
    ```bash
-   echo "@churzexo:registry=https://npm.pkg.github.com" >> ~/.npmrc
-   echo "//npm.pkg.github.com/:_authToken=ghp_你的GitHubToken" >> ~/.npmrc
-   ```
-   > 💡 **获取 Token**：访问 GitHub [Personal Access Tokens (classic)](https://github.com/settings/tokens) 生成一个 Token，权限仅需勾选 **`read:packages`**。
-
-2. **全局安装**：
-   ```bash
-   npm install -g @churzexo/reasonweave
+   npm install -g reasonweave
    ```
 
-3. **查询与验签**：
+2. **查询与验签**：
    ```bash
-   npm list -g @churzexo/reasonweave
+   npm list -g reasonweave
    lab doctor  # 或 reasonweave doctor
    ```
 
-4. **后续一键升级**：
+3. **后续一键升级**：
    ```bash
-   npm update -g @churzexo/reasonweave
+   npm update -g reasonweave
    ```
 
 ### 2.2 模式 B：源码开发者模式（克隆本库 + 全局 npm link）

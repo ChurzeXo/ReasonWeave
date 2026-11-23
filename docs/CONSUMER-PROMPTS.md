@@ -20,15 +20,11 @@
 
 ### 0. 前置环境就绪声明（必读）
 
-**方式 1：标准 NPM 全局分发（新电脑 / 消费方 Agent 首选推荐）**：
-无需克隆源码仓库，配置私有源授权后直接安装并纳管生命周期：
+**方式 1：标准 NPM 官方全局分发（新电脑 / 消费方 Agent 首选推荐）**：
+无需克隆源码仓库，直接一条命令全局安装并纳管生命周期：
 ```bash
-# 1. 配置 GitHub Packages 认证（替换 ghp_xxx 为具备 read:packages 权限的 Token）
-echo "@churzexo:registry=https://npm.pkg.github.com" >> ~/.npmrc
-echo "//npm.pkg.github.com/:_authToken=ghp_你的GitHubToken" >> ~/.npmrc
-
-# 2. 全局标准安装与体检
-npm install -g @churzexo/reasonweave
+# 1. 全局标准安装与体检（无需任何 GitHub PAT 或账号配置）
+npm install -g reasonweave
 lab doctor
 ```
 

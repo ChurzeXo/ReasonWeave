@@ -42,10 +42,10 @@ fi
 ORPHAN_ENGINE=""
 if [[ -f "units/orphan/bin/lab-orphan.mjs" ]]; then
   ORPHAN_ENGINE="node units/orphan/bin/lab-orphan.mjs"
-elif [[ -f "node_modules/@churzexo/reasonweave/units/orphan/bin/lab-orphan.mjs" ]]; then
-  ORPHAN_ENGINE="node node_modules/@churzexo/reasonweave/units/orphan/bin/lab-orphan.mjs"
 elif [[ -f "node_modules/reasonweave/units/orphan/bin/lab-orphan.mjs" ]]; then
   ORPHAN_ENGINE="node node_modules/reasonweave/units/orphan/bin/lab-orphan.mjs"
+elif [[ -f "node_modules/@churzexo/reasonweave/units/orphan/bin/lab-orphan.mjs" ]]; then
+  ORPHAN_ENGINE="node node_modules/@churzexo/reasonweave/units/orphan/bin/lab-orphan.mjs"
 elif [[ -f "node_modules/lab-agent-toolkit/units/orphan/bin/lab-orphan.mjs" ]]; then
   ORPHAN_ENGINE="node node_modules/lab-agent-toolkit/units/orphan/bin/lab-orphan.mjs"
 elif command -v lab-orphan >/dev/null 2>&1; then
@@ -56,7 +56,7 @@ if [[ -n "$ORPHAN_ENGINE" ]]; then
   $ORPHAN_ENGINE check-diff --staged
 else
   echo "ℹ️ [Anti-Orphan] 未检测到 lab-orphan 引擎，已跳过接线对账（仅做语法校验）。"
-  echo "   挂载引擎：npm i -g @churzexo/reasonweave  或 npm i -D @churzexo/reasonweave"
+  echo "   挂载引擎：npm i -g reasonweave  或 npm i -D reasonweave"
   echo "   参考配方：\$(lab path orphan)/templates/wiring/"
 fi
 
