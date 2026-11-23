@@ -15,6 +15,7 @@
 | `baton-audit-runner` | `units/review-gate/clean-runner.mjs` | 双盲审计自动化独立重跑器 |
 | `lab-orphan` | `units/orphan/bin/lab-orphan.mjs` | 全局死代码与孤儿资产清道夫、反未接线联邦门禁 |
 | `spec-guard` / `drift-gate` | `units/spec-guard/bin/spec-guard.mjs` | 架构规约与物理接线守卫 CLI（ADR 机器信任根验签、三维热力表） |
+| `lab-skills` / `skills` | `units/skills/skills.mjs` | 微观工程原子技能库与上下文零污染切片引擎 |
 | `adr-init` | `units/adr/scripts/adr-init.sh` | 架构决策记录引导初始化 |
 
 ## 3. 消费方集成模式
@@ -22,7 +23,7 @@
 ### 3.1 全局安装与一键初始化 (小白推荐)
 ```bash
 # 1. 全局安装
-npm install -g lab-agent-toolkit
+npm install -g reasonweave
 
 # 2. 进入任意项目目录，10 秒一键初始化全套规范 (Baton + Preflight + 门禁 + ADR + Backlog + 全客户端桩)
 cd /path/to/my-project
@@ -36,7 +37,7 @@ lab init
 
 ### 3.2 项目局部安装模式
 ```bash
-npm install -D lab-agent-toolkit
+npm install -D reasonweave
 npx lab doctor
 ```
 

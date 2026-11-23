@@ -38,6 +38,11 @@
      - **Vertical Slice Proof**: Must prove end-to-end integration (impl + registration + caller entrypoint + test; `lab-orphan check-diff` must show 0 orphan exports).
      - **Exploit-First Proof (先红后绿)**: For bug/vulnerability remediation, the executor MUST prove the negative test failed before the fix (`exit != 0` on unpatched codebase) and passes after the fix (`exit == 0`). "Self-reported fix" without initial exploit proof is rejected.
      - **Tool Profile Governance**: When the handoff specifies `tool_profile: readonly`, the executor is strictly forbidden from mutating production code (`evidence_paths` must only contain readonly logs/reports/reviews or sandbox files; production code changes will be hard blocked by `baton receipt`).
+9. **Two-Stage Review Contract (ADR-0015)**:
+   For code review and auditing tasks, evaluation MUST be decoupled into two independent dimensions:
+   - **Stage 1: Spec Compliance (规格与契约符合度)**: Does the implementation strictly fulfill all explicit requirements, boundary conditions, and interfaces without unapproved deviations or reductions?
+   - **Stage 2: Code Quality & Architecture (代码与架构质量)**: Is the code clean, robust, anti-orphan, properly tested, type-safe, and free from regression or dead code?
+   Both stages must pass for a final `GO` verdict. Any critical finding in either stage triggers `NO-GO` / `REJECTED`.
 
 ---
 

@@ -16,6 +16,7 @@ graph TD
     SPECGUARD["units/spec-guard (规约与漂移守卫)"]
     BACKLOG["units/backlog (待办捕获)"]
     ORPHAN["units/orphan (孤儿清道夫与死代码治理)"]
+    SKILLS["units/skills (微观原子技能库与切片引擎)"]
     
     PLAYBOOK -.->|"理论出处"| PREFLIGHT
     PLAYBOOK -.->|"理论出处"| REVIEW
@@ -25,7 +26,10 @@ graph TD
     PLAYBOOK -.->|"理论出处"| HANDOFFS
     PLAYBOOK -.->|"理论出处"| WORKTREE
     PLAYBOOK -.->|"理论出处"| ORPHAN
+    PLAYBOOK -.->|"理论出处"| SKILLS
     
+    SKILLS -.->|"提供切片与审查包原语"| HANDOFFS
+    WORKTREE -.->|"物理沙箱执行底座"| SKILLS
     SPECGUARD -.->|"对账 Invariant & Status"| ADR
     PREFLIGHT -.->|"可协同编排 (pre-commit.d)"| SPECGUARD
     PREFLIGHT -.->|"可协同编排 (pre-commit.d)"| REVIEW
@@ -44,6 +48,7 @@ graph TD
 | `units/adr/` | Shell 引导 + 模板 | `VERSION.md` | bash | 低频 (模板档位演进) |
 | `units/spec-guard/` | Node CLI 引擎 | `VERSION.md` / README | Node.js >= 18 | 中频 (规约对账与边界探针演进) |
 | `units/orphan/` | Node CLI 引擎 | `VERSION.md` / README | Node.js >= 18 | 中频 (死代码与孤儿依赖/凭证治理) |
+| `units/skills/` | Node CLI 引擎 | `VERSION.md` / README | Node.js >= 18, git | 中频 (微观原子技能与切片流水线演进) |
 | `units/backlog/` | 规范文档 + 模板 | `VERSION.md` | 无 | 低频 (记录格式演进) |
 | `units/playbook/` | 文档与方法论全集 | `README.md` | 无 | 持续积累 |
 

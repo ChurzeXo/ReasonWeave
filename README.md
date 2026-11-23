@@ -49,6 +49,7 @@ npm link
 | 🛡️ `baton-audit-runner` | 双盲审计自动化运行器（无上下文独立重跑测试，Exit Code 真实裁决） |
 | 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫、反未接线与反假接线三层治理门禁（S1–S3 求解器、L1/L2/L3 正交解耦、新增 `check-deps [--strict]` 孤儿依赖求解器与 `scan-secrets [--strict]` 零调用假凭证探针，v1.4.2） |
 | 🛡️ `spec-guard` / `drift-gate` | 架构规约与物理接线守卫（P3' 三元映射对账、三维热力表、ADR 机器信任根验签、约定阈值解耦，v2.2.1） |
+| ⚡ `lab-skills` / `skills` | 微观工程原子技能库与分发引擎（TDD、Systematic Debugging、先验后报、需求澄清，上下文零污染切片流水线，v0.1.0） |
 | 📐 `adr-init` | 架构决策记录 (ADR) 快速引导初始化 |
 
 ---
@@ -149,11 +150,12 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 | **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`)，v1.2.2 新增 `--no-suppress` 穿透扫描、Ruff Bandit 诚实降级结构化 JSON 标记与 macOS bash 3.2 兼容自愈、顶层同构 engine 元数据 |
 | **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton v2.38.1），统一会话ID、防跨会话硬门禁、会话身份锁、Rule 8 分级 SDD 验收与负向测试先行证明、`--profile readonly` 生产源码写保护物理硬门禁、密码学审计凭据签章、出站防注入提示词、无条件下车、五态状态机与事件唤醒 |
 | **worktree** | [`units/worktree/`](units/worktree/) | 基于 Git Worktree 的物理目录隔离调度引擎，为多 Agent 并发分配独立沙盒并智能共享依赖缓存 |
+| **skills** | [`units/skills/`](units/skills/) | 微观工程原子技能库与分发引擎（v0.1.0，ADR-0015），官方沉淀 TDD、系统化调试、先验后报、需求澄清 4 大原子技能，带 Iron Law 与借口阻断表，提供 `task-brief` 与 `review-package` 零污染切片流水线 |
 | **specs** | [`specs/`](specs/) | Spec Kit 活文档模板全集（`specs/templates/` 01-research 到 05-evidence），赋能 RePPIT 5 步规约驱动开发闭环 (ADR-0012) |
 | **playbook** | [`units/playbook/`](units/playbook/) | Agent Engineering Framework (AEF) 完整方法论手册与模板库（含第 20/21 章战法手册） |
 
-> **向后兼容保证**：根目录下保留了指向各 Unit 的软链接（`adr`、`preflight`、`handoffs`、`orphan`、`spec-guard` 等），无论通过 `$(lab path <unit>)` 还是旧绝对路径均可无缝兼容。
-> **版本以各 Unit 的 `VERSION.md` 为准**；`lab list` 可随时列出全部 9 个单元。
+> **向后兼容保证**：根目录下保留了指向各 Unit 的软链接（`adr`、`preflight`、`handoffs`、`orphan`、`spec-guard`、`skills` 等），无论通过 `$(lab path <unit>)` 还是旧绝对路径均可无缝兼容。
+> **版本以各 Unit 的 `VERSION.md` 为准**；`lab list` 可随时列出全部 10 个单元。
 
 ---
 

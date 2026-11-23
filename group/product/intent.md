@@ -1,7 +1,7 @@
-# Lab 能力库产品意图 (Product Intent)
+# ReasonWeave 能力库产品意图 (Product Intent)
 
 ## 1. 意图概述 (Overview)
-`lab/` 是一套**面向多 Agent / 多端现代软件工程的可复用能力库**（Agent Engineering Framework & Disciplines）。
+`ReasonWeave`（原 `lab/`）是一套**面向多 Agent / 多端现代软件工程的可复用能力库**（Agent Engineering Framework & Disciplines）。
 它不是一个具体的业务产品代码库，而是为所有软件研发项目提供可插拔的 Agent 辅助工程纪律、规范机件与协作协议。
 
 ## 2. 目标用户与使用场景
@@ -12,6 +12,10 @@
   - 提交前仓库不变量回归探测（`preflight`）
   - 本地化多层静态扫描与代码质量防线（`review-gate`）
   - 跨仓/同仓 Agent 任务交割与无损闭环（`handoffs` / `baton`：像调 API 一样无损直达，双盲审计与事件驱动无感闭环）
+  - 全局架构漂移与规约守卫（`spec-guard`）
+  - 全局死代码与孤儿资产清道夫（`orphan`）
+  - 多 Agent 并发物理隔离调度与依赖缓存共享（`worktree`）
+  - 微观工程原子技能库与上下文零污染切片引擎（`skills`：TDD、系统化排错、先验后报、需求澄清）
   - AEF 体系化落地全套参考（`playbook`）
 
 ## 3. 核心价值主张 (Value Proposition)

@@ -19,6 +19,7 @@ units/               独立工程单元（各模块自治上下文）
   ├── backlog/       待办捕获制度与模板
   ├── worktree/      基于 Git Worktree 的物理目录隔离调度引擎
   ├── orphan/        全局死代码与孤儿资产清道夫公共单元 (Core + Adapters)
+  ├── skills/        微观工程原子技能库与上下文零污染切片引擎 (TDD/Debug/Verification/Brainstorming)
   └── playbook/      Agent Engineering Framework 方法论全集
 specs/               Spec Kit 规划与实施产物
 docs/                辅助文档与待办 (docs/backlogs/)
@@ -27,7 +28,7 @@ docs/                辅助文档与待办 (docs/backlogs/)
 
 ## Isolation & Unit 规则
 1. **Unit 自治**：各 Unit 独立维护自身的 `VERSION.md`、`CHANGELOG.md` 及核心规范。
-2. **禁止破坏根目录兼容层**：根目录下的软链接（`handoffs`、`preflight` 等）必须保持完好，确保现有消费方不中断。
+2. **禁止破坏根目录兼容层**：根目录下的软链接（`handoffs`、`preflight`、`skills` 等）必须保持完好，确保现有消费方不中断。
 3. **运行态与能力库严格分离**：`units/handoffs/` 内的交接票据与回执属于本地使用记录，严禁进入 git 跟踪或打包发布。
 
 ## Key Documents

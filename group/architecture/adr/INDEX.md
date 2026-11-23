@@ -21,6 +21,7 @@
 | 0012 | 规约驱动开发 (SDD) 与 RePPIT 闭环分级工程防护架构决策 | 🔒 Frozen | 2026-11-22 | spec-guard / review-gate / orphan / handoffs / playbook / global | `0012-spec-driven-development-reppit-and-tiered-guardrails.md` |
 | 0013 | 全 CLI 物理契约对称治理、单测零环境寄生与防御性探针架构决策 | 🔒 Frozen | 2026-11-22 | bin / handoffs / orphan / spec-guard / worktree / review-gate / global | `0013-universal-cli-contract-hermetic-testing-and-defensive-probes.md` |
 | 0014 | 全局工程生态更名为 ReasonWeave、权威远端迁移与文档规约联动防漂移律 | 🔒 Frozen | 2026-11-22 | global / bin / tests / doc | `0014-reasonweave-rebranding-and-doc-code-synchronization-invariant.md` |
+| 0015 | 微观工程认知规训、渐进式原子技能库与双核门禁融合架构决策 | 🔒 Frozen | 2026-11-23 | units/skills / playbook / handoffs / global | `0015-micro-engineering-skills-and-dual-core-gate-invariant.md` |
 
 ## 状态说明
 - **Proposed** — 已起草，等待评审。不入 Agent 上下文。

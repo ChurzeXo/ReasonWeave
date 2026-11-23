@@ -67,13 +67,28 @@ Skill 是**按需懒加载**的能力包：系统提示里只有 `name + descrip
 └── 否，且很长 → Skill + references/ 子文件（二次懒加载）
 ```
 
-经验值：`SKILL.md` 正文 < 300 行；超了就拆 references。
+经验值：`SKILL.md` 正文 < 300 行（且字节数严格 < 20,000 bytes，ADR-0015）；超了就拆 references。
 
-## 6. 新项目接入
+## 6. 官方微观原子技能库与一键接入 (units/skills)
 
-1. 建 `.agents/skills/<project-skill>/SKILL.md`，按 §4 模板写
-2. 根/Unit AGENTS.md 写明路径与优先级（§3）
-3. 通用 skill 从全局目录复用，**不要复制进项目**（复制 = 分叉 = 日后不一致）
+ReasonWeave 官方沉淀了 4 大开箱即用的微观工程原子技能（`units/skills`，ADR-0015）：
+- `systematic-debugging`：根因溯源四步法 + 未明根因禁改代码 + 跨组件边界插桩 + 3 振出局反思架构；
+- `test-driven-development`：无红测不写生产代码 + 先红后绿再重构；
+- `verification-before-completion`：声称完成必须当场执行完整命令核验 Exit 0 + 证据先于主张；
+- `brainstorming`：复杂需求必须先澄清方案与权衡，产出 Design Doc 经确认后开工。
+
+可通过 CLI 一键挂载：
+```bash
+lab skills install --project   # 挂载到当前项目 .agents/skills/
+lab skills install --global    # 挂载到用户全局 ~/.agents/skills/
+```
+
+## 7. 新项目接入
+
+1. 运行 `lab skills install --project` 挂载官方微观原子技能
+2. 若有项目特有约束，按 §4 模板在 `.agents/skills/<project-skill>/SKILL.md` 补充
+3. 根/Unit AGENTS.md 写明路径与优先级（§3）
+4. 通用 skill 从全局目录复用，**不要复制进项目**（复制 = 分叉 = 日后不一致）
 
 ---
 

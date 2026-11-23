@@ -62,6 +62,12 @@ const CLI_TARGETS = [
     expectedVersion: readSemVer(path.join(REPO_ROOT, 'units', 'review-gate', 'VERSION.md')),
     sourceFile: 'units/review-gate/VERSION.md',
   },
+  {
+    name: 'lab-skills (units/skills)',
+    binPath: path.join(REPO_ROOT, 'units', 'skills', 'skills.mjs'),
+    expectedVersion: readSemVer(path.join(REPO_ROOT, 'units', 'skills', 'VERSION.md')),
+    sourceFile: 'units/skills/VERSION.md',
+  },
 ];
 
 describe('全 CLI 对称契约与版本单一事实源（SSOT）门禁测试', () => {

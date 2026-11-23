@@ -42,6 +42,7 @@
 | 宪法 T4 | handoff 是 T4 的唯一实现方式 |
 | [07 backlog](07-backlog.md) | 跨仓缺口 → handoff；不跨仓的"以后再说" → backlog |
 | [05 ADR](05-adr.md) | handoff 闭环后若改变了本仓架构决策 → 补 ADR |
+| [09 skills](09-skills.md) / `units/skills` | 审查流调用 `review-package` 与 `task-brief` 原语，回执遵循 ADR-0015 两阶段审查标准 (Spec vs Quality) |
 | [12 gates](12-gates.md) | `handoff check` 是收尾门禁的硬项之一 |
 | [11 Evidence](11-evidence.md) | `handoff close` 的验收结论本身是 E5 级证据 |
 

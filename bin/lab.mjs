@@ -39,6 +39,7 @@ ReasonWeave CLI · v${LAB_VERSION} (AEF v1.0 · alias: lab, rw)
   lab audit-runner [cmd]      双盲审计自动化运行器 (别名: lab review-gate)
   lab orphan [cmd]            运行死代码与孤儿资产清道夫 (别名: lab lab-orphan)
   lab spec-guard [cmd]        架构规约与漂移守卫 CLI (别名: lab drift-gate)
+  lab skills [cmd]            微观工程原子技能库与切片引擎 (别名: lab lab-skills)
   lab adr [cmd]               初始化项目架构决策记录 (别名: lab adr-init)
   lab preflight [cmd]         运行项目提交前置不变量探针
   lab migrate [dir]           将老项目中的硬编码路径 (~/Documents/lab/...) 一键迁移为动态规范
@@ -52,6 +53,7 @@ ReasonWeave CLI · v${LAB_VERSION} (AEF v1.0 · alias: lab, rw)
   baton-worktree              管理多 Agent 物理隔离工作树
   baton-audit-runner          双盲审计独立进程自动重跑器
   lab-orphan                  死代码与孤儿资产清道夫 CLI
+  lab-skills / skills         微观工程原子技能库与切片引擎
   adr-init                    初始化项目架构决策记录 (ADR)
   spec-guard / drift-gate     架构规约与漂移守卫 CLI
 `);
@@ -68,6 +70,7 @@ function listUnits() {
     { name: 'backlog', desc: '待办捕获制度 (一任务一文件)' },
     { name: 'worktree', desc: '基于 Git Worktree 的物理目录隔离调度引擎' },
     { name: 'orphan', desc: '全局死代码与孤儿资产清道夫公共单元 (Core + Adapters)' },
+    { name: 'skills', desc: '微观工程原子技能库与上下文零污染切片引擎' },
     { name: 'playbook', desc: 'Agent Engineering Framework (AEF) 完整方法论' },
   ];
   for (const u of units) {
@@ -230,6 +233,7 @@ function doctor() {
     { name: 'lab-orphan (orphan)', path: path.join(UNITS_DIR, 'orphan', 'bin', 'lab-orphan.mjs'), verArg: '--version' },
     { name: 'spec-guard (spec-guard)', path: path.join(UNITS_DIR, 'spec-guard', 'bin', 'spec-guard.mjs'), verArg: '--version' },
     { name: 'baton-worktree (worktree)', path: path.join(UNITS_DIR, 'worktree', 'worktree.mjs'), verArg: '--help' },
+    { name: 'lab-skills (skills)', path: path.join(UNITS_DIR, 'skills', 'skills.mjs'), verArg: '--version' },
     { name: 'review-gate scan.sh', path: path.join(UNITS_DIR, 'review-gate', 'templates', 'scan.sh') },
   ];
   for (const item of internalCli) {
@@ -828,6 +832,12 @@ switch (command) {
   case 'drift-gate': {
     const specGuardBin = path.join(UNITS_DIR, 'spec-guard', 'bin', 'spec-guard.mjs');
     forwardToBinary(specGuardBin, args.slice(1));
+    break;
+  }
+  case 'skills':
+  case 'lab-skills': {
+    const skillsBin = path.join(UNITS_DIR, 'skills', 'skills.mjs');
+    forwardToBinary(skillsBin, args.slice(1));
     break;
   }
   case 'adr':

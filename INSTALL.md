@@ -65,6 +65,7 @@ npm link
 | `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执（v1.2.2，支持 `--version`） |
 | `lab-orphan` | 死代码与孤儿资产清道夫（v1.4.2，支持 `--version`，也可 `lab orphan <cmd>`） |
 | `spec-guard`（别名 `drift-gate`） | 架构规约与物理接线守卫、ADR 机器信任根验签、三维热力表（v2.2.1，支持 `--version`） |
+| `lab-skills`（别名 `skills`） | 微观工程原子技能库与上下文零污染切片引擎（v0.1.0，支持 `--version`，也可 `lab skills <cmd>`） |
 | `adr-init` | 架构决策记录 (ADR) 三档脚手架 |
 
 > **无全局写权限时**：把 `bin` 与 `units/handoffs` 加入 PATH，例如 `export PATH="$HOME/Documents/lab/bin:$HOME/Documents/lab/units/handoffs:$PATH"`；`baton link` 会自愈 `baton` / `handoff` 的 shim 到 `~/.local/bin`。
