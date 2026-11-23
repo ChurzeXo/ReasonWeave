@@ -16,7 +16,7 @@
 | **worktree** | v0.1.0 | 多 Agent 物理工作树隔离调度（动态对齐 `VERSION.md`，支持 `--version`） |
 | **review-gate** | **v1.2.2** | SAST + 双盲审计独立重跑器（ADR-0011 / ADR-0012 / ADR-0013）：`scan.sh --no-suppress` 穿透扫描、OpenGrep 原生模式对称注入 `engine: "opengrep"` 结构化元数据、Ruff Bandit 诚实降级、macOS bash 3.2 兼容自愈 |
 | **specs / playbook** | — | Spec Kit 活文档模板全集 (`specs/templates/` 01-research 到 05-evidence) 与 RePPIT 五步工程闭环手册 |
-| **adr / backlog** | v1.0.1 / v1.2.0 | 架构决策记录 (ADR-0011 ~ ADR-0013 🔒Frozen)、待办捕获跟踪 (Backlog 12 ~ 14) |
+| **adr / backlog** | v1.0.1 / v1.2.0 | 架构决策记录 (ADR-0011 ~ ADR-0014 🔒Frozen)、待办捕获跟踪 (Backlog 12 ~ 15) |
 
 > 版本事实源 = `units/<unit>/VERSION.md` 与 `$(lab path handoffs)/README.md`。
 > `package.json` 当前为 `1.3.1`（随全局能力演进做 minor/patch 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
