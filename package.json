@@ -12,20 +12,20 @@
     "registry": "https://npm.pkg.github.com"
   },
   "bin": {
-    "reasonweave": "./bin/lab.mjs",
-    "rw": "./bin/lab.mjs",
-    "lab": "./bin/lab.mjs",
-    "baton": "./units/handoffs/handoff.mjs",
-    "agent-baton": "./units/handoffs/handoff.mjs",
-    "baton-worktree": "./units/worktree/worktree.mjs",
-    "baton-audit-runner": "./units/review-gate/clean-runner.mjs",
-    "handoff": "./units/handoffs/handoff.mjs",
-    "lab-orphan": "./units/orphan/bin/lab-orphan.mjs",
-    "adr-init": "./units/adr/scripts/adr-init.sh",
-    "spec-guard": "./units/spec-guard/bin/spec-guard.mjs",
-    "drift-gate": "./units/spec-guard/bin/spec-guard.mjs",
-    "lab-skills": "./units/skills/skills.mjs",
-    "skills": "./units/skills/skills.mjs"
+    "reasonweave": "bin/lab.mjs",
+    "rw": "bin/lab.mjs",
+    "lab": "bin/lab.mjs",
+    "baton": "units/handoffs/handoff.mjs",
+    "agent-baton": "units/handoffs/handoff.mjs",
+    "baton-worktree": "units/worktree/worktree.mjs",
+    "baton-audit-runner": "units/review-gate/clean-runner.mjs",
+    "handoff": "units/handoffs/handoff.mjs",
+    "lab-orphan": "units/orphan/bin/lab-orphan.mjs",
+    "adr-init": "units/adr/scripts/adr-init.sh",
+    "spec-guard": "units/spec-guard/bin/spec-guard.mjs",
+    "drift-gate": "units/spec-guard/bin/spec-guard.mjs",
+    "lab-skills": "units/skills/skills.mjs",
+    "skills": "units/skills/skills.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -22,6 +22,9 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@churzexo'
 
+      - name: Link CLIs
+        run: npm link
+
       - name: Run Test Suite
         run: npm test
 
