@@ -37,15 +37,31 @@
 
 ## 2. 首次安装 (Installation)
 
-### 2.1 模式 A：NPM 全局分发安装（小白推荐 · 30 秒开箱即用）
-无需克隆本能力库源码，在任意终端执行：
-```bash
-npm install -g reasonweave
-```
-验证安装：
-```bash
-reasonweave doctor
-```
+### 2.1 模式 A：NPM 标准全局安装（GitHub Packages 私有源 · 推荐）
+无需手动克隆源码，完全通过标准 npm 生命周期管理（支持 `install`、`update`、`list`、`uninstall`）：
+
+1. **配置私有源鉴权（只需配置一次）**：
+   在用户家目录的 `~/.npmrc` 中追加 GitHub Packages 授权（Token 仅需 `read:packages` 权限）：
+   ```ini
+   @churzexo:registry=https://npm.pkg.github.com
+   //npm.pkg.github.com/:_authToken=ghp_你的GitHubToken
+   ```
+
+2. **全局安装**：
+   ```bash
+   npm install -g @churzexo/reasonweave
+   ```
+
+3. **查询与验签**：
+   ```bash
+   npm list -g @churzexo/reasonweave
+   reasonweave doctor  # 或 lab doctor
+   ```
+
+4. **后续一键升级**：
+   ```bash
+   npm update -g @churzexo/reasonweave
+   ```
 
 ### 2.2 模式 B：源码开发者模式（克隆本库 + 全局 npm link）
 将仓库解压 / 克隆到任意目录（例如 `~/Documents/lab`），在仓库根目录运行：

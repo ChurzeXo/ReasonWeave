@@ -26,10 +26,15 @@
 
 ### 2. 全局安装 CLI (两种模式)
 
-#### 模式 A：NPM 全局分发（小白极速模式 · 推荐）
-无需克隆本能力库源码，在终端直接运行：
+#### 模式 A：NPM 标准全局分发（GitHub Packages 私有源 · 推荐）
+在 `~/.npmrc` 中配置授权后，在终端直接运行：
 ```bash
-npm install -g reasonweave
+npm install -g @churzexo/reasonweave
+```
+查询与升级：
+```bash
+npm list -g @churzexo/reasonweave
+npm update -g @churzexo/reasonweave
 ```
 
 #### 模式 B：源码开发者模式（克隆本库 + 全局 npm link）
