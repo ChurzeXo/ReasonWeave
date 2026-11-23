@@ -16,7 +16,7 @@ describe('Lab AEF Toolkit: All-in-One init (lab init) 集成测试', () => {
 
     try {
       // 1. 初始化 git 仓库
-      execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' });
+      execSync('git init -b main && git config user.email "test@example.com" && git config user.name "Test"', { cwd: tmpDir, stdio: 'pipe' });
 
       // 2. 执行 lab init
       const initOut = execSync(`node ${LAB_BIN} init "AwesomeApp"`, {
@@ -89,7 +89,7 @@ describe('Lab AEF Toolkit: All-in-One init (lab init) 集成测试', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-init-existing-'));
 
     try {
-      execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' });
+      execSync('git init -b main && git config user.email "test@example.com" && git config user.name "Test"', { cwd: tmpDir, stdio: 'pipe' });
       fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'my-legacy-app', version: '0.1.0' }, null, 2));
       fs.writeFileSync(path.join(tmpDir, 'README.md'), '# Legacy App\nExisting documentation\n');
       fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), '# Existing Rules\nExisting custom guidelines\n');
@@ -117,7 +117,7 @@ describe('Lab AEF Toolkit: All-in-One init (lab init) 集成测试', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-zspec-test-'));
 
     try {
-      execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' });
+      execSync('git init -b main && git config user.email "test@example.com" && git config user.name "Test"', { cwd: tmpDir, stdio: 'pipe' });
       const out = execSync(`node ${LAB_BIN} zspec init "ZSpecApp"`, { cwd: tmpDir, encoding: 'utf8' });
       assert.match(out, /全套工程规范一键初始化成功/);
       assert.ok(fs.existsSync(path.join(tmpDir, 'constitution.md')));
