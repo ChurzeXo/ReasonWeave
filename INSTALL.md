@@ -5,7 +5,7 @@
 
 ---
 
-## 0. 当前版本快照（2026-11-22）
+## 0. 当前版本快照（2026-11-23）
 
 | 组件 | 版本 | 备注 |
 |---|---|---|
@@ -19,7 +19,7 @@
 | **adr / backlog** | v1.0.1 / v1.2.0 | 架构决策记录 (ADR-0011 ~ ADR-0014 🔒Frozen)、待办捕获跟踪 (Backlog 12 ~ 15) |
 
 > 版本事实源 = `units/<unit>/VERSION.md` 与 `$(lab path handoffs)/README.md`。
-> `package.json` 当前为 `1.3.1`（随全局能力演进做 minor/patch 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
+> `package.json` 当前为 `1.3.2`（随全局能力演进做 minor/patch 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
 
 ---
 
@@ -37,15 +37,15 @@
 
 ## 2. 首次安装 (Installation)
 
-### 2.1 模式 A：NPM 标准全局安装（GitHub Packages 私有源 · 推荐）
-无需手动克隆源码，完全通过标准 npm 生命周期管理（支持 `install`、`update`、`list`、`uninstall`）：
+### 2.1 模式 A：NPM 标准全局安装（GitHub Packages 私有源 · 推荐，零绕过）
+面向新电脑、CI/CD 环境或下游消费方 Agent，完全通过标准 npm 生命周期管理（支持 `install`、`update`、`list`、`uninstall`）：
 
-1. **配置私有源鉴权（只需配置一次）**：
-   在用户家目录的 `~/.npmrc` 中追加 GitHub Packages 授权（Token 仅需 `read:packages` 权限）：
-   ```ini
-   @churzexo:registry=https://npm.pkg.github.com
-   //npm.pkg.github.com/:_authToken=ghp_你的GitHubToken
+1. **配置私有源鉴权（终端只需执行一次，替换 `ghp_xxx` 为只读 Token）**：
+   ```bash
+   echo "@churzexo:registry=https://npm.pkg.github.com" >> ~/.npmrc
+   echo "//npm.pkg.github.com/:_authToken=ghp_你的GitHubToken" >> ~/.npmrc
    ```
+   > 💡 **获取 Token**：访问 GitHub [Personal Access Tokens (classic)](https://github.com/settings/tokens) 生成一个 Token，权限仅需勾选 **`read:packages`**。
 
 2. **全局安装**：
    ```bash
@@ -55,7 +55,7 @@
 3. **查询与验签**：
    ```bash
    npm list -g @churzexo/reasonweave
-   reasonweave doctor  # 或 lab doctor
+   lab doctor  # 或 reasonweave doctor
    ```
 
 4. **后续一键升级**：
@@ -75,7 +75,7 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| `reasonweave`（别名 `lab`, `rw`） | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检 (`lab doctor`)、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 (v1.3.1，支持 `--version`) |
+| `reasonweave`（别名 `lab`, `rw`） | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检 (`lab doctor`)、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 (v1.3.2，支持 `--version`) |
 | `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、统一会话ID、防跨会话硬门禁、会话锁、密码学防伪回执、事件驱动唤醒（v2.38.1） |
 | `baton-worktree` | 为工单分配 / 回收独立物理工作树（v0.1.0，支持 `--version`） |
 | `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执（v1.2.2，支持 `--version`） |
@@ -194,7 +194,7 @@ baton check               # 本仓交接 / 回执合规自检
 
 ## 5. 常用命令速查 (Quick Reference)
 
-### 5.1 能力库总管 `lab` (v1.3.1)
+### 5.1 能力库总管 `lab` (v1.3.2)
 
 ```bash
 lab --version                   # 打印当前 Toolkit 引擎版本

@@ -26,15 +26,26 @@
 
 ### 2. 全局安装 CLI (两种模式)
 
-#### 模式 A：NPM 标准全局分发（GitHub Packages 私有源 · 推荐）
-在 `~/.npmrc` 中配置授权后，在终端直接运行：
+#### 模式 A：NPM 标准全局分发（GitHub Packages 私有源 · 推荐，零绕过）
+面向新电脑、独立工作区或消费方 Agent，无需克隆本仓库，终端一键执行：
 ```bash
+# 1. 配置私有源鉴权（替换 ghp_xxx 为具备 read:packages 权限的 Token）
+echo "@churzexo:registry=https://npm.pkg.github.com" >> ~/.npmrc
+echo "//npm.pkg.github.com/:_authToken=ghp_你的GitHubToken" >> ~/.npmrc
+
+# 2. 全局标准安装
 npm install -g @churzexo/reasonweave
-```
-查询与升级：
-```bash
+
+# 3. 验证安装与环境体检
 npm list -g @churzexo/reasonweave
-npm update -g @churzexo/reasonweave
+lab doctor
+```
+
+日常维护与升级命令：
+```bash
+npm update -g @churzexo/reasonweave    # 一键升级到最新发布版本
+npm list -g --depth=0                  # 查询当前全局包状态
+npm uninstall -g @churzexo/reasonweave # 干净卸载
 ```
 
 #### 模式 B：源码开发者模式（克隆本库 + 全局 npm link）

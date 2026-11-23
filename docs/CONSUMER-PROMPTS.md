@@ -14,19 +14,31 @@
 6. [场景五：已接入消费方升级到最新版能力库](#场景五已接入消费方升级到最新版能力库)
 7. [场景六：消费方接入与升级 spec-guard v2.0 机器信任根与接线守卫](#场景六消费方接入与升级-spec-guard-v20-机器信任根与接线守卫)
 8. [场景七：消费方接入或升级 orphan v1.4.2 反假接线三层治理与 AGENTS/GEMINI 极简路由](#场景七消费方接入或升级-orphan-v142-反假接线三层治理与-agentsgemini-极简路由)
-9. [场景八：消费方基于 ReasonWeave v1.3.1 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）](#场景八消费方基于-reasonweave-v131-新架构全面排查整改与优化vibe-security-穿透防线--依赖瘦身--sddreppit-落地)
+9. [场景八：消费方基于 ReasonWeave v1.3.2 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）](#场景八消费方基于-reasonweave-v132-新架构全面排查整改与优化vibe-security-穿透防线--依赖瘦身--sddreppit-落地)
 
 ---
 
 ### 0. 前置环境就绪声明（必读）
-由于本能力库目前在本地开发态，各机器**首次使用前**、以及**每次能力库功能更新后**，都需在终端重跑一次全局软链接挂载：
 
+**方式 1：标准 NPM 全局分发（新电脑 / 消费方 Agent 首选推荐）**：
+无需克隆源码仓库，配置私有源授权后直接安装并纳管生命周期：
+```bash
+# 1. 配置 GitHub Packages 认证（替换 ghp_xxx 为具备 read:packages 权限的 Token）
+echo "@churzexo:registry=https://npm.pkg.github.com" >> ~/.npmrc
+echo "//npm.pkg.github.com/:_authToken=ghp_你的GitHubToken" >> ~/.npmrc
+
+# 2. 全局标准安装与体检
+npm install -g @churzexo/reasonweave
+lab doctor
+```
+
+**方式 2：源码开发者模式（克隆本库 + 全局 npm link）**：
 ```bash
 cd ~/Documents/lab && npm link
 ```
 
-挂载后系统全局拥有 `reasonweave`（别名 `lab`, `rw`）、`baton` / `agent-baton` / `handoff`、`baton-worktree`、`baton-audit-runner`、`lab-orphan`、`spec-guard` / `drift-gate`、`adr-init`。
-**为什么更新后必须重跑**：新增 CLI 的 bin shim 只在 `npm link` 时生成；老软链不会凭空多出新命令。
+挂载后系统全局拥有 `reasonweave`（别名 `lab`, `rw`）、`baton` / `agent-baton` / `handoff`、`baton-worktree`、`baton-audit-runner`、`lab-orphan`、`spec-guard` / `drift-gate`、`lab-skills` / `skills`、`adr-init`。
+**为什么更新后必须重跑**：新增 CLI 的 bin shim 只在 npm install/link 时生成；老软链不会凭空多出新命令。
 
 本项目另需执行一次接入桩刷新（幂等）并验证：
 
@@ -350,13 +362,13 @@ baton install && baton link --check && lab doctor && baton check
 
 ---
 
-### 场景八：消费方基于 ReasonWeave v1.3.1 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）
+### 场景八：消费方基于 ReasonWeave v1.3.2 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）
 
-> 📋 **适用场景**：消费方项目（如 Tappy, iggle, Swoop, Prospero 等）需按 `ReasonWeave`（原 `lab-agent-toolkit`）v1.3.1 新架构进行深度的**安全穿透排查（阻断 AI 免检注释掩盖漏洞）**、**依赖清单可达性瘦身（清理死依赖与孤儿包）**、**硬编码敏感凭据扫描**，以及**规约驱动开发 (SDD) 与 RePPIT 五步闭环**的工程实践落地。  
+> 📋 **适用场景**：消费方项目（如 Tappy, iggle, Swoop, Prospero 等）需按 `ReasonWeave`（原 `lab-agent-toolkit`）v1.3.2 新架构进行深度的**安全穿透排查（阻断 AI 免检注释掩盖漏洞）**、**依赖清单可达性瘦身（清理死依赖与孤儿包）**、**硬编码敏感凭据扫描**，以及**规约驱动开发 (SDD) 与 RePPIT 五步闭环**的工程实践落地。  
 > 📋 **使用方式**：复制下方整块 Markdown 发送给**消费方项目**的 AI Agent 会话（如 WorkBuddy、Claude Code、Cursor 等）。
 
 ````markdown
-请根据上位工程能力库 `ReasonWeave`（原 `lab-agent-toolkit`）v1.3.1 新架构规范，对本项目进行一次全面的架构排查、安全穿透体检、依赖可达性瘦身与规约治理对齐。
+请根据上位工程能力库 `ReasonWeave`（原 `lab-agent-toolkit`）v1.3.2 新架构规范，对本项目进行一次全面的架构排查、安全穿透体检、依赖可达性瘦身与规约治理对齐。
 
 ### 背景与新架构核心能力（ADR-0011 / ADR-0012 / ADR-0013 / Baton v2.38.1）
 1. **Vibe Security 穿透扫描（units/review-gate v1.2.2）**：禁止通过 `# nosem` / `# nosemgrep` 等内联忽略注释掩盖 AI 或历史代码引入的高危漏洞；提供无 OpenGrep 时的诚实 Bandit 兜底（`engine: fallback-ruff-bandit`），对齐 ADR-0013 顶层 `engine`/`fallback`/`version` 同构元数据。
