@@ -6,6 +6,22 @@
 
 ---
 
+> **v2.41.0 里程碑（2026-11-24 · 跨客户端交接角色锚定与状态机归属确定性 · 闭环 ADR-0016 · 解决建单 from_lane 为空与上游角色倒错 · 出站提示词显式双向角色锚定 · 唤醒指引分流 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户反馈在跨 AI 客户端（Antigravity, WorkBuddy, Cursor, Claude Code）多窗口协作时，存在严重角色漂移；排查发现建单默认 `from_lane: ''` 导致看板失效、`handoff-status` 保底判定将 `rejected_by` 错当发起方造成上游角色倒错、以及 `deliver`/`wait` 输出混淆诱导接收方越权闭环。落实 ADR-0016 实施全链路根治：
+> 1. **发起方身份权威自推导与建单防空闭环（SSOT Initiator Auto-Bind）**：
+>    - `cmdNewIntra` 引入权威推导链：`--from/--as > HANDOFF_LANE > getSessionLane() > default_initiator_lane (impl)`；
+>    - 建单时若当前会话未绑定身份锁，原子固化 `setSessionLane(fromLane)`，强制保障 `from_lane` 非空；
+>    - 彻底根除工单 `from_lane: ''` 导致的看板待办丢失、`lane=` 空白回显与 `baton accept` 越界自审拦截；
+> 2. **出站提示词显式双向角色锚定（Bidirectional Role Pinning）**：
+>    - 出站交接卡片增加 `[发起角色] [<发起角色>]` 与 `[接单指令] baton lane <to_lane>`；
+>    - 接收端 LLM 读取卡片瞬间自动确立本方角色与对端角色，并在接单时获得确定性身份锁定引导；
+> 3. **状态机与驳回全链路角色纠偏（Deterministic State & SSOT）**：
+>    - 修复 `handoff-status.mjs` 保底倒错：严禁无脑将缺失流水的驳回者归为 `from_lane`，审计单必反推为 `to_lane`（`audit`）；
+>    - 修复 `cmdReject` 回执生成：动态写入真实驳回方 `cur` 与被驳回方 `targetLane`，消除硬编码“审计方驳回实现方”的倒错；
+> 4. **CLI 执行态上下文分流与交付零误导（Next-Step Context Routing）**：
+>    - 彻底解耦 `printReceiptDeliveryLine` 与 `printWaitWakeupSummary`：接收方执行 `baton deliver` 时，严格封杀面向发起方的 `baton close` 诱导词，切断 Agent 盲从闭环根源；
+>    - 发起方唤醒时根据 `to_lane === 'audit'` 区分双盲审计闭环与普通代码验收指引；
+> 5. **接入桩与规约全量同步升级至 v2.41.0**。
+
 > **v2.40.0 里程碑（2026-11-24 · 自主双盲审计分诊协议 · 动态维度裁剪与防多单堆叠 · 跨技术栈硬门禁自适应 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户反馈在发起多维度双盲审计时，不同消费仓（Android/Kotlin, Rust, Python, Go, TypeScript）需求与语言栈各异，用户难以每次繁琐输入多维检查要求；且 Agent 经常误解意图，将 ABCD 4 份工单粗暴堆叠进同一个提示词代码块，造成接收方认领混乱与格式坍缩。本版本确立「自主双盲审计分诊协议」与极简口令交互机制：
 > 1. **自主双盲审计分诊协议（Autonomous Double-Blind Triage Protocol）**：
 >    - 确立极简触发词 `“发起双盲审计”`，Agent 接收后自动执行 4 步认知分诊（环境与构建体系感知 $\to$ Diff 爆炸半径分析 $\to$ 2~4 维正交判据动态裁剪 $\to$ 工单数量裁决）；

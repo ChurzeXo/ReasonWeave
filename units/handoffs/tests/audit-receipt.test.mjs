@@ -621,18 +621,18 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.40\.0\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.41\.0\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.40\.0/);
+    assert.match(agentsContent, /v2\.41\.0/);
     assert.match(agentsContent, /--as <lane>/);
-    // 接入桩正文应保持轻量韧性（小于 4200 字符，远小于旧版 8000+ 字符，去恐吓化）
+    // 接入桩正文应保持轻量韧性（小于 4300 字符，远小于旧版 8000+ 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
     assert.ok(stubMatch, '必须找到接入桩标记');
-    assert.ok(stubMatch[1].length < 4200, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
+    assert.ok(stubMatch[1].length < 4300, `接入桩应保持轻量，当前长度: ${stubMatch[1].length}`);
   });
 
   it('18. 连续多轮驳回历史无损继承与防冲刷（防模板空标题冲刷、精准小节定位追加）', () => {
@@ -766,28 +766,28 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.40.0，无旧版本漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.41.0，无旧版本漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.40.0'), '应当输出 v2.40.0');
+    assert.ok(verRes.stdout.includes('v2.41.0'), '应当输出 v2.41.0');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
-    assert.ok(!verRes.stdout.includes('v2.38.1'), '严禁残留旧版本 v2.38.1');
+    assert.ok(!verRes.stdout.includes('v2.40.0'), '严禁残留旧版本 v2.40.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.40.0'), '-v 应当输出 v2.40.0');
+    assert.ok(vRes.stdout.includes('v2.41.0'), '-v 应当输出 v2.41.0');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.40.0'), 'version 应当输出 v2.40.0');
+    assert.ok(versionRes.stdout.includes('v2.41.0'), 'version 应当输出 v2.41.0');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.40.0'), '英文帮助中必须展示 v2.40.0');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.41.0'), '英文帮助中必须展示 v2.41.0');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -1848,5 +1848,78 @@ status: draft
     const failBlindRes = runBaton(tmpDir, `forward ${id2} --blind --no-wait`, { BATON_LANG: 'zh' });
     assert.notEqual(failBlindRes.status, 0, '缺少验收判据的工单禁止以双盲模式转递');
     assert.match(failBlindRes.stderr + failBlindRes.stdout, /缺少验收判据/);
+  });
+
+  it('42. [v2.41.0] 跨客户端角色锚定与状态机归属确定性 (ADR-0016)', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 发起方权威推导：建单不传 --from、无环境变量、无会话锁，自动自愈推导 from_lane 为 impl
+    const res1 = runBaton(tmpDir, 'new audit task "验证角色自推导与锚定"', { HANDOFF_LANE: '' });
+    assert.equal(res1.status, 0);
+    const id1 = res1.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation|review))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
+    const ticketFile1 = path.join(tmpDir, '.handoffs', 'handoffs', `${id1}.md`);
+    const content1 = fs.readFileSync(ticketFile1, 'utf8');
+    assert.match(content1, /from_lane:\s*impl/, '建单时未传 --from 必须自动推导为 impl，严禁为空字符串');
+    assert.match(content1, /to_lane:\s*audit/);
+
+    // 2. 出站提示词显式双向角色锚定：包含 [发起角色] 与 [接单指令]
+    const promptRes = runBaton(tmpDir, `prompt ${id1}`, { BATON_LANG: 'zh' });
+    assert.equal(promptRes.status, 0);
+    assert.match(promptRes.stdout, /请 \[审计方\] 接单：/, '必须保持首行接单角色不变');
+    assert.match(promptRes.stdout, /\[发起角色\] \[实现方\]/, '出站提示词必须包含显式 [发起角色]');
+    assert.match(promptRes.stdout, /\[接单指令\] baton lane audit/, '出站提示词必须包含 [接单指令] 指引接收端锁定会话');
+
+    // 3. 接收方执行 deliver 时，输出指引必须纯净，严禁包含 baton close 诱导词
+    const rawTicket1 = [
+      '---',
+      `handoff_id: ${id1}`,
+      'mode: intra-repo',
+      'from_lane: impl',
+      'to_lane: audit',
+      'type: task',
+      'status: draft',
+      '---',
+      '# 验证角色自推导与锚定 (to_lane: audit)',
+      '## 目标',
+      '测试交付',
+      '## 验收判据',
+      '- [ ] 实测通过',
+    ].join('\n');
+    fs.writeFileSync(ticketFile1, rawTicket1, 'utf8');
+
+    // forward 派发工单
+    const fwdRes = runBaton(tmpDir, `forward ${id1} --no-wait`);
+    assert.equal(fwdRes.status, 0);
+
+    // 接收方登记回执并交付
+    const receiptRes = runBaton(tmpDir, `receipt ${id1} -n "## 状态 / 结论\\n- **结论**：PASS\\n## 验证" --auto-nonce --deliver --as audit --evidence-paths "README.md"`);
+    assert.equal(receiptRes.status, 0, `交付应成功: ${receiptRes.stderr}`);
+    assert.ok(!receiptRes.stdout.includes('baton close'), '接收方 deliver 输出严禁诱导其运行 baton close');
+    assert.match(receiptRes.stdout, /(?:请勿切换为发起方角色|reserved for the initiator)/);
+
+    // 4. 非 audit 角色（如 arch 驳回 impl）执行 baton reject 时，元数据必须正确对齐，严禁角色倒错或写死 audit
+    const res2 = runBaton(tmpDir, 'new impl task "架构治理任务" --as arch');
+    assert.equal(res2.status, 0);
+    const id2 = res2.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation|review))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
+    const ticketFile2 = path.join(tmpDir, '.handoffs', 'handoffs', `${id2}.md`);
+    assert.match(fs.readFileSync(ticketFile2, 'utf8'), /from_lane:\s*arch/, '显式 --as arch 建单必须记录 from_lane: arch');
+
+    // 转递工单
+    runBaton(tmpDir, `forward ${id2} --no-wait --as arch`);
+
+    // arch 发现不合规主动驳回退回
+    const rejectRes = runBaton(tmpDir, `reject ${id2} -n "设计规格不满足需求" --as arch`);
+    assert.equal(rejectRes.status, 0, `arch 驳回应成功: ${rejectRes.stderr}`);
+    const receiptFile2 = path.join(tmpDir, '.handoffs', 'receipts', `${id2}-resp.md`);
+    assert.ok(fs.existsSync(receiptFile2), '驳回必须生成回执留痕');
+    const receiptContent2 = fs.readFileSync(receiptFile2, 'utf8');
+    assert.match(receiptContent2, /from_lane:\s*arch/, '驳回回执中的 from_lane 必须为真实驳回者 arch');
+    assert.match(receiptContent2, /to_lane:\s*impl/, '驳回回执中的 to_lane 必须为被退回的目标方 impl');
+
+    // 5. 看板状态回显：退回工单回显 lane=impl，杜绝 lane= 空白
+    const statusRes = runBaton(tmpDir, `status`);
+    assert.equal(statusRes.status, 0);
+    assert.match(statusRes.stdout, /lane=impl/, '看板回显退回目标时必须为真实 lane，严禁为空白');
+    assert.ok(!statusRes.stdout.includes('lane= '), '看板严禁出现 lane= 空白');
   });
 });

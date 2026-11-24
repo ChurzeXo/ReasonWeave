@@ -1461,7 +1461,7 @@ function cmdNewIntra(args) {
   const l = lane.toLowerCase();
   const ty = type.toLowerCase();
   let ws = HUB_CONFIG.workspace_default || 'same';
-  let fromLane = process.env.HANDOFF_LANE || '';
+  let fromLane = '';
   let toolProfile = 'full';
   const restClean = [];
   for (let i = 0; i < rest.length; i++) {
@@ -1476,14 +1476,21 @@ function cmdNewIntra(args) {
       i++;
     } else if (rest[i].startsWith('--profile=')) {
       toolProfile = rest[i].slice('--profile='.length).toLowerCase();
-    } else if ((rest[i] === '--from' || rest[i] === '-from') && rest[i + 1]) {
+    } else if ((rest[i] === '--from' || rest[i] === '-from' || rest[i] === '--as' || rest[i] === '-as') && rest[i + 1]) {
       fromLane = rest[i + 1].toLowerCase();
       i++;
-    } else if (rest[i].startsWith('--from=')) {
-      fromLane = rest[i].slice('--from='.length).toLowerCase();
+    } else if (rest[i].startsWith('--from=') || rest[i].startsWith('--as=')) {
+      fromLane = rest[i].split('=')[1].toLowerCase();
     } else {
       restClean.push(rest[i]);
     }
+  }
+  // 权威身份级联推导（ADR-0016）：
+  // --from/--as > HANDOFF_LANE > getSessionLane() > default_initiator_lane (impl)
+  if (!fromLane) fromLane = (process.env.HANDOFF_LANE || '').toLowerCase().trim();
+  if (!fromLane) fromLane = getSessionLane();
+  if (!fromLane) {
+    fromLane = HUB_CONFIG.default_initiator_lane || 'impl';
   }
   const title = restClean.join(' ').trim() || '(无标题)';
   let id;
@@ -1895,13 +1902,17 @@ function cmdReject(args) {
       fs.writeFileSync(rFile, updatedRaw, 'utf8');
       const rFmOld = readFM(rRaw) || {};
       const rUpdates = { delivered_at: '', delivered_by_lane: '', needs_change: true, audit_nonce: '' };
+      const rejectorRoleTitle = resolveLaneRole(cur) || (cur === 'audit' ? '审计方' : '驳回方');
       if (!rFmOld.evidence_note && (!rFmOld.evidence_paths || !rFmOld.evidence_paths.length) && (!rFmOld.evidence_commits || !rFmOld.evidence_commits.length)) {
-        rUpdates.evidence_note = `审计方驳回退回：${note}`;
+        rUpdates.evidence_note = `${rejectorRoleTitle}驳回退回：${note}`;
       }
       // 回执清空交付状态并标记需整改，重置 audit_nonce
       setFM(rFile, rUpdates);
     } else {
-      fs.writeFileSync(rFile, `---\nhandoff_id: ${id}\nmode: ${MODE}\nfrom_lane: ${hFm?.to_lane || 'audit'}\nto_lane: ${hFm?.from_lane || 'impl'}\nneeds_change: true\ndate: ${todayISO()}\nevidence_note: 审计方驳回退回：${note}\n---\n\n## 状态 / 结论\n- **结论**：REJECTED / NO-GO\n- **说明**：工单被审计方直接驳回退回整改。\n\n## 驳回记录\n${rejEntry}`, 'utf8');
+      const rejectorRoleTitle = resolveLaneRole(cur) || (cur === 'audit' ? '审计方' : '驳回方');
+      const rejFromLane = cur || (isAuditor ? 'audit' : (hFm?.to_lane || 'audit'));
+      const rejToLane = (cur && cur === hFm?.to_lane) ? (hFm?.from_lane || 'impl') : (hFm?.to_lane || 'impl');
+      fs.writeFileSync(rFile, `---\nhandoff_id: ${id}\nmode: ${MODE}\nfrom_lane: ${rejFromLane}\nto_lane: ${rejToLane}\nneeds_change: true\ndate: ${todayISO()}\nevidence_note: ${rejectorRoleTitle}驳回退回：${note}\n---\n\n## 状态 / 结论\n- **结论**：REJECTED / NO-GO\n- **说明**：工单被${rejectorRoleTitle}直接驳回退回整改。\n\n## 驳回记录\n${rejEntry}`, 'utf8');
     }
 
     const rejectTime = new Date().toISOString();
@@ -2107,16 +2118,18 @@ function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
     const toRole = resolveLaneRole(toLane) || toLane || (isZh ? '发起方' : 'Initiator');
     const fromRole = resolveLaneRole(fromLane) || fromLane || (isZh ? '本方' : 'Executor');
     if (isDelivered) {
-      console.log(`\n✅ 仓内终态交付已生效 [${ticketId}]（状态推进为 delivered，后台监听已自动感知平息并唤醒发起方/审计方进行独立验收闭环）。`);
+      console.log(`\n✅ 仓内终态交付已生效 [${ticketId}]（状态推进为 delivered，后台监听已自动感知平息并唤醒发起方 [${toRole}] 进行独立验收闭环）。`);
       const verdictLine = fromLane === 'audit'
         ? (isZh ? `审计完成，裁决 GO` : `Audit complete, verdict GO`)
         : (isZh ? `交付完成，回执已就绪 [${ticketId}]：${display}` : `Delivery complete, receipt ready [${ticketId}]: ${display}`);
       if (isZh) {
         console.log(`\nℹ️ 交付收尾（接收方回复末尾仅单行纯文本，无需标题与代码块）:`);
         console.log(verdictLine + '\n');
+        console.log(`💡 [接收方纪律] 本端职责已完成，闭环（accept/close）归发起方所有，严禁接收方越权闭环；严禁反向输出交接卡片。\n`);
       } else {
         console.log(`\nℹ️ Delivery Epilogue (Receiver outputs single plain-text line at the end, no headers or code blocks):`);
         console.log(verdictLine + '\n');
+        console.log(`💡 [Receiver Rule] This lane task is complete. Ticket closure (accept/close) is reserved for the initiator.\n`);
       }
     } else {
       const waitNotice = needsChange
@@ -2746,7 +2759,7 @@ async function cmdForward(args) {
   const isAsync = args.includes('--async') || args.includes('--detach');
   const isBlind = args.includes('--blind') || args.includes('-b');
   const noWaitExplicit = args.includes('--no-wait');
-  const valFlags = ['--timeout', '-t', '--interval', '-i'];
+  const valFlags = ['--timeout', '-t', '--interval', '-i', '--round', '--as', '-as'];
   const valueIdx = new Set();
   for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
   const rawIds = args.filter((a, i) => !a.startsWith('-') && !valueIdx.has(i));
@@ -3150,7 +3163,7 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
    - **实测通过**：照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` 骨架 → 运行 \`baton receipt <id> -n "<正文>" --deliver --as <本方 lane> --evidence-paths "<路径>"\`（审计工单附 \`--audit-nonce "<nonce>"\` 或同工作区授权下使用 \`--auto-nonce\` 自动绑定最新令牌；红队用例严格遵循 NO_DISPATCH / NO_COMPLETE / COMPLETE 三态标准）。
    - **实测未过（NO-GO/受阻）**：享有安全下车通道，直接运行 \`baton reject <id> -n "<理由/缺失条件>" --as <本方 lane>\` 退回整改。
 4. **收尾自检**：运行 \`baton check [id]\`（若有数据漂移可加 \`--fix\` 自动修复）。
-5. **入站回复收尾（简洁单行裁决 · 严禁角色漂移）**：接收方必须严格保持本方执行/审计角色，严禁切换为发起方角色；最终回复人类的最末尾仅输出单行纯文本（无需标题，无需代码块，严禁多行出站卡片）：
+5. **入站回复收尾（简洁单行裁决 · 严禁角色漂移）**：接收方必须严格保持本方执行/审计角色，严禁切换为发起方角色；**严禁反向输出 \`## 交接提示词\` 卡片或调用 \`baton close\` 越权闭环**；最终回复人类的最末尾仅输出单行纯文本（无需标题，无需代码块，严禁多行出站卡片）：
    - 审计驳回：\`审计完成，裁决 NO-GO（工单已退回<发起方角色>进入 Round <N>）\`
    - 审计通过：\`审计完成，裁决 GO\`
    - 普通交付：\`交付完成，回执已就绪\`
@@ -3163,10 +3176,12 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
    ## 交接提示词
    \`\`\`text
    请 [<目标角色>] 接单：
+   [发起角色] [<发起角色>]
    [任务主题] <主题>
    [任务轮次] Round <round>（第 <round> 轮复审）
    [工单编号] [<conversation_id>]
    [工单路径] <交接路径>
+   [接单指令] baton lane <to_lane>（或操作时附带 --as <to_lane>）
    \`\`\`
 
 详见 \`$(lab path handoffs)/AGENT-GUIDE.md\` 获取完整版 Preflight。`;
@@ -3190,7 +3205,7 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
    - **All Tests Pass**: Follow \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` → run \`baton receipt <id> -n "<Body>" --deliver --as <my lane> --evidence-paths "<files>"\` (audit tickets require \`--audit-nonce "<nonce>"\` or \`--auto-nonce\`; red-team probes must follow three-state standard: NO_DISPATCH / NO_COMPLETE / COMPLETE).
    - **Tests Fail / Blocked (NO-GO)**: Use unconditional egress channel, run \`baton reject <id> -n "<reason/missing condition>" --as <my lane>\` to send back for revision (draft receipts can be logged without blocker).
 4. **Wrap-up Check**: Run \`baton check [id]\` (supports \`--fix\` for auto-repair).
-5. **Inbound Reply Epilogue (Concise One-Line Verdict · Anti-Role-Drift)**: Receiver must strictly maintain own execution/audit role without role drift; output only a single plain-text line at the very end of your response to the user (no markdown headers, no code blocks, strictly no multi-line outbound cards):
+5. **Inbound Reply Epilogue (Concise One-Line Verdict · Anti-Role-Drift)**: Receiver must strictly maintain own execution/audit role without role drift; strictly prohibited from generating reverse \`## Baton Pass Prompt\` cards or calling \`baton close\`; output only a single plain-text line at the very end of your response to the user (no markdown headers, no code blocks, strictly no multi-line outbound cards):
    - Audit Rejection: \`Audit complete, verdict NO-GO (Ticket returned to <initiator role> entering Round <N>)\`
    - Audit Pass: \`Audit complete, verdict GO\`
    - General Delivery: \`Delivery complete, receipt ready\`
@@ -3202,11 +3217,13 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
 3. **Outbound Reply Closing (Baton Pass Prompt)**: Initiator calculates and advances Round count; end outbound replies with an isolated code block for one-click human copying (no text after):
    ## Baton Pass Prompt
    \`\`\`text
-   Please [<Target Role>] take ticket:
+   Please [<Target Role>] take handoff:
+   [Initiator] [<Initiator Role>]
    [Task Topic] <Title>
    [Task Round] Round <round> (Review Round <round>)
    [Ticket ID] [<conversation_id>]
    [Ticket Path] <Path>
+   [Assignee Instruction] baton lane <to_lane> (or pass --as <to_lane>)
    \`\`\`
 
 See \`$(lab path handoffs)/AGENT-GUIDE.md\` for full Preflight.`;
@@ -3869,7 +3886,10 @@ function cmdPrompt(args) {
   if (MODE === 'intra-repo') {
     const fm = readFM(content) || {};
     const ws = fm.workspace || 'same';
-    const toRole = resolveLaneRole(fm.to_lane) || fm.to_lane || (isZh ? '执行方' : 'Executor');
+    const toLane = String(fm.to_lane || '').toLowerCase();
+    const fromLane = String(fm.from_lane || 'impl').toLowerCase();
+    const toRole = resolveLaneRole(toLane) || toLane || (isZh ? '执行方' : 'Executor');
+    const fromRole = resolveLaneRole(fromLane) || fromLane || (isZh ? '发起方' : 'Initiator');
     const cleanTitle = sanitizeTaskTopic(title);
     const round = Number(fm.round || 1);
     const roundLineZh = round > 1 ? `[任务轮次] Round ${round}（第 ${round} 轮复审）\n` : '';
@@ -3878,14 +3898,18 @@ function cmdPrompt(args) {
     const profileLineEn = fm.tool_profile === 'readonly' ? `[Tool Profile] tool_profile=readonly (Read-only: Prohibited from modifying production code)\n` : '';
     const convId = fm.conversation_id || getSessionId();
     const promptId = convId || id;
+    const initiatorLineZh = `[发起角色] [${fromRole}]（${fromLane}）\n`;
+    const initiatorLineEn = `[Initiator] [${fromRole}] (${fromLane})\n`;
+    const instructionLineZh = `\n[接单指令] baton lane ${toLane}（或操作时附带 --as ${toLane}）`;
+    const instructionLineEn = `\n[Assignee Instruction] baton lane ${toLane} (or pass --as ${toLane})`;
 
     const promptCardTextZh = (ws === 'worktree')
-      ? `请 [${toRole}] 在隔离工作树接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工作树路径] ${path.join('.worktrees', id)}\n[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd()
-      : `请 [${toRole}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd();
+      ? `请 [${toRole}] 在隔离工作树接单：\n${initiatorLineZh}[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工作树路径] ${path.join('.worktrees', id)}\n[工单编号] [${promptId}]\n[工单路径] ${display}${instructionLineZh}`.trimEnd()
+      : `请 [${toRole}] 接单：\n${initiatorLineZh}[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}${instructionLineZh}`.trimEnd();
 
     const promptCardTextEn = (ws === 'worktree')
-      ? `Please [${toRole}] take handoff in isolated worktree:\n[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Worktree] ${path.join('.worktrees', id)}\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd()
-      : `Please [${toRole}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd();
+      ? `Please [${toRole}] take handoff in isolated worktree:\n${initiatorLineEn}[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Worktree] ${path.join('.worktrees', id)}\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}${instructionLineEn}`.trimEnd()
+      : `Please [${toRole}] take handoff:\n${initiatorLineEn}[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}${instructionLineEn}`.trimEnd();
 
     const chosenPromptText = isZh ? promptCardTextZh : promptCardTextEn;
     writeLatestPrompt(chosenPromptText, cleanTitle, id);
@@ -4861,9 +4885,13 @@ function printWaitWakeupSummary(id, hFile, rFile, hFm) {
   const needsChange = Boolean(hFm?.needs_change || hFm?.needs_iggle_change || rFm?.needs_change || rFm?.needs_iggle_change);
 
   const isPeerRejection = Boolean(hFm?.rejected_at) &&
-    Boolean(hFm?.rejected_by) &&
-    hFm?.rejected_by.toLowerCase() !== String(hFm?.from_lane || '').toLowerCase() &&
-    hFm?.status !== 'delivered' && hFm?.status !== 'closed';
+    (hFm?.status !== 'delivered' && hFm?.status !== 'closed') &&
+    (
+      (hFm?.rejected_by && String(hFm?.from_lane || '').toLowerCase() !== String(hFm?.rejected_by).toLowerCase()) ||
+      Boolean(hFm?.needs_change) ||
+      Boolean(rFm?.needs_change) ||
+      (hFm?.reject_count && Number(hFm.reject_count) > 0)
+    );
 
   if (isPeerRejection) {
     console.log(`\n==================================================`);
@@ -4871,8 +4899,9 @@ function printWaitWakeupSummary(id, hFile, rFile, hFm) {
     console.log(`- 交接文档: ${displayH}`);
     console.log(`- 回执文件: ${displayR}`);
     if (MODE === 'intra-repo') {
-      const fromRole = resolveLaneRole(hFm?.rejected_by || rFm.from_lane || hFm?.to_lane) || '审核方';
-      console.log(`- 驳回方: 【${fromRole}】(lane: ${hFm?.rejected_by})`);
+      const rejLane = hFm?.rejected_by || (hFm?.to_lane === 'audit' ? 'audit' : (rFm.from_lane || hFm?.to_lane || 'audit'));
+      const fromRole = resolveLaneRole(rejLane) || '审核方';
+      console.log(`- 驳回方: 【${fromRole}】(lane: ${rejLane})`);
     } else {
       console.log(`- 驳回方: ${hFm?.rejected_by}`);
     }
@@ -4911,16 +4940,24 @@ function printWaitWakeupSummary(id, hFile, rFile, hFm) {
   if (rFm.evidence_note) console.log(`- 证据说明: ${rFm.evidence_note}`);
   console.log(`- 需后续改动: ${needsChange ? '⚠️ 是 (needs_change=true)' : '✅ 否'}`);
   console.log(`==================================================`);
-  console.log(`👉 下一步（发起方/审计方核心职责）：`);
-  console.log(`1. 严禁仅静态读码或自报采信！`);
-  console.log(`2. ⚠️ 严禁在完成独立实测验收前，提前将未定稿回执结论写入主线 Backlog 或规格规划！`);
   const asClause = (MODE === 'intra-repo' && hFm?.from_lane) ? ` --as ${hFm.from_lane}` : '';
-  console.log(`3. 请在终端独立执行验收命令与证据核验：`);
-  console.log(`   baton show ${id}`);
-  console.log(`4. 验收通过后闭环：`);
-  console.log(`   baton close ${id} -n "已独立实测验证..."${asClause}`);
-  console.log(`5. 如验收不通过则驳回重做：`);
-  console.log(`   baton reject ${id} -n "驳回原因与缺失点..."${asClause}\n`);
+  if (MODE === 'intra-repo' && String(hFm?.to_lane || '').toLowerCase() === 'audit') {
+    const fromRole = resolveLaneRole(hFm?.from_lane || 'impl') || '发起方';
+    console.log(`👉 下一步（发起方【${fromRole}】收尾闭环）：`);
+    console.log(`1. 审计方已独立执行验收判据并交付回执（结论: ${conclusion || 'GO'}）。`);
+    console.log(`2. 确认审计回执无误后，执行闭环：`);
+    console.log(`   baton close ${id} -n "审计通过，确认闭环..."${asClause}\n`);
+  } else {
+    console.log(`👉 下一步（发起方核心验收职责）：`);
+    console.log(`1. 严禁仅静态读码或自报采信！`);
+    console.log(`2. ⚠️ 严禁在完成独立实测验收前，提前将未定稿回执结论写入主线 Backlog 或规格规划！`);
+    console.log(`3. 请在终端独立执行验收命令与证据核验：`);
+    console.log(`   baton show ${id}`);
+    console.log(`4. 验收通过后闭环：`);
+    console.log(`   baton close ${id} -n "已独立实测验证..."${asClause}`);
+    console.log(`5. 如验收不通过则驳回重做：`);
+    console.log(`   baton reject ${id} -n "驳回原因与缺失点..."${asClause}\n`);
+  }
 
   // 触发 Yellow 级别交付待验收中断
   notifyInterrupt('yellow', 'Baton 工单交付待验收', `工单 ${id} 回执已到达并通过平息缓冲，请进行独立实测验收！`);

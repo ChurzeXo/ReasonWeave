@@ -88,10 +88,11 @@ function getEffectiveRejection(r) {
       };
     }
   }
-  // 3. 保底回退：若工单留有 rejected_at 但流水缺失
+  // 3. 保底回退：若工单留有 rejected_at 但流水缺失（修复 ADR-0016 角色倒错）
   if (r.rejected_at) {
+    const inferredRejector = r.rejected_by || (r.to_lane === 'audit' ? r.to_lane : (r.from_lane || 'audit'));
     return {
-      rejected_by: String(r.from_lane || '').toLowerCase(),
+      rejected_by: String(inferredRejector).toLowerCase(),
       rejected_at: r.rejected_at,
       is_rejected: true
     };
@@ -736,7 +737,8 @@ if (FOR) {
         return eff.is_rejected ? eff.rejected_by !== FOR : true;
       }
       // 对方驳回给我的项（我是发起方），落入我方整改待办
-      if (r.from_lane === FOR && eff.is_rejected && eff.rejected_by !== FOR) {
+      const targetFrom = r.from_lane || 'impl';
+      if (targetFrom === FOR && eff.is_rejected && eff.rejected_by !== FOR) {
         return true;
       }
       return false;
@@ -781,7 +783,8 @@ if (FOR) {
   const rejectedToMe = (MODE === 'intra-repo')
     ? rows.filter(r => {
         const eff = getEffectiveRejection(r);
-        return eff.is_rejected && eff.rejected_by !== FOR && r.from_lane === FOR && r.status !== 'closed' && (r.status === 'forwarded' || r.status === 'draft');
+        const targetFrom = r.from_lane || 'impl';
+        return eff.is_rejected && eff.rejected_by !== FOR && targetFrom === FOR && r.status !== 'closed' && (r.status === 'forwarded' || r.status === 'draft');
       })
     : [];
   const sessionTagZh = ONLY_CURRENT ? ` · 本会话过滤 (${currentSessionId.slice(0, 8)})` : '';
@@ -811,7 +814,7 @@ if (FOR) {
         lines.push(`- 我方已驳回退回（等待执行方整改并重新交付 · ${rejectedByMe.length}）:`);
         for (const r of rejectedByMe) {
           lines.push(formatRowLine(r, true));
-          lines.push(`      → 状态：已驳回退回给 lane=${r.to_lane === FOR ? r.from_lane : r.to_lane}，等待其整改并重新交付`);
+          lines.push(`      → 状态：已驳回退回给 lane=${r.to_lane === FOR ? (r.from_lane || 'impl') : r.to_lane}，等待其整改并重新交付`);
         }
       }
       if (recvBlocked.length) {
@@ -869,7 +872,7 @@ if (FOR) {
         lines.push(`- My rejections awaiting revision (${rejectedByMe.length}):`);
         for (const r of rejectedByMe) {
           lines.push(formatRowLine(r, false));
-          lines.push(`      → Status: Rejected back to lane=${r.to_lane === FOR ? r.from_lane : r.to_lane}, awaiting revision & deliver`);
+          lines.push(`      → Status: Rejected back to lane=${r.to_lane === FOR ? (r.from_lane || 'impl') : r.to_lane}, awaiting revision & deliver`);
         }
       }
       if (recvBlocked.length) {
