@@ -1937,16 +1937,29 @@ function cmdReject(args) {
     console.log(`✅ 已驳回退回: ${id} → forwarded（驳回理由已写入工单与回执）`);
     if (MODE === 'intra-repo') {
       const isZh = detectLang() === 'zh';
-      if (isZh) {
-        console.log(`\n📋 可复制裁决提示词（复制给实现方/发起方 Agent）:`);
-        console.log(`\`\`\`text`);
-        console.log(`审计完成，裁决 NO-GO（工单已退回实现方进入 Round ${nextRound}）`);
-        console.log(`\`\`\`\n`);
+      const rejectorRole = resolveLaneRole(cur) || (isZh ? '驳回方' : 'Rejector');
+      const targetLane = (isAuditor || !isFromLane) ? (hFm?.from_lane || 'impl') : (hFm?.to_lane || 'impl');
+      const targetRole = resolveLaneRole(targetLane) || (isZh ? '实现方' : 'Implementer');
+      let verdictLine;
+      if (cur === 'audit') {
+        verdictLine = isZh
+          ? `审计完成，裁决 NO-GO（工单已退回${targetRole}进入 Round ${nextRound}）`
+          : `Audit complete, verdict NO-GO (Ticket returned to ${targetRole} entering Round ${nextRound})`;
+      } else if (isFromLane) {
+        verdictLine = isZh
+          ? `${rejectorRole}验收未通过，裁决 NO-GO（工单已退回${targetRole}进入 Round ${nextRound}）`
+          : `${rejectorRole} verification failed, verdict NO-GO (Ticket returned to ${targetRole} entering Round ${nextRound})`;
       } else {
-        console.log(`\n📋 Copyable Verdict Prompt (pass to implementer/initiator):`);
-        console.log(`\`\`\`text`);
-        console.log(`Audit complete, verdict NO-GO (Ticket returned to implementer entering Round ${nextRound})`);
-        console.log(`\`\`\`\n`);
+        verdictLine = isZh
+          ? `${rejectorRole}驳回退回，裁决 NO-GO（工单已退回${targetRole}进入 Round ${nextRound}）`
+          : `${rejectorRole} rejected, verdict NO-GO (Ticket returned to ${targetRole} entering Round ${nextRound})`;
+      }
+      if (isZh) {
+        console.log(`\nℹ️ 裁决收尾（接收方回复末尾仅单行纯文本，无需标题与代码块）:`);
+        console.log(verdictLine + '\n');
+      } else {
+        console.log(`\nℹ️ Verdict Epilogue (Receiver outputs single plain-text line at the end, no headers or code blocks):`);
+        console.log(verdictLine + '\n');
       }
     }
   });
@@ -2095,24 +2108,15 @@ function printReceiptDeliveryLine(rFile, needsChange, isDelivered = false) {
     const fromRole = resolveLaneRole(fromLane) || fromLane || (isZh ? '本方' : 'Executor');
     if (isDelivered) {
       console.log(`\n✅ 仓内终态交付已生效 [${ticketId}]（状态推进为 delivered，后台监听已自动感知平息并唤醒发起方/审计方进行独立验收闭环）。`);
+      const verdictLine = fromLane === 'audit'
+        ? (isZh ? `审计完成，裁决 GO` : `Audit complete, verdict GO`)
+        : (isZh ? `交付完成，回执已就绪 [${ticketId}]：${display}` : `Delivery complete, receipt ready [${ticketId}]: ${display}`);
       if (isZh) {
-        console.log(`📋 可复制交付提示词（复制给发起方 Agent）:`);
-        console.log(`\`\`\`text`);
-        if (fromLane === 'audit') {
-          console.log(`审计完成，裁决 GO`);
-        } else {
-          console.log(`交付完成，回执已就绪 [${ticketId}]：${display}`);
-        }
-        console.log(`\`\`\`\n`);
+        console.log(`\nℹ️ 交付收尾（接收方回复末尾仅单行纯文本，无需标题与代码块）:`);
+        console.log(verdictLine + '\n');
       } else {
-        console.log(`📋 Copyable Delivery Prompt (pass to initiator):`);
-        console.log(`\`\`\`text`);
-        if (fromLane === 'audit') {
-          console.log(`Audit complete, verdict GO`);
-        } else {
-          console.log(`Delivery complete, receipt ready [${ticketId}]: ${display}`);
-        }
-        console.log(`\`\`\`\n`);
+        console.log(`\nℹ️ Delivery Epilogue (Receiver outputs single plain-text line at the end, no headers or code blocks):`);
+        console.log(verdictLine + '\n');
       }
     } else {
       const waitNotice = needsChange
@@ -3052,6 +3056,8 @@ function cmdShow(args) {
     if (fm && fm[k] !== undefined && fm[k] !== '') {
       if (k === 'tool_profile') {
         console.log(`- tool_profile: ${fm[k]}${fm[k] === 'readonly' ? ' (只读探查：严格禁止修改生产源码)' : ''}`);
+      } else if (k === 'blind' && fm[k]) {
+        console.log(`- blind: ${fm[k]}${detectLang() === 'zh' ? ' (🔒 物理双盲审计：思维链与自辩已脱敏)' : ' (🔒 Double-Blind Audit Active)'}`);
       } else {
         console.log(`- ${k}: ${fm[k]}`);
       }
@@ -3144,11 +3150,15 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
    - **实测通过**：照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` 骨架 → 运行 \`baton receipt <id> -n "<正文>" --deliver --as <本方 lane> --evidence-paths "<路径>"\`（审计工单附 \`--audit-nonce "<nonce>"\` 或同工作区授权下使用 \`--auto-nonce\` 自动绑定最新令牌；红队用例严格遵循 NO_DISPATCH / NO_COMPLETE / COMPLETE 三态标准）。
    - **实测未过（NO-GO/受阻）**：享有安全下车通道，直接运行 \`baton reject <id> -n "<理由/缺失条件>" --as <本方 lane>\` 退回整改。
 4. **收尾自检**：运行 \`baton check [id]\`（若有数据漂移可加 \`--fix\` 自动修复）。
-5. **入站回复收尾（简洁裁决/交付提示词）**：接收方严禁使用多行出站交接卡片；末尾仅输出单行提示词（驳回：\`审计完成，裁决 NO-GO（工单已退回实现方进入 Round <N>）\`；通过：\`审计完成，裁决 GO\` 或 \`交付完成，回执已就绪\`）。后续 Round 轮次由发起方在出站时唯一定义与计算。
+5. **入站回复收尾（简洁单行裁决 · 严禁角色漂移）**：接收方必须严格保持本方执行/审计角色，严禁切换为发起方角色；最终回复人类的最末尾仅输出单行纯文本（无需标题，无需代码块，严禁多行出站卡片）：
+   - 审计驳回：\`审计完成，裁决 NO-GO（工单已退回<发起方角色>进入 Round <N>）\`
+   - 审计通过：\`审计完成，裁决 GO\`
+   - 普通交付：\`交付完成，回执已就绪\`
+   后续 Round 轮次由发起方在出站重新转递时统筹计算并派发。
 
 **出站工作流（派发 · 监听 · 严禁漏开监听）**
-1. **建单与转递（单工单原子闭环 · 99%场景）**：\`baton new <target|lane> <type> "<标题>"\`，填写正文后直接作为宿主后台任务（如 \`WaitMsBeforeAsync: 500\`）运行 \`baton forward <id> --wait\`（原子一步到位：秒级打印提示词 + 自动挂起后台监听 + 回执秒级唤醒；单工单严禁使用 \`--async\` 拆分两步！）。
-2. **多单并发派发（仅限一次性派发多单）**：\`baton forward <id1> <id2> ... --async\`，派发后必须立即作为后台任务运行 \`baton wait <id1> <id2> ... --all\` 聚合监听平账。
+1. **建单与转递（单工单原子闭环 · 99%场景）**：\`baton new <target|lane> <type> "<标题>"\`，填写正文后直接作为宿主后台任务（如 \`WaitMsBeforeAsync: 500\`）运行 \`baton forward <id> --wait\`（双盲审计附加 \`--blind\` 脱敏思考自辩；单工单严禁使用 \`--async\` 拆分两步！）。
+2. **多单并发派发（仅限一次性派发多单）**：\`baton forward <id1> <id2> ... --async\`，派发后必须立即作为后台任务运行 \`baton wait <id1> <id2> ... --all\` 聚合监听平账（严禁将多单提示词混杂在同一个代码块内）。
 3. **出站回复收尾（交接提示词规范）**：出站由发起方统一计算与推进 Round 轮次；回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
    ## 交接提示词
    \`\`\`text
@@ -3166,11 +3176,11 @@ const STUB_BLOCK_ZH = `${STUB_BEGIN}\n<!-- generated — do not edit -->\n<!-- s
 const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · Contract v${BATON_VERSION} · Details in $(lab path handoffs)/README.md)
 
 **Core Guards & Identity (Mandatory)**
-- **Workspace Boundary**: Agent session is strictly pinned to the active workspace. Never cross boundaries via cd to mutate external handoffs or code. For cross-repo tasks, output a Baton Pass Prompt to direct execution to the target repo's agent.
-- **Single Ticket Lifecycle & Unified Session ID (Mandatory · v2.36.0)**: Ticket physical ID is the conversation ID (globally unified), eliminating split IDs. Immutable across all rounds (Round 1..N); task topic remains constant with zero round noise suffixing.
-- **Anti-Cross-Session Hard Gate (Constitutional Isolation)**: Tickets are strictly bound to initiator conversation. Mutating or closing external tickets (\`forward\`/\`accept\`/\`reopen\`) across sessions is strictly prohibited. Receivers must take tickets with explicit ticket IDs.
+- **Workspace Boundary**: Agent session is strictly pinned to active workspace. Never cross boundaries via cd to mutate external code; output a Baton Pass Prompt for cross-repo tasks.
+- **Single Ticket Lifecycle & Unified Session ID (Mandatory · v2.36.0)**: Ticket physical ID is conversation ID (unified), immutable across all rounds (Round 1..N); task topic remains constant.
+- **Anti-Cross-Session Hard Gate (Constitutional Isolation)**: Tickets strictly bind to initiator conversation; cross-session mutation/closure (\`forward\`/\`accept\`/\`reopen\`) is prohibited. Receivers take tickets with explicit IDs.
 - **CLI Form & Explicit Identity**: Always use \`baton <op>\` or \`handoff <op>\`. Full support for \`--as <lane>\` explicit identity override, enabling multi-ticket processing within the same session.
-- **Session Lane Lock & Cryptographic Signatures**: Run \`baton lane <lane>\` to lock session identity; precedence is \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`; audit deliverables require \`audit.token\` cryptographic signatures to prevent self-closing leaks.
+- **Session Lane Lock & Cryptographic Signatures**: Lock identity via \`baton lane <lane>\`; precedence is \`HANDOFF_LANE\` > \`baton lane\` > \`--as <lane>\`; audit delivery requires \`audit.token\` signatures.
 - **Self-Healing Diagnostics**: Gate details (Nonce, Evidence, consistency) are evaluated by CLI runtime. Every CLI error output ends with a one-click copyable remediation command.
 
 **Inbound Workflow (Receive · Deliver · Reject)**
@@ -3180,11 +3190,15 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
    - **All Tests Pass**: Follow \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` → run \`baton receipt <id> -n "<Body>" --deliver --as <my lane> --evidence-paths "<files>"\` (audit tickets require \`--audit-nonce "<nonce>"\` or \`--auto-nonce\`; red-team probes must follow three-state standard: NO_DISPATCH / NO_COMPLETE / COMPLETE).
    - **Tests Fail / Blocked (NO-GO)**: Use unconditional egress channel, run \`baton reject <id> -n "<reason/missing condition>" --as <my lane>\` to send back for revision (draft receipts can be logged without blocker).
 4. **Wrap-up Check**: Run \`baton check [id]\` (supports \`--fix\` for auto-repair).
-5. **Inbound Reply Closing (Concise Verdict Prompt)**: Receivers MUST NOT use multi-line outbound dispatch cards. Output only a single-line prompt at end of reply (Reject: \`Audit complete, verdict NO-GO (Ticket returned to implementer entering Round <N>)\`; Pass: \`Audit complete, verdict GO\` or \`Delivery complete, receipt ready\`). Subsequent Round is calculated and dispatched by the initiator.
+5. **Inbound Reply Epilogue (Concise One-Line Verdict · Anti-Role-Drift)**: Receiver must strictly maintain own execution/audit role without role drift; output only a single plain-text line at the very end of your response to the user (no markdown headers, no code blocks, strictly no multi-line outbound cards):
+   - Audit Rejection: \`Audit complete, verdict NO-GO (Ticket returned to <initiator role> entering Round <N>)\`
+   - Audit Pass: \`Audit complete, verdict GO\`
+   - General Delivery: \`Delivery complete, receipt ready\`
+   Next Round calculation and outbound dispatch cards are exclusively managed by the initiator when re-forwarding.
 
 **Outbound Workflow (Dispatch · Listen · Mandatory Listener)**
-1. **Create & Forward (Single Ticket Atomic · 99% cases)**: \`baton new <target|lane> <type> "<Title>"\`, fill body, then run \`baton forward <id> --wait\` as a host background task (atomic one-shot: instant prompt card + auto-background listen + wake on delivery; single-ticket \`--async\` split is strictly prohibited!).
-2. **Concurrent Batch Dispatch (Multiple tickets only)**: \`baton forward <id1> <id2> ... --async\`, then immediately run \`baton wait <id1> <id2> ... --all\` as a host background task to clear debt.
+1. **Create & Forward (Single Ticket Atomic · 99% cases)**: \`baton new <target|lane> <type> "<Title>"\`, fill body, then run \`baton forward <id> --wait\` as a host background task (add \`--blind\` for double-blind audit; single-ticket \`--async\` split is strictly prohibited!).
+2. **Concurrent Batch Dispatch (Multiple tickets only)**: \`baton forward <id1> <id2> ... --async\`, then immediately run \`baton wait <id1> <id2> ... --all\` as a host background task to clear debt (never bundle multiple tickets into one prompt card).
 3. **Outbound Reply Closing (Baton Pass Prompt)**: Initiator calculates and advances Round count; end outbound replies with an isolated code block for one-click human copying (no text after):
    ## Baton Pass Prompt
    \`\`\`text

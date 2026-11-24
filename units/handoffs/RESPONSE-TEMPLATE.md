@@ -27,9 +27,9 @@
    The `## 结论 (Verdict)` section is a strict hard anchor. The receipt MUST contain a clearly stated verdict line (`- **结论**：...` or `<Accepted / Rejected / Verified / NO-GO>`), otherwise `baton receipt` and `baton deliver` will fail closed (Exit 1). Omitting the verdict section to bypass checks is strictly forbidden.
 6. **Copy the Skeleton Verbatim**:
    Do not invent custom markdown structures. Missing required anchors or sections will cause `baton check` and `baton receipt` to fail closed.
-7. **Concise Receiver Verdict Standard (v2.35.2)**:
-   When submitting a receipt or verdict back to the initiator, receivers (especially auditors) MUST NOT format their response as a multi-line outbound dispatch card (`请 [xxx] 接单...`). The receiver's final prompt MUST be a concise one-line verdict:
-   - Rejection (NO-GO): `审计完成，裁决 NO-GO（工单已退回实现方进入 Round <N>）`
+7. **Concise Receiver Verdict Standard (Anti-Role-Drift · v2.39.0)**:
+   When submitting a receipt or verdict back to the initiator, receivers (especially auditors) MUST strictly maintain their assigned execution/audit role without role drift, and MUST NOT format their response as a multi-line outbound dispatch card (`请 [xxx] 接单...`), NOR wrap the verdict with redundant markdown headers (`可复制的...`) or code blocks. The receiver's final prompt MUST be a concise one-line plain text:
+   - Rejection (NO-GO): `审计完成，裁决 NO-GO（工单已退回<发起方角色>进入 Round <N>）`
    - Pass (GO): `审计完成，裁决 GO` (or `交付完成，回执已就绪`)
    The initiator is solely responsible for calculating and carrying the next `Round` in subsequent outbound handoff cards.
 8. **Tiered SDD & Exploit-First Security Proof (ADR-0012)**:
@@ -43,6 +43,12 @@
    - **Stage 1: Spec Compliance (规格与契约符合度)**: Does the implementation strictly fulfill all explicit requirements, boundary conditions, and interfaces without unapproved deviations or reductions?
    - **Stage 2: Code Quality & Architecture (代码与架构质量)**: Is the code clean, robust, anti-orphan, properly tested, type-safe, and free from regression or dead code?
    Both stages must pass for a final `GO` verdict. Any critical finding in either stage triggers `NO-GO` / `REJECTED`.
+10. **Autonomous Double-Blind Multi-Dimensional Matrix (v2.40.0)**:
+   When receiving a double-blind audit ticket generated under the Autonomous Triage Protocol (`to_lane=audit`, marked `blind: true`), the auditor MUST:
+   - Independently verify each active dimension (D1..D4) listed in `## 验收判据` using terminal command executions;
+   - Strictly ignore author self-justifications or excuses, relying solely on verifiable facts and terminal test exits;
+   - If any single dimension fails (e.g. Red-Team vulnerability found or orphan export detected), immediately reject via `baton reject <id> -n "<failure reason>" --as audit`;
+   - Only issue `baton receipt <id> -n "..." --deliver --as audit --evidence-paths "..."` when all active dimensions are 100% verified.
 
 ---
 
@@ -90,11 +96,7 @@ date: YYYY-MM-DD
 ## 遗留与建议 (Notes & Follow-ups)
 <Optional notes for downstream maintainers or next steps>
 
-## 转递提示词 (Baton Pass Prompt)
-> 复制下方提示词转告发起方（同对话多工单精准路由对齐）：
-```text
-请【<author-lane-role>】查收【<receiving-lane-role>】回执 [<ID>]：receipts/<ID>-resp.md（<Verdict> · 需发起方改动：<是/否>）
-```
+> 注：仓内同工作区协作在终态交付 (`baton deliver`) 或退回 (`baton reject`) 后，状态机已通过事件总线自动唤醒发起方。回执内无需包含「## 转递提示词」节，由接收方在回复人类的末尾直接输出单行纯文本裁决即可。
 ```
 
 ---

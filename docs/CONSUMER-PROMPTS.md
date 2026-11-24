@@ -15,6 +15,7 @@
 7. [场景六：消费方接入与升级 spec-guard v2.0 机器信任根与接线守卫](#场景六消费方接入与升级-spec-guard-v20-机器信任根与接线守卫)
 8. [场景七：消费方接入或升级 orphan v1.4.2 反假接线三层治理与 AGENTS/GEMINI 极简路由](#场景七消费方接入或升级-orphan-v142-反假接线三层治理与-agentsgemini-极简路由)
 9. [场景八：消费方基于 ReasonWeave v1.3.2 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）](#场景八消费方基于-reasonweave-v132-新架构全面排查整改与优化vibe-security-穿透防线--依赖瘦身--sddreppit-落地)
+10. [场景九：极简触发自主多维双盲审计（Zero-Cognitive Double-Blind Audit · v2.40.0）](#场景九极简触发自主多维双盲审计zero-cognitive-double-blind-audit--v2400)
 
 ---
 
@@ -148,7 +149,7 @@ baton install && baton link --check && lab doctor && baton check
   - [ ] `backlog`（待办捕获，`docs/backlogs/`）
   - [ ] `preflight`（不变量探针与提交门禁）
   - [ ] `review-gate`（代码静态扫描与评审防线）
-  - [ ] `handoffs`（工作流交接中枢，`baton` / `handoff` 命令，契约 v2.38.1）
+  - [ ] `handoffs`（工作流交接中枢，`baton` / `handoff` 命令，契约 v2.40.0）
   - [ ] `worktree`（物理工作树隔离，`baton-worktree`）
   - [ ] `orphan`（死代码与孤儿资产清道夫，`lab orphan`）
   - [ ] `spec-guard` / `drift-gate`（架构规约与漂移守卫）
@@ -185,7 +186,7 @@ baton install && baton link --check && lab doctor && baton check
    - 待办捕获：按 `$(lab path backlog)/README.md` 将待办记录至 `docs/backlogs/`。
    - 提交门禁：按 `$(lab path preflight)/README.md` 将 `$(lab path preflight)/templates/preflight.sh` 接入为提交前检查。
    - 代码质量：按 `$(lab path review-gate)/README.md` 接入本地扫描。
-   - 任务交接：运行 `baton install` 注入标准接入桩（契约 v2.38.1，严格会话ID统一，严禁跨会话处理工单）。
+   - 任务交接：运行 `baton install` 注入标准接入桩（契约 v2.40.0，严格会话ID统一，严禁跨会话处理工单）。
 3. **铁律**：严禁复制规则全文，只保留动态指针。接入后运行一次 `git status` 汇报。
 ```
 
@@ -193,7 +194,7 @@ baton install && baton link --check && lab doctor && baton check
 
 ### 场景五：已接入消费方升级到最新版能力库
 
-> 📋 **适用场景**：本项目已接入 lab 能力库，lab 仓刚发布功能更新（当前 **Agent Baton v2.38.1 / 接入桩 sha `efc4fb85`**，包含 **全局统一会话ID与一单到底 (`id === conversation_id`)、严禁跨会话处理工单硬门禁 (`CROSS_SESSION_MUTATION_BLOCKED`)、入站极简裁决提示词、出站 Round 轮次单一事实源与独立计算、会话亲和性与并发监听、ADR-0010 会话环境身份锁与防跨角色漂移、密码学审计凭据与 HMAC-SHA256 签章防伪、出站防注入提示词三段式、并发异步派发 `forward --async`、`--auto-nonce` 自动绑定**，以及新增 `orphan`、`spec-guard`、`worktree` 单元、全 CLI 物理契约对齐 (ADR-0013) 与多个 CLI）。
+> 📋 **适用场景**：本项目已接入 lab 能力库，lab 仓刚发布功能更新（当前 **Agent Baton v2.40.0 / 接入桩 sha `67053f60`**，包含 **全局统一会话ID与一单到底 (`id === conversation_id`)、严禁跨会话处理工单硬门禁 (`CROSS_SESSION_MUTATION_BLOCKED`)、自主双盲审计分诊协议、动态维度裁剪、避免交接角色漂移、纯化入站极简单行裁决提示词、出站 Round 轮次单一事实源与独立计算、会话亲和性与并发监听、ADR-0010 会话环境身份锁与防跨角色漂移、密码学审计凭据与 HMAC-SHA256 签章防伪、出站防注入提示词三段式、并发异步派发 `forward --async`、`--auto-nonce` 自动绑定**，以及新增 `orphan`、`spec-guard`、`worktree` 单元、全 CLI 物理契约对齐 (ADR-0013) 与多个 CLI）。
 > 📋 **使用方式**：复制下方整块 Markdown，发给**本项目**的 AI Agent 会话；每个消费方仓各发一次。上游细节见 [INSTALL.md §4](../INSTALL.md)。
 
 ````markdown
@@ -201,7 +202,7 @@ baton install && baton link --check && lab doctor && baton check
 
 背景：本机是「单一 lab 仓 + 软链 / 动态指针」模型，没有 submodule、npm 版本依赖或 commit 钉值，因此不需要逐仓 bump 版本号。但有两样东西不会自动刷新，必须显式处理：
 ① 全局 CLI 的 bin shim（新增 lab-orphan / spec-guard / drift-gate / agent-baton 等）只在 npm link 时生成；
-② 各载体（AGENTS.md / CLAUDE.md / GEMINI.md / README.md 及全局载体）里的 Baton 接入桩正文已变更至最新契约 v2.38.1，旧桩会被判「桩版本漂移」并 exit 1。
+② 各载体（AGENTS.md / CLAUDE.md / GEMINI.md / README.md 及全局载体）里的 Baton 接入桩正文已变更至最新契约 v2.40.0，旧桩会被判「桩版本漂移」并 exit 1。
 本次升级重点落地了：全局统一会话ID与一单到底（`id === conversation_id`，消除多端混淆）、防跨会话处理工单硬门禁（`CROSS_SESSION_MUTATION_BLOCKED`）、入站极简裁决提示词、出站 Round 轮次单一事实源与独立计算、会话亲和性与基于 `Atomics.wait` 的低耗并发监听、ADR-0010 会话与环境身份锁（Fail-Closed 防跨角色漂移）、密码学审计私钥凭据与 HMAC-SHA256 签章防伪（防共享磁盘明文 Nonce 冒用）、出站防注入三段式提示词、并发异步转递（--async）与多工单聚合监听、ADR-0013 全 CLI 物理契约对齐与动态版本 SSOT。
 
 ### 执行工序（按顺序，全部在终端真实运行，不要只静态读码）
@@ -213,7 +214,7 @@ baton install && baton link --check && lab doctor && baton check
 3. 在**本项目根目录**刷新接入桩并自检：
    ```bash
    baton install             # 幂等：刷新项目载体 + 全局载体的接入桩（需固定中文桩可加 --lang zh）
-   baton link --check        # 必须 RC=0，显示「桩版本 == 引擎版本 (v2.38.1)」
+   baton link --check        # 必须 RC=0，显示「桩版本 == 引擎版本 (v2.40.0)」
    baton check               # 本仓交接 / 回执合规自检；历史存量工单告警不阻断当前工单
    ```
 4. 核对新能力可达（只读）：
@@ -222,7 +223,7 @@ baton install && baton link --check && lab doctor && baton check
    for u in handoffs orphan spec-guard worktree; do test -f "$(lab path $u)/README.md" || echo "MISSING: $u"; done
    which lab-orphan spec-guard drift-gate 2>/dev/null || where.exe lab-orphan spec-guard drift-gate
    ```
-5. 检查本项目 AGENTS.md / CLAUDE.md / README.md 的接入桩：版本串为 v2.38.1 且每个文件只有一份桩（无重复块）。若某载体是手写指针（缺 `<!-- handoff-stub:v2.1 begin -->` 标记）导致 install 跳过，请用 `$(lab path handoffs)/README.md` 的标准桩替换该段后重跑 `baton install`。另外：`baton doctor` 会用正则抓载体里第一个 `契约 v<版本>` 做比对，正文若残留手写的旧版本号请删掉（版本串只留在标准桩内），否则升级后仍误报漂移。
+5. 检查本项目 AGENTS.md / CLAUDE.md / README.md 的接入桩：版本串为 v2.40.0 且每个文件只有一份桩（无重复块）。若某载体是手写指针（缺 `<!-- handoff-stub:v2.1 begin -->` 标记）导致 install 跳过，请用 `$(lab path handoffs)/README.md` 的标准桩替换该段后重跑 `baton install`。另外：`baton doctor` 会用正则抓载体里第一个 `契约 v<版本>` 做比对，正文若残留手写的旧版本号请删掉（版本串只留在标准桩内），否则升级后仍误报漂移。
 
 ### 禁止事项（踩过的坑）
 - 不要用 lab 源模板覆盖本项目定制的 `review-gate/scan.sh`、`scripts/preflight.sh`、`.githooks/` 等副本（多为项目校准值）。
@@ -231,10 +232,10 @@ baton install && baton link --check && lab doctor && baton check
 - 不要修改 lab 仓内任何文件；本项目之外的仓库一律不动。
 
 ### 验收判据（全部实测满足才算完成）
-- [ ] `baton link --check` / `baton doctor` RC=0，输出「桩版本 == 引擎版本 (v2.38.1)」
+- [ ] `baton link --check` / `baton doctor` RC=0，输出「桩版本 == 引擎版本 (v2.40.0)」
 - [ ] `lab doctor` RC=0；`baton check` RC=0
 - [ ] `lab path orphan`、`lab path spec-guard` 可解析且对应 README.md 存在
-- [ ] 各载体接入桩唯一、版本串为 v2.38.1
+- [ ] 各载体接入桩唯一、版本串为 v2.40.0
 - [ ] `git status --porcelain` 只有接入桩刷新带来的预期改动，无意外文件
 
 ### 汇报
@@ -366,7 +367,7 @@ baton install && baton link --check && lab doctor && baton check
 ````markdown
 请根据上位工程能力库 `ReasonWeave`（原 `lab-agent-toolkit`）v1.3.2 新架构规范，对本项目进行一次全面的架构排查、安全穿透体检、依赖可达性瘦身与规约治理对齐。
 
-### 背景与新架构核心能力（ADR-0011 / ADR-0012 / ADR-0013 / Baton v2.38.1）
+### 背景与新架构核心能力（ADR-0011 / ADR-0012 / ADR-0013 / Baton v2.40.0）
 1. **Vibe Security 穿透扫描（units/review-gate v1.2.2）**：禁止通过 `# nosem` / `# nosemgrep` 等内联忽略注释掩盖 AI 或历史代码引入的高危漏洞；提供无 OpenGrep 时的诚实 Bandit 兜底（`engine: fallback-ruff-bandit`），对齐 ADR-0013 顶层 `engine`/`fallback`/`version` 同构元数据。
 2. **依赖可达性深度瘦身（units/orphan v1.4.2）**：深度静态分析 `requirements.txt` / `package.json` 中的声明包在源码中的真实可达性，精准定位并清理未引用的孤儿包与死依赖，ANSI banner 干净流输出。
 3. **零调用假凭证与高危硬编码扫描（units/orphan v1.4.2）**：一键识别项目中遗留的 API Token、AWS 密钥、私钥等假凭证或硬编码泄露，推动凭据环境变量化。
@@ -386,7 +387,7 @@ baton install && baton link --check && lab doctor && baton check
   which lab baton lab-orphan spec-guard
   lab doctor && baton doctor
   ```
-- 确认接入桩为最新版 `v2.38.1`：
+- 确认接入桩为最新版 `v2.40.0`：
   ```bash
   baton link --check
   ```
@@ -467,8 +468,34 @@ baton install && baton link --check && lab doctor && baton check
    - `lab orphan check-deps` 清理了哪些冗余依赖包；
    - `lab orphan scan-secrets` 凭证扫描与环境变量化情况。
 2. **规范挂载情况**：
-   - 接入桩版本核验（`v2.38.1`）；
+   - 接入桩版本核验（`v2.40.0`）；
    - SDD / RePPIT 规范与 Tier 1/2 分级执行确认。
 3. **最终 `git status` 变更文件列表与验证结论**。
 ````
+
+---
+
+### 场景九：极简触发自主多维双盲审计（Zero-Cognitive Double-Blind Audit · v2.40.0）
+
+> 📋 **适用场景**：在任何技术栈（Android/Kotlin, Rust, Python, Go, TypeScript）完成功能修改后，人类直接发送一句极简指令，由 Agent 自动探查项目特征、评估 Diff 爆炸半径、动态激活 2~4 个正交审计维度，并自动开立工单挂起监听。彻底杜绝人工构思维度疲劳与 ABCD 多单混杂堆叠。  
+> 📋 **使用方式**：人类直接对发起方 Agent 发送纯文本指令：
+
+```text
+代码已改完，发起双盲审计
+```
+
+#### Agent 执行动作与自主分诊认知标准（不可违背）：
+1. **环境与构建体系自动感知**：探查当前仓特征，自动挂载仓内原生门禁（如 `./gradlew test`、`cargo test`、`pytest`、`npm test`、`lab doctor` 等），严禁在提示词中教条化编写语言细节。
+2. **Diff 爆炸半径评估**：自动分析 `git status` / `git diff --staged` 确定修改性质（契约变更、架构接线、高危安全、UI 交互或纯内部重构）。
+3. **动态裁剪 2~4 个正交维度**：
+   - 必选基底：`[D-Native] 原生物理门禁`；
+   - 契约变更：激活 `[D-Spec] 规格契约符合度`；
+   - 架构重构/新导出：激活 `[D-Wiring] 拓扑闭环与反孤儿`；
+   - 敏感安全/鉴权/I/O：激活 `[D-RedTeam] 红队先红后绿渗透`（NO_DISPATCH / NO_COMPLETE / COMPLETE 三态）；
+   - 端侧UI/状态机：激活 `[D-UX] 端侧交互与健壮性`；
+   - 纯内部重构：激活 `[D-Regression] 防退化回归验证`。
+4. **工单形态黄金法则**：
+   - 默认（95% 场景）：开立 **1 份「自适应多维矩阵工单」**，作为后台任务运行 `baton forward <id> --blind --wait`（自动脱敏思考与自辩，挂起秒级监听）；
+   - 回复末尾**仅输出唯一一张独立的标准交接提示词卡片**，严禁将多份工单或多个卡片堆叠在同一个代码块内！
+
 

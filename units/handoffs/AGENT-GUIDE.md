@@ -1,4 +1,4 @@
-# Handoff Agent Guide（早拦 Preflight 权威版 · v2.35.0）
+# Handoff Agent Guide（早拦 Preflight 权威版 · v2.40.0）
 
 > 本文件是给**执行 handoff 的 Agent**用的思考守卫。不是给人类操作说明，而是强制自检清单。
 
@@ -51,10 +51,10 @@ CLI 已有 60 分钟新鲜度门禁（receipt/deliver/accept 时拦）和 check 
    - 无代码变动用 `--evidence-note "<说明>"`。
 6. `baton check <id>`（精准核验当前工单证据与锚节合规，exit 0；若检测到历史 needs_change 漂移可使用 `baton check <id> --fix` 自动对齐）
 7. **终态交付与会话收尾**：`baton deliver <ID>`（仅在全部判据实测通过且自检合规时执行；烙印 delivered 并触发平息缓冲，发起方探针平息后 Exit 0 唤醒独立验收；INCOMPLETE / NO-GO 严禁 deliver）。
-8. **入站回复收尾（简洁裁决/交付提示词 · v2.35.2）**：接收方/审计方在回复人类时，末尾仅需输出简洁单行提示词（其后无任何正文）：
-   - 驳回退回（NO-GO）：`审计完成，裁决 NO-GO（工单已退回实现方进入 Round <N>）`
+8. **入站回复收尾（简洁单行裁决 · 严禁角色漂移 · v2.39.0）**：接收方/审计方在回复人类时，必须严格保持本方执行/审计角色，严禁切换为发起方角色；末尾仅输出单行纯文本（无需标题，无需代码块，严禁多行出站卡片，其后无任何正文）：
+   - 驳回退回（NO-GO）：`审计完成，裁决 NO-GO（工单已退回<发起方角色>进入 Round <N>）`
    - 交付通过（GO）：`审计完成，裁决 GO`（普通执行方交付：`交付完成，回执已就绪`）
-   - **严禁接收方输出多行出站交接卡片**（`请 [实现方] 接单...` 格式专属发起方在出站时使用；整改轮次 Round 由发起方在重新转递时计算推进）。
+   - **严禁接收方输出多行出站交接卡片**（`请 [xxx] 接单...` 格式专属发起方在出站时使用；整改轮次 Round 由发起方在重新转递时统筹计算推进）。
 
 ## 防抢跑与终态交付平息纪律（v2.20.0 强制）
 - **落盘不等于交付**：回执文件物理落盘不代表执行方会话结束。执行方必须通过 `baton deliver <ID>`（或 `baton receipt --deliver`）显式标记终态交付；
@@ -86,6 +86,42 @@ CLI 已有 60 分钟新鲜度门禁（receipt/deliver/accept 时拦）和 check 
 > 2. `NO_COMPLETE`（事后真值否决）：允许物理探测或调度（如端侧执行、时态校验、回执防伪、地标核验），但系统真值引擎（TruthEngine / Verifier）必须在事后严格否决，拒绝签发成功凭证（绝不可输出 `COMPLETED`，期望 `status=FAILED / REJECTED`）。
 > 3. `COMPLETE`（阳性基线对照）：合规基线输入，必须 100% 成功达成 `COMPLETED`（作为阳性对照，防止“全部拦截导致系统完全不可用”的假阳性与过度防御）。
 > 同仓提示词 / 回执交付行**一律用自然角色且带上 [<ID>]**（实现方 / 审计方 / 架构设计方，或 `.handoff-hub.json` 的 `lane_labels`），**严禁把项目名 / lane slug 当沟通角色**（如「请 Tappy 收交接」「请 impl lane 收交接」）。提示词标准格式：出站 = 结构化卡片（`请 [<目标角色>] 接单：\n[任务主题] <主题>\n...`）、入站回执 = `请 [<发起角色>] 查收 [<本方角色>] 提交的回执：\n[工单编号] [<ID>]\n...`。`handoff prompt` 对 `to_lane=audit` 的交接会自动附此契约，交接文档「给执行方」节也内置该约束。
+
+## 自主双盲审计分诊协议（Autonomous Double-Blind Triage Protocol · v2.40.0 强制）
+> **动因与触发**：人类输入 `“发起双盲审计”`、`“双盲审计”` 或要求多维审计时，发起方 Agent **必须自主执行 4 步认知分诊**，严禁将构思维度与拆单决策推诿给人类，**严禁将多份工单或多个提示词堆叠混杂在同一个提示词代码块中**。
+>
+> 1. **探针自适应：环境与技术栈指纹扫描（Project & Toolchain Sensing）**：
+>    - 自动探查工作区文件，提取当前项目官方推荐的原生物理测试与门禁命令，杜绝提示词内编写语言语法细节：
+>      - **Android / Kotlin**：检测到 `build.gradle.kts` / `AndroidManifest.xml` $\to$ 挂载 `./gradlew check` / `testDebugUnitTest`；
+>      - **Rust**：检测到 `Cargo.toml` $\to$ 挂载 `cargo test` / `cargo clippy`；
+>      - **Python**：检测到 `pyproject.toml` / `pytest.ini` $\to$ 挂载 `pytest` / `ruff`；
+>      - **Go**：检测到 `go.mod` $\to$ 挂载 `go test ./...` / `golangci-lint`；
+>      - **Node / TypeScript**：检测到 `package.json` $\to$ 挂载 `npm test` / `eslint`；
+>      - **ReasonWeave / 规范仓**：挂载 `lab doctor` / `preflight` / `spec-guard`。
+> 2. **差异感知：爆炸半径与变更类型分析（Blast Radius Analysis）**：
+>    - 运行 `git status` / `git diff --staged` 或比对 HEAD，判定本次改动的爆炸半径：
+>      - 场景 A（契约扩散）：修改了对外 API、接口、Schema、CLI 子命令、通信协议；
+>      - 场景 B（架构接线）：新增原语/模块、移动文件、重构拓扑或涉及跨单元依赖；
+>      - 场景 C（高危安全）：涉及鉴权权限、数据加解密、文件 I/O、SQL/Shell 命令拼接、外部网络输入；
+>      - 场景 D（端侧交互）：改动前端组件、Compose 布局、用户交互流程或生命周期状态机；
+>      - 场景 E（内部重构）：算法优化、性能调优、代码清理，无对外行为变更。
+> 3. **动态裁剪：正交维度自适应裁剪（Dynamic Dimensionality）**：
+>    - 从正交维度池中自适应激活 **2~4 个维度**作为工单的 `## 验收判据`（拒绝教条式全量堆砌）：
+>      - **全场景必选基底**：`[D-Native] 原生物理门禁`（执行仓内原生测试命令，断言 Exit 0 与全绿）；
+>      - **命中场景 A**：激活 `[D-Spec] 规格契约符合度`（核验接口参数、返回值、错误语义是否符合契约，禁止越界私货）；
+>      - **命中场景 B**：激活 `[D-Wiring] 拓扑闭环与反孤儿`（新增导出符号必须物理入网，运行 `lab-orphan check-diff`，断言零断链）；
+>      - **命中场景 C**：激活 `[D-RedTeam] 红队先红后绿渗透`（遵循 `NO_DISPATCH / NO_COMPLETE / COMPLETE` 三态标准编写对抗用例）；
+>      - **命中场景 D**：激活 `[D-UX] 端侧状态与交互健壮性`（弱网、空态、异常加载、旋转销毁重建容错）；
+>      - **命中场景 E**：激活 `[D-Regression] 防退化回归验证`（断言对外公共行为 100% 幂等兼容）。
+> 4. **工单形态裁决（黄金法则：一单多维 vs 物理分流）**：
+>    - **黄金法则（95% 场景 · 默认推荐）**：开立 **1 份「自适应多维矩阵工单」**。
+>      - 条件：由同一个审计方（`to_lane: audit`）承接；
+>      - 动作：创建单工单，将选中的维度填入 `## 验收判据`，直接作为宿主后台任务运行 `baton forward <id> --blind --wait`（强制附加 `--blind` 脱敏思维链与自辩，`--wait` 挂起后台监听）；
+>      - 回复收尾：末尾输出 **唯一一张** 结构化交接卡片，回复纯净无歧义。
+>    - **物理切片（5% 场景 · 极少数）**：仅在“跨角色黑盒隔离”时开多单。
+>      - 条件：安全渗透方（`to_lane: redteam`）必须对源码实现双盲，且需架构审计方（`to_lane: audit`）并行审核；
+>      - 动作：基于会话 ID 派生子工单 `<id>-arch` 与 `<id>-sec`，并发派发 `baton forward <id1> <id2> --blind --async` 并立即后台挂起 `baton wait <id1> <id2> --all`；
+>      - 格式规范：必须使用清晰的分隔符（`---`）隔离多个提示词代码块，**严禁将多张工单混杂在一个代码块内**。
 
 ## 跨仓变体
 - 先用 `handoff status --for <target>`（**勿**把 inbox/<target>.md 当权威）

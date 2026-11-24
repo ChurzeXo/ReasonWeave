@@ -621,13 +621,13 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.38\.1\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.40\.0\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.36\.0/);
+    assert.match(agentsContent, /v2\.40\.0/);
     assert.match(agentsContent, /--as <lane>/);
     // 接入桩正文应保持轻量韧性（小于 4200 字符，远小于旧版 8000+ 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
@@ -766,28 +766,28 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.38.1，无旧版本漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.40.0，无旧版本漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.38.1'), '应当输出 v2.38.1');
+    assert.ok(verRes.stdout.includes('v2.40.0'), '应当输出 v2.40.0');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
-    assert.ok(!verRes.stdout.includes('v2.37.0'), '严禁残留旧版本 v2.37.0');
+    assert.ok(!verRes.stdout.includes('v2.38.1'), '严禁残留旧版本 v2.38.1');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.38.1'), '-v 应当输出 v2.38.1');
+    assert.ok(vRes.stdout.includes('v2.40.0'), '-v 应当输出 v2.40.0');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.38.1'), 'version 应当输出 v2.38.1');
+    assert.ok(versionRes.stdout.includes('v2.40.0'), 'version 应当输出 v2.40.0');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.38.1'), '英文帮助中必须展示 v2.38.1');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.40.0'), '英文帮助中必须展示 v2.40.0');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
@@ -1462,21 +1462,23 @@ status: draft
     }
   });
 
-  it('35. [v2.35.2] 入站回执/裁决提示词极简化与出站 Round 轮次专属计算（Inbound Concise Verdict Prompt & Outbound Round SSOT）', () => {
+  it('35. [v2.39.0] 避免交接角色漂移与入站纯净单行裁决提示词（Anti-Role-Drift & Pure Inbound Single-Line Verdict Prompt）', () => {
     const tmpDir = createTestRepo();
 
     // 1. 发起方 A 创建工单并转递
-    const newRes = runBaton(tmpDir, 'new audit task "测试回执提示词极简化" --from impl');
+    const newRes = runBaton(tmpDir, 'new audit task "测试回执提示词极简化与角色防漂移" --from impl');
     const id = newRes.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
     runBaton(tmpDir, `forward ${id} --no-wait`, { BATON_AGENT_HOST: 'antigravity' });
 
     // 2. 接收方 B (audit) 裁决驳回 (NO-GO)
     const rejectRes = runBaton(tmpDir, `reject ${id} -n "判据不满足，打回重构" --as audit`, { BATON_LANG: 'zh' });
     assert.equal(rejectRes.status, 0);
-    // 核心断言：输出简洁单行裁决提示词，严禁输出多行出站交接卡片
+    // 核心断言：输出简洁单行裁决提示词，严禁输出多行出站交接卡片，且彻底移除“可复制”冗余标题与代码块包裹
     assert.match(rejectRes.stdout, /审计完成，裁决 NO-GO（工单已退回实现方进入 Round 2）/);
     assert.doesNotMatch(rejectRes.stdout, /请 \[实现方\] 接单：/);
     assert.doesNotMatch(rejectRes.stdout, /\[任务主题\]/);
+    assert.doesNotMatch(rejectRes.stdout, /可复制裁决提示词/);
+    assert.doesNotMatch(rejectRes.stdout, /```/);
 
     // 3. 发起方 A 重新出站转递，计算并输出 Round 2 完整交接卡片
     const fwdRes = runBaton(tmpDir, `forward ${id} --no-wait`, { BATON_AGENT_HOST: 'antigravity', BATON_LANG: 'zh' });
@@ -1489,9 +1491,20 @@ status: draft
     const nonce = runBaton(tmpDir, `show ${id} --nonce`).stdout.trim();
     const deliverRes = runBaton(tmpDir, `receipt ${id} -n "## 状态 / 结论\\n- **结论**：PASS\\n## 说明\\n已全量通过" --deliver --as audit --audit-nonce "${nonce}" --evidence-note "复审全通"`, { BATON_LANG: 'zh' });
     assert.equal(deliverRes.status, 0);
-    // 核心断言：audit 交付输出单行 "审计完成，裁决 GO"，严禁输出多行交接卡片
+    // 核心断言：audit 交付输出单行 "审计完成，裁决 GO"，严禁输出多行交接卡片，彻底移除“可复制”冗余标题与代码块包裹
     assert.match(deliverRes.stdout, /审计完成，裁决 GO/);
     assert.doesNotMatch(deliverRes.stdout, /请 \[发起方\] 查收/);
+    assert.doesNotMatch(deliverRes.stdout, /可复制交付提示词/);
+    assert.doesNotMatch(deliverRes.stdout, /```/);
+
+    // 5. 跨角色防漂移验证：若工单发起方为 arch（架构设计方），驳回时必须动态退回“架构设计方”，严禁写死“实现方”
+    const newArchRes = runBaton(tmpDir, 'new audit task "测试非impl角色防漂移" --from arch');
+    const archId = newArchRes.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
+    runBaton(tmpDir, `forward ${archId} --no-wait`, { BATON_AGENT_HOST: 'antigravity' });
+    const rejectArchRes = runBaton(tmpDir, `reject ${archId} -n "架构规格不符，驳回重构" --as audit`, { BATON_LANG: 'zh' });
+    assert.equal(rejectArchRes.status, 0);
+    assert.match(rejectArchRes.stdout, /审计完成，裁决 NO-GO（工单已退回架构设计方进入 Round 2）/);
+    assert.doesNotMatch(rejectArchRes.stdout, /退回实现方/);
   });
 
   it('36. [v2.36.0] 会话 ID 与工单 ID 全局统一为会话 ID，且严禁跨会话处理工单 (Anti-Cross-Session Hard Gate)', () => {
@@ -1752,5 +1765,88 @@ status: draft
 
     const checkRes = runBaton(tmpDir, 'check');
     assert.equal(checkRes.status, 0, `包含 Cursor/Copilot 载体时 check 必须通过: ${checkRes.stderr}`);
+  });
+
+  it('41. [v2.40.0] 自主双盲审计分诊协议与 --blind 物理脱敏门禁（思维链与自辩小节物理清洗、验收判据硬守卫与 blind: true 烙印）', () => {
+    const tmpDir = createTestRepo();
+
+    // 1. 创建审计工单并填充带有思维链与自辩内容的正文
+    const res = runBaton(tmpDir, 'new audit task "多维双盲审计分诊验证" --from impl');
+    assert.equal(res.status, 0);
+    const id = res.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation|review))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
+    const ticketFile = path.join(tmpDir, '.handoffs', 'handoffs', `${id}.md`);
+
+    const rawTicket = [
+      '---',
+      `handoff_id: ${id}`,
+      'mode: intra-repo',
+      'from_lane: impl',
+      'to_lane: audit',
+      'type: task',
+      'status: draft',
+      '---',
+      '',
+      '# 多维双盲审计分诊验证 (to_lane: audit)',
+      '',
+      '<thinking>',
+      '这里是大模型的内部隐式思维过程，包含作者的主观假设与自辩推演，属于认知污染源。',
+      '</thinking>',
+      '',
+      '## 目标',
+      '验证自主双盲审计分诊协议。',
+      '',
+      '## 自辩',
+      '这里是开发者的实现心路历程与借口，双盲审计应当将其彻底剥离。',
+      '',
+      '## 验收判据',
+      '- [ ] [D1 规格契约] 接口符合 Spec 契约。',
+      '- [ ] [D2 原生门禁] 仓内原生测试全绿通过。',
+      '',
+      '## 给执行方',
+      '独立执行验收判据。',
+    ].join('\n');
+    fs.writeFileSync(ticketFile, rawTicket, 'utf8');
+
+    // 2. 以双盲模式转递 (--blind)
+    const forwardRes = runBaton(tmpDir, `forward ${id} --blind --no-wait`, { BATON_LANG: 'zh' });
+    assert.equal(forwardRes.status, 0);
+    assert.match(forwardRes.stdout, /物理双盲已生效/);
+
+    // 3. 校验工单落盘内容已被彻底脱敏
+    const sanitizedContent = fs.readFileSync(ticketFile, 'utf8');
+    assert.ok(!sanitizedContent.includes('<thinking>'), '大模型思维链标签必须被物理剥离');
+    assert.ok(!sanitizedContent.includes('认知污染源'), '思维链内部文字必须被物理清洗');
+    assert.ok(!sanitizedContent.includes('## 自辩'), '自辩小节标题必须被物理剥离');
+    assert.ok(!sanitizedContent.includes('心路历程与借口'), '自辩正文必须被物理清洗');
+    assert.match(sanitizedContent, /blind:\s*true/, 'frontmatter 必须烙印 blind: true');
+    assert.match(sanitizedContent, /\[D1 规格契约\]/, '客观测验判据必须完整保留');
+    assert.match(sanitizedContent, /\[D2 原生门禁\]/, '客观测验判据必须完整保留');
+
+    // 4. baton show 展示双盲标志
+    const showRes = runBaton(tmpDir, `show ${id}`, { BATON_LANG: 'en' });
+    assert.equal(showRes.status, 0);
+    assert.match(showRes.stdout, /Double-Blind Audit Active/);
+
+    // 5. 校验无判据工单无法开启双盲 (Fail-Closed)
+    const res2 = runBaton(tmpDir, 'new audit task "缺少判据工单" --from impl');
+    const id2 = res2.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation|review))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
+    const ticketFile2 = path.join(tmpDir, '.handoffs', 'handoffs', `${id2}.md`);
+    fs.writeFileSync(ticketFile2, [
+      '---',
+      `handoff_id: ${id2}`,
+      'mode: intra-repo',
+      'from_lane: impl',
+      'to_lane: audit',
+      'type: task',
+      'status: draft',
+      '---',
+      '# 无判据工单',
+      '## 目标',
+      '只有目标没有判据',
+    ].join('\n'), 'utf8');
+
+    const failBlindRes = runBaton(tmpDir, `forward ${id2} --blind --no-wait`, { BATON_LANG: 'zh' });
+    assert.notEqual(failBlindRes.status, 0, '缺少验收判据的工单禁止以双盲模式转递');
+    assert.match(failBlindRes.stderr + failBlindRes.stdout, /缺少验收判据/);
   });
 });
