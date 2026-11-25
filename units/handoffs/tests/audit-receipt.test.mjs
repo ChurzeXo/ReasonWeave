@@ -621,13 +621,13 @@ status: draft
 
     const doctorRes = runBaton(tmpDir, 'doctor');
     assert.equal(doctorRes.status, 0);
-    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.41\.0\)/);
+    assert.match(doctorRes.stdout, /桩版本 == 引擎版本 \(v2\.41\.1\)/);
 
     // 3. 验证接入桩内容体积与规范：去恐吓化且长度显著精简
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
     const agentsContent = fs.readFileSync(agentsPath, 'utf-8');
     assert.match(agentsContent, /handoff-stub:v2\.1/);
-    assert.match(agentsContent, /v2\.41\.0/);
+    assert.match(agentsContent, /v2\.41\.1/);
     assert.match(agentsContent, /--as <lane>/);
     // 接入桩正文应保持轻量韧性（小于 4300 字符，远小于旧版 8000+ 字符，去恐吓化）
     const stubMatch = agentsContent.match(/<!-- handoff-stub:v2\.1 begin -->([\s\S]*?)<!-- handoff-stub:v2\.1 end -->/);
@@ -766,28 +766,28 @@ status: draft
     assert.ok(/delivered|待我方验收/i.test(statusDelivered.stdout), 'CRLF 回执应正常被判定为 delivered 态');
   });
 
-  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.41.0，无旧版本漂移）', () => {
+  it('20. CLI 版本一致性与多语言帮助（--version / -v / BATON_LANG=en 均统一为 v2.41.1，无旧版本漂移）', () => {
     const tmpDir = createTestRepo();
 
     // 1. --version 与 -v
     const verRes = runBaton(tmpDir, '--version');
     assert.equal(verRes.status, 0);
-    assert.ok(verRes.stdout.includes('v2.41.0'), '应当输出 v2.41.0');
+    assert.ok(verRes.stdout.includes('v2.41.1'), '应当输出 v2.41.1');
     assert.ok(!verRes.stdout.includes('v2.20.0'), '严禁输出 v2.20.0');
     assert.ok(!verRes.stdout.includes('v2.40.0'), '严禁残留旧版本 v2.40.0');
 
     const vRes = runBaton(tmpDir, '-v');
     assert.equal(vRes.status, 0);
-    assert.ok(vRes.stdout.includes('v2.41.0'), '-v 应当输出 v2.41.0');
+    assert.ok(vRes.stdout.includes('v2.41.1'), '-v 应当输出 v2.41.1');
 
     const versionRes = runBaton(tmpDir, 'version');
     assert.equal(versionRes.status, 0);
-    assert.ok(versionRes.stdout.includes('v2.41.0'), 'version 应当输出 v2.41.0');
+    assert.ok(versionRes.stdout.includes('v2.41.1'), 'version 应当输出 v2.41.1');
 
     // 2. 英文环境下的 help 与默认输出
     const enHelpRes = runBaton(tmpDir, '--help', { BATON_LANG: 'en' });
     assert.equal(enHelpRes.status, 0);
-    assert.ok(enHelpRes.stdout.includes('CLI · v2.41.0'), '英文帮助中必须展示 v2.41.0');
+    assert.ok(enHelpRes.stdout.includes('CLI · v2.41.1'), '英文帮助中必须展示 v2.41.1');
     assert.ok(!enHelpRes.stdout.includes('v2.20.0'), '英文帮助严禁硬编码残留旧版本 v2.20.0');
     assert.ok(enHelpRes.stdout.includes('baton reopen'), '英文帮助应包含 reopen 命令');
     assert.ok(enHelpRes.stdout.includes('baton throttle'), '英文帮助应包含 throttle 命令');
