@@ -1,6 +1,7 @@
 # Changelog — review-gate
 
 ## v1.2.2 (2026-11-22)
+- **文档与审查防线增强（Layer-2 code-review-graph 集成指引）**：在 `README.md` §6 Layer-2 本地审查中明确补充与 `code-review-graph` 的协同工作模式，推荐在 Review 前运行 `code-review-graph impact` 提取爆炸半径精准切片。
 - **OpenGrep 原生扫描产物补齐结构化引擎元数据**：修复 `scan.sh` 在 OpenGrep 原生扫描路径下输出 JSON 缺少顶层 `engine: "opengrep"` 与 `fallback: false` 字段的问题，实现与降级扫描模式对齐的对称契约。
 - **输出路径健壮性增强**：修复 `$OUT` 参数传入目录（如 `.` 或文件夹）时文件写入异常的问题，自动回退到 `${OUT%/}/review-gate-report.json`。
 

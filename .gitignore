@@ -57,3 +57,4 @@ preflight/evidence/2026-10-*/verify*.txt
 # Baton / Lab Worktrees
 .worktrees/
 .codegraph/
+.code-review-graph/

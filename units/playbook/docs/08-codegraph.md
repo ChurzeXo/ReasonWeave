@@ -62,6 +62,13 @@ codegraph sync    # 改完代码后
 
 `codegraph explore` 的输出可以直接当 **E1 静态证据**（"改动点 X 确实只有这 3 处调用"）附进收尾报告——比 Agent 口头说"我检查过了"强得多。见 [11 章](11-evidence.md)。
 
+### 4.1 写后审查与爆炸半径分析（code-review-graph）
+
+- **写前探索 vs 写后审查**：
+  - `codegraph`：面向开发编写期，以自然语言/符号做概念探索（`explore` / `query`）；
+  - `code-review-graph`：面向提交审查期，以 Git Diff 逆向计算**爆炸半径（Blast Radius）**与受波及测试（`impact`）。
+- **实战用法**：改动完成后，运行 `code-review-graph impact`，快速生成变更波及范围与单元测试覆盖清单，可直接作为收尾与审计阶段的客观证据（详见 `docs/code-review-graph-guide.md`）。
+
 ## 5. 常见坑
 
 - **只 init 不 sync**：过期索引比没索引更危险（Agent 会信任它）。

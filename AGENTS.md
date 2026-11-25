@@ -36,6 +36,8 @@ docs/                辅助文档与待办 (docs/backlogs/)
 - `group/product/intent.md` — 产品意图
 - `group/architecture/dependency-graph.md` — 依赖关系与发布节奏
 - `group/contracts/npm-packaging.md` — NPM 打包与发布契约
+- `docs/codegraph-readiness-check.md` — 代码探索语义索引就绪检查
+- `docs/code-review-graph-guide.md` — 变更审查与爆炸半径分析指南
 
 ## Agent Guidelines
 - 读取上下文顺序：**本文件 → `constitution.md` → 目标 Unit 的 `AGENTS.md` 与 `README.md`**。
@@ -47,6 +49,7 @@ docs/                辅助文档与待办 (docs/backlogs/)
 - **单测零环境寄生与沙箱隔离律（Hermetic Testing Sandbox · ADR-0013）**：单测严禁在宿主仓直接写操作或依赖宿主 ambient 状态；涉及文件/Git/Hub 操作必须强制使用 `createTestRepo()` 在 `os.tmpdir()` 创建独立沙箱并在 `finally` 阶段可靠清场；运行前必须清洗宿主注入的外部会话环境变量；脚本路径解析统一使用 `import.meta.url`。
 - **结构化输出优先与单事实提取（Structured Output Protocol · ADR-0013）**：程序间交互必须优先使用 `--json`；纯文本解析严禁使用 `[a-f0-9\-]+` 等极易发生贪婪截断的简陋正则，统一使用权威提取函数（`extractTicketId`）。
 - **产物同构与防御性探针（Schema Invariance & Defensive Probe · ADR-0013）**：多执行引擎（原生 vs 降级）工具的产物必须输出一致的顶层控制元数据（`engine`, `fallback`, `version`）；环境探针（`lab doctor`）严禁盲目吞没异常，必须明确区分物理文件缺失、进程超时与 PATH 未配置。
+- **变更影响面与客观证据律（Blast Radius & Evidence Grounding · E1）**：进行大型重构、跨模块改动或交割审计（`to_lane: audit`）时，严禁口头猜测或凭借裸 grep 妄断“无下游影响”；推荐调用 `code-review-graph impact`（或 MCP 工具）量化变动爆炸半径与关联单测覆盖，产出客观 E1 级静态证据附入工单回执（详见 `docs/code-review-graph-guide.md`）。
 - **文档与规约联动对齐律（Doc-Code Synchronization Invariant）**：严禁代码演进但文档与规则滞后；提交前必须自主对照「变更触发矩阵」判定并联动更新：
   1. **动版本 / Unit / 接入桩** $\to$ 联动 `VERSION.md`、`CHANGELOG.md`，运行 `baton install` 幂等刷新全载体（`AGENTS.md`、`CLAUDE.md`、`GEMINI.md`、`README.md`），同步对齐 `INSTALL.md`、`使用说明.md`、`README.md` 与 `docs/CONSUMER-PROMPTS.md` 预期版本字面量；
   2. **动 CLI 入口 / 参数 / 退出码** $\to$ 联动 `INSTALL.md`（CLI 矩阵与前置体检）、`使用说明.md`（命令速查与用法实战）、`README.md` 及 `tests/cli-contract.test.mjs` 门禁；

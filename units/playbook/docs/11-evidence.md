@@ -99,7 +99,7 @@ AGENTS.md 的 Verification 段必须给出**具体命令**，而不是"跑测试
 □ 契约面：有没有跨 Unit / 对外接口被改
 ```
 
-工具形态：`codegraph explore`（本手册 08 章）、`ripple` / `impact-analyzer` / `blast-radius` 这类 pre-change skill，或语言服务器的 find-references。量化依据：TDAD 论文（arxiv 2603.17973）在改动前做依赖图影响分析，把测试回归率从 **6.08% 降到 1.82%**。
+工具形态：`code-review-graph impact`（参见 `docs/code-review-graph-guide.md`）、`codegraph explore`（本手册 08 章）、`ripple` / `impact-analyzer` 这类 pre-change skill，或语言服务器的 find-references。量化依据：TDAD 论文（arxiv 2603.17973）在改动前做依赖图影响分析，把测试回归率从 **6.08% 降到 1.82%**。
 
 **没有依赖图就靠 grep，也要产出一份"受影响文件清单"**——空白的分析比没有分析更危险，因为它长得像结论。
 

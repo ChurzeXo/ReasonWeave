@@ -166,6 +166,7 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 | **specs** | [`specs/`](specs/) | Spec Kit 活文档模板全集（`specs/templates/` 01-research 到 05-evidence），赋能 RePPIT 5 步规约驱动开发闭环 (ADR-0012) |
 | **playbook** | [`units/playbook/`](units/playbook/) | Agent Engineering Framework (AEF) 完整方法论手册与模板库（含第 20/21 章战法手册） |
 
+> **代码图谱辅助支持**：代码探索索引见 [`docs/codegraph-readiness-check.md`](docs/codegraph-readiness-check.md)；变更审查与爆炸半径分析见 [`docs/code-review-graph-guide.md`](docs/code-review-graph-guide.md)。
 > **向后兼容保证**：根目录下保留了指向各 Unit 的软链接（`adr`、`preflight`、`handoffs`、`orphan`、`spec-guard`、`skills` 等），无论通过 `$(lab path <unit>)` 还是旧绝对路径均可无缝兼容。
 > **版本以各 Unit 的 `VERSION.md` 为准**；`lab list` 可随时列出全部 10 个单元。
 

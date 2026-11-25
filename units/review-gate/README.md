@@ -73,6 +73,8 @@
 ## 6. Layer-2 本地 review 用法
 
 - 让 Agent 调用 `code-review-and-quality` 技能，针对：当前 diff、指定文件、或指定 PR/分支。
+- **结合 `code-review-graph`（爆炸半径与测试关联）**：
+  对复杂或核心模块改动，建议在 Review 前运行 `code-review-graph impact`（或通过 MCP `detect_changes_tool` / `get_impact_radius_tool`），自动计算受影响的 Callers、下游依赖与现存单测覆盖，将精准切片喂给审查 Agent，兼顾深度与 Token 经济性（详见 `docs/code-review-graph-guide.md`）。
 - 输入建议：`git diff <base>...HEAD` 或指定路径；输出按「必须修 / 建议修 / 正向发现」分级。
 - 与 Layer-1 关系：Layer-2 抓语义/并发/设计，Layer-1 抓硬规则；两者结论冲突时以「能跑通且人工验证」为准，**不盲信任一层**。
 - 对**无 remote 的本地仓**：PR-Agent / CodeRabbit / pr-af 等 PR 驱动工具**失效**（无 PR 触发），本地 review 技能是兜底。
