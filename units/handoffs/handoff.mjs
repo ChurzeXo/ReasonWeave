@@ -916,6 +916,46 @@ function isVerdictBlocked(verdict) {
   return false;
 }
 
+/**
+ * 判定工单是否被对端有效驳回退回（SSOT 单一事实源判定）
+ * 满足条件：存在 rejected_at，且未处于已交付或已闭环终态，同时满足以下任一：
+ * 1. 显式记录了 rejected_by 且与发起方 from_lane 不同；
+ * 2. 标记了 needs_change 为 true；
+ * 3. 驳回次数 reject_count > 0 且当前状态为 forwarded/draft；
+ */
+function isTicketPeerRejected(hFm, rFm = null) {
+  if (!hFm || !hFm.rejected_at) return false;
+  if (hFm.status === 'delivered' || hFm.status === 'closed') return false;
+
+  const fromLane = String(hFm.from_lane || '').toLowerCase();
+  const rejBy = String(hFm.rejected_by || '').toLowerCase();
+
+  if (rejBy && rejBy !== fromLane) return true;
+  if (Boolean(hFm.needs_change) || Boolean(rFm?.needs_change)) return true;
+  if (hFm.reject_count && Number(hFm.reject_count) > 0 && (hFm.status === 'forwarded' || hFm.status === 'draft')) return true;
+
+  return false;
+}
+
+/**
+ * 判定工单的回执是否属于「负向/未通过/受阻结论已落盘」（SSOT 判定）
+ * 关键安全设计：负向结论（NO-GO/REJECTED/BLOCKED/INCOMPLETE/needs_change）
+ * 绝不强求 audit_nonce 校验（与 cmdReceipt 负向豁免门禁保持绝对对称），只要对端已落盘负向回执，
+ * 必须立刻唤醒发起方进行修复整改，严禁因 Nonce 导致无限挂起超时！
+ */
+function isReceiptNegativeSettled(rFm, rRaw, hFm) {
+  if (!rFm) return false;
+  if (rFm.needs_change) return true;
+  if (rRaw) {
+    const rBody = stripFM(rRaw);
+    const concl = extractConclusion(rBody);
+    if (isVerdictRejected(concl) || isVerdictBlocked(concl)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** 签发一次性高熵 Audit Nonce（128-bit 密码学随机，任务绑定防伪与完整性令牌） */
 function generateAuditNonce(id) {
   const ymd = todayYMD();
@@ -1892,27 +1932,36 @@ function cmdReject(args) {
     const rejEntry = `- 日期：${todayISO()}\n- 理由：${note}\n`;
     const rejTicketEntry = `- 轮次：Round ${nextRound}（驳回方: ${cur}）\n- 日期：${todayISO()}\n- 理由：${note}\n`;
     const updatedTicket = insertRejectionEntry(rawH, rejTicketEntry);
-    fs.writeFileSync(file, updatedTicket, 'utf8');
 
     if (fs.existsSync(rFile)) {
       const rRaw = fs.readFileSync(rFile, 'utf8');
       const rBody = stripFM(rRaw);
       rHash = hashContent(getCleanBody(rBody));
       const updatedRaw = insertRejectionEntry(rRaw, rejEntry);
-      fs.writeFileSync(rFile, updatedRaw, 'utf8');
-      const rFmOld = readFM(rRaw) || {};
+      const rFmOld = readFM(updatedRaw) || {};
       const rUpdates = { delivered_at: '', delivered_by_lane: '', needs_change: true, audit_nonce: '' };
       const rejectorRoleTitle = resolveLaneRole(cur) || (cur === 'audit' ? '审计方' : '驳回方');
       if (!rFmOld.evidence_note && (!rFmOld.evidence_paths || !rFmOld.evidence_paths.length) && (!rFmOld.evidence_commits || !rFmOld.evidence_commits.length)) {
         rUpdates.evidence_note = `${rejectorRoleTitle}驳回退回：${note}`;
       }
-      // 回执清空交付状态并标记需整改，重置 audit_nonce
-      setFM(rFile, rUpdates);
+      // 回执清空交付状态并标记需整改，重置 audit_nonce，原子化写入
+      const mergedRFm = { ...rFmOld, ...rUpdates };
+      writeFM(rFile, mergedRFm, stripFM(updatedRaw));
     } else {
       const rejectorRoleTitle = resolveLaneRole(cur) || (cur === 'audit' ? '审计方' : '驳回方');
       const rejFromLane = cur || (isAuditor ? 'audit' : (hFm?.to_lane || 'audit'));
       const rejToLane = (cur && cur === hFm?.to_lane) ? (hFm?.from_lane || 'impl') : (hFm?.to_lane || 'impl');
-      fs.writeFileSync(rFile, `---\nhandoff_id: ${id}\nmode: ${MODE}\nfrom_lane: ${rejFromLane}\nto_lane: ${rejToLane}\nneeds_change: true\ndate: ${todayISO()}\nevidence_note: ${rejectorRoleTitle}驳回退回：${note}\n---\n\n## 状态 / 结论\n- **结论**：REJECTED / NO-GO\n- **说明**：工单被${rejectorRoleTitle}直接驳回退回整改。\n\n## 驳回记录\n${rejEntry}`, 'utf8');
+      const newRFm = {
+        handoff_id: id,
+        mode: MODE,
+        from_lane: rejFromLane,
+        to_lane: rejToLane,
+        needs_change: true,
+        date: todayISO(),
+        evidence_note: `${rejectorRoleTitle}驳回退回：${note}`
+      };
+      const newRBody = `## 状态 / 结论\n- **结论**：REJECTED / NO-GO\n- **说明**：工单被${rejectorRoleTitle}直接驳回退回整改。\n\n## 驳回记录\n${rejEntry}`;
+      writeFM(rFile, newRFm, newRBody);
     }
 
     const rejectTime = new Date().toISOString();
@@ -1935,7 +1984,10 @@ function cmdReject(args) {
         ? `ℹ️ 工单已进入 Round ${nextRound}，已轮转全新 Audit Nonce: ${updateReject.audit_nonce}`
         : `ℹ️ Ticket entered Round ${nextRound}, rotated new Audit Nonce: ${updateReject.audit_nonce}`);
     }
-    setFM(file, updateReject);
+    // 关键原子写入：将驳回记录与 Frontmatter 一次性原子写入工单文件，杜绝中间非完整态被监听器捕获
+    const parsedTicketFM = readFM(updatedTicket) || {};
+    const mergedTicketFM = { ...parsedTicketFM, ...updateReject };
+    writeFM(file, mergedTicketFM, stripFM(updatedTicket));
     logStateJournal(id, 'reject', {
       from_status: st,
       to_status: 'forwarded',
@@ -2759,7 +2811,7 @@ async function cmdForward(args) {
   const isAsync = args.includes('--async') || args.includes('--detach');
   const isBlind = args.includes('--blind') || args.includes('-b');
   const noWaitExplicit = args.includes('--no-wait');
-  const valFlags = ['--timeout', '-t', '--interval', '-i', '--round', '--as', '-as'];
+  const valFlags = ['--timeout', '-t', '--interval', '-i', '--round', '--as', '-as', '--settle', '-s', '--settle-ms'];
   const valueIdx = new Set();
   for (let i = 0; i < args.length; i++) if (valFlags.includes(args[i])) valueIdx.add(i + 1);
   const rawIds = args.filter((a, i) => !a.startsWith('-') && !valueIdx.has(i));
@@ -4884,14 +4936,7 @@ function printWaitWakeupSummary(id, hFile, rFile, hFm) {
   const displayH = hFile.startsWith(os.homedir()) ? '~' + hFile.slice(os.homedir().length) : hFile;
   const needsChange = Boolean(hFm?.needs_change || hFm?.needs_iggle_change || rFm?.needs_change || rFm?.needs_iggle_change);
 
-  const isPeerRejection = Boolean(hFm?.rejected_at) &&
-    (hFm?.status !== 'delivered' && hFm?.status !== 'closed') &&
-    (
-      (hFm?.rejected_by && String(hFm?.from_lane || '').toLowerCase() !== String(hFm?.rejected_by).toLowerCase()) ||
-      Boolean(hFm?.needs_change) ||
-      Boolean(rFm?.needs_change) ||
-      (hFm?.reject_count && Number(hFm.reject_count) > 0)
-    );
+  const isPeerRejection = isTicketPeerRejected(hFm, rFm);
 
   if (isPeerRejection) {
     console.log(`\n==================================================`);
@@ -5065,7 +5110,8 @@ async function cmdWait(args) {
           const auditNonceValid = !isAudit || (Boolean(rFm.audit_nonce) && rFm.audit_nonce === hFm.audit_nonce);
           if (isPositive && !rFm.needs_change && !hFm.needs_change && auditNonceValid) {
             initialAutoDeliverCandidate = true;
-          } else if ((rFm.needs_change || isVerdictRejected(concl) || isVerdictBlocked(concl)) && auditNonceValid) {
+          } else if (isReceiptNegativeSettled(rFm, rRaw, hFm)) {
+            // 负向裁决（NO-GO/REJECTED/BLOCKED/needs_change）：无需强制绑定 audit_nonce 即可判定为负向就绪
             initialNegativeReceiptSettled = true;
           }
         }
@@ -5094,10 +5140,8 @@ async function cmdWait(args) {
   const isTicketReady = (t) => {
     const isLegacyExempt = t.hFm.created && t.hFm.created < '2026-11-08' && !t.hFm.delivered_at;
     const isDeliveredAfterReject = isDeliveryValid(t.hFm.delivered_at, t.hFm.rejected_at);
-    // 审计方/对端反向驳回退回（NO-GO 唤醒）：若工单被对端驳回（rejected_by 存在且非发起方自身），必须即刻唤醒发起方处理！
-    const isRejectedByPeer = Boolean(t.hFm.rejected_at) &&
-      Boolean(t.hFm.rejected_by) &&
-      t.hFm.rejected_by.toLowerCase() !== String(t.hFm.from_lane || '').toLowerCase();
+    // 审计方/对端反向驳回退回（NO-GO 唤醒）：统一调用 SSOT 权威判定 isTicketPeerRejected
+    const isRejectedByPeer = isTicketPeerRejected(t.hFm);
     const isAutoDeliverCandidate = Boolean(t._candidateForAutoDeliver);
     const isNegativeReceiptSettled = Boolean(t._negativeReceiptSettled);
 
@@ -5449,14 +5493,18 @@ async function cmdWait(args) {
           process.exit(1);
         }
 
-        // 1. 检查 hFile 的 mtime 是否变动（mtime 守卫）
+        // 1. 检查 hFile 的 mtime 是否变动（mtime 守卫 + 安全读取）
         let hMtime = 0;
         try { if (fs.existsSync(t.hFile)) hMtime = fs.statSync(t.hFile).mtimeMs; } catch {}
 
         if (hMtime && hMtime !== t.lastHMtime) {
-          t.lastHMtime = hMtime;
-          t.hFm = readFM(fs.readFileSync(t.hFile, 'utf8')) || {};
-          t.status = t.hFm.status;
+          try {
+            const hContent = fs.readFileSync(t.hFile, 'utf8');
+            const newHFm = readFM(hContent) || {};
+            t.hFm = newHFm;
+            t.status = t.hFm.status;
+            t.lastHMtime = hMtime; // 仅在安全读写解析成功后才提交 mtime
+          } catch {}
         }
 
         // 2. 检查 rFile 是否生成或更新
@@ -5470,37 +5518,40 @@ async function cmdWait(args) {
         } catch {}
 
         if (t.status !== 'delivered' && t.status !== 'closed' && rExists && rMtime !== t.lastRMtime) {
-          t.lastRMtime = rMtime;
-          const rRaw = fs.readFileSync(t.rFile, 'utf8');
-          const rFm = readFM(rRaw);
-          if (rFm && (rFm.handoff_id === id || rFm.id === id || !rFm.handoff_id)) {
-            const hasValidRDelivered = isDeliveryValid(rFm.delivered_at, t.hFm.rejected_at);
-            const hasValidHDelivered = isDeliveryValid(t.hFm.delivered_at, t.hFm.rejected_at);
-            const isDelivered = Boolean(hasValidRDelivered || hasValidHDelivered);
-            if (isDelivered) {
-              const deliverTime = (hasValidHDelivered && t.hFm.delivered_at) ? t.hFm.delivered_at : rFm.delivered_at;
-              t.status = 'delivered';
-              t.hFm.status = 'delivered';
-              t.hFm.delivered_at = deliverTime;
-              t._candidateForAutoDeliver = false;
-            } else {
-              const rBody = stripFM(rRaw);
-              const concl = extractConclusion(rBody);
-              const isPositive = concl && !isVerdictRejected(concl) && !isVerdictBlocked(concl);
-              const isAudit = MODE === 'intra-repo' && String(t.hFm?.to_lane || '').toLowerCase() === 'audit';
-              const auditNonceValid = !isAudit || (Boolean(rFm?.audit_nonce) && rFm.audit_nonce === t.hFm.audit_nonce);
+          try {
+            const rRaw = fs.readFileSync(t.rFile, 'utf8');
+            const rFm = readFM(rRaw);
+            if (rFm && (rFm.handoff_id === id || rFm.id === id || !rFm.handoff_id)) {
+              t.lastRMtime = rMtime; // 仅在安全读取成功后提交 mtime
+              const hasValidRDelivered = isDeliveryValid(rFm.delivered_at, t.hFm.rejected_at);
+              const hasValidHDelivered = isDeliveryValid(t.hFm.delivered_at, t.hFm.rejected_at);
+              const isDelivered = Boolean(hasValidRDelivered || hasValidHDelivered);
+              if (isDelivered) {
+                const deliverTime = (hasValidHDelivered && t.hFm.delivered_at) ? t.hFm.delivered_at : rFm.delivered_at;
+                t.status = 'delivered';
+                t.hFm.status = 'delivered';
+                t.hFm.delivered_at = deliverTime;
+                t._candidateForAutoDeliver = false;
+              } else {
+                const rBody = stripFM(rRaw);
+                const concl = extractConclusion(rBody);
+                const isPositive = concl && !isVerdictRejected(concl) && !isVerdictBlocked(concl);
+                const isAudit = MODE === 'intra-repo' && String(t.hFm?.to_lane || '').toLowerCase() === 'audit';
+                const auditNonceValid = !isAudit || (Boolean(rFm?.audit_nonce) && rFm.audit_nonce === t.hFm.audit_nonce);
 
-              if (isPositive && !rFm?.needs_change && !t.hFm?.needs_change && auditNonceValid) {
-                t._candidateForAutoDeliver = true;
-              } else if ((rFm?.needs_change || isVerdictRejected(concl) || isVerdictBlocked(concl)) && auditNonceValid) {
-                t._negativeReceiptSettled = true;
-              }
-              // 回执文件更新但执行方尚未宣布交付：仅跨仓记录 seen，绝不抢跑翻 received 触发唤醒
-              if (MODE !== 'intra-repo' && t.status !== 'received') {
-                setFM(t.hFile, { receipt_seen_at: new Date().toISOString() });
+                if (isPositive && !rFm?.needs_change && !t.hFm?.needs_change && auditNonceValid) {
+                  t._candidateForAutoDeliver = true;
+                } else if (isReceiptNegativeSettled(rFm, rRaw, t.hFm)) {
+                  // 负向裁决（NO-GO/REJECTED/BLOCKED/needs_change）：无需强制绑定 audit_nonce 即可判定为负向就绪
+                  t._negativeReceiptSettled = true;
+                }
+                // 回执文件更新但执行方尚未宣布交付：仅跨仓记录 seen，绝不抢跑翻 received 触发唤醒
+                if (MODE !== 'intra-repo' && t.status !== 'received') {
+                  setFM(t.hFile, { receipt_seen_at: new Date().toISOString() });
+                }
               }
             }
-          }
+          } catch {}
         }
       }
 
@@ -5533,6 +5584,13 @@ async function cmdWait(args) {
                 t.lastHMtime = newHMtime;
                 t.lastRMtime = newRMtime;
                 hasActiveWrite = true;
+                // 关键安全修复：平息循环中刷新 t.hFm 与 t.rFm 内存镜像，杜绝唤醒时持有过期数据
+                try {
+                  if (fs.existsSync(t.hFile)) {
+                    t.hFm = readFM(fs.readFileSync(t.hFile, 'utf8')) || t.hFm;
+                    t.status = t.hFm.status;
+                  }
+                } catch {}
               }
             }
             if (hasActiveWrite) {
@@ -5549,13 +5607,11 @@ async function cmdWait(args) {
         cleanupAll();
         if (ids.length === 1) {
           const singleT = readyTickets[0];
-          const isPeerRej = Boolean(singleT.hFm.rejected_at) &&
-            Boolean(singleT.hFm.rejected_by) &&
-            singleT.hFm.rejected_by.toLowerCase() !== String(singleT.hFm.from_lane || '').toLowerCase() &&
-            singleT.status !== 'delivered' && singleT.status !== 'closed';
+          const isPeerRej = isTicketPeerRejected(singleT.hFm);
 
           if (isPeerRej) {
-            console.log(`\n⚠️ [工单被驳回退回] 检测到交接 ${singleT.id} 已被【${singleT.hFm.rejected_by}】驳回退回（Needs Change / 待整改）！`);
+            const rejLane = singleT.hFm.rejected_by || '审核方';
+            console.log(`\n⚠️ [工单被驳回退回] 检测到交接 ${singleT.id} 已被【${rejLane}】驳回退回（Needs Change / 待整改）！`);
           } else if (singleT._negativeReceiptSettled) {
             console.log(`\n⚠️ [回执未通过唤醒] 检测到交接 ${singleT.id} 回执已落盘，结论为未通过/受阻，唤醒发起方处理！`);
           } else {

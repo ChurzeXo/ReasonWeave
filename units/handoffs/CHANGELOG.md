@@ -6,6 +6,14 @@
 
 ---
 
+> **v2.41.1 补丁（2026-11-25 · 审计负向裁决/驳回对端自动唤醒根治与平息缓冲原子化加固）**：动因——用户反馈在收单方给出 NO-GO（`审计完成，裁决 NO-GO（工单已退回实现方进入 Round 2）`）或驳回时，发单方监听偶发不自动查收唤醒。深度排查确认为 6 处深层设计缺陷、契约不对称与并发竞态共同导致，实施彻底根治：
+> 1. **Audit Nonce 校验在 `receipt` 与 `wait` 的契约对称化**：`cmdReceipt` 对负向回执（NO-GO/REJECTED/BLOCKED/needs_change）免除 Nonce，但在 `cmdWait` 中负向落盘判定曾错误绑定 `auditNonceValid`，导致无 Nonce 负向回执无限挂起；现提取 `isReceiptNegativeSettled`，负向裁决落盘即刻判定就绪唤醒。
+> 2. **SSOT 单一事实源收敛**：抽提全局统一判定函数 `isTicketPeerRejected`，彻底消除 `isTicketReady`、`cmdWait` 与 `printWaitWakeupSummary` 间关于 `rejected_by`/`needs_change`/`reject_count` 的分歧。
+> 3. **`cmdReject` 全链路单一原子化落盘**：消除先写正文再写 Frontmatter 的非原子双重写，防止 `fs.watch` 捕获到半截文件中间态。
+> 4. **平息缓冲数据新鲜度加固**：在 `cmdWait` 的平息等待循环（Settle Window）中，检测到后续写入活动时，同步重读刷新 `t.hFm` 与状态，杜绝平息结束后持有过期内存镜像。
+> 5. **安全时间戳提交**：仅在文件读取并解析成功后提交 `lastHMtime`/`lastRMtime`，防止瞬时锁冲突导致事件被永久吞没。
+> 6. **参数解析健壮性对齐**：`cmdForward` 补齐 `--settle` / `-s` / `--settle-ms` 选项值索引，杜绝时长参数被误识别为工单 ID。
+
 > **v2.41.0 里程碑（2026-11-24 · 跨客户端交接角色锚定与状态机归属确定性 · 闭环 ADR-0016 · 解决建单 from_lane 为空与上游角色倒错 · 出站提示词显式双向角色锚定 · 唤醒指引分流 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——用户反馈在跨 AI 客户端（Antigravity, WorkBuddy, Cursor, Claude Code）多窗口协作时，存在严重角色漂移；排查发现建单默认 `from_lane: ''` 导致看板失效、`handoff-status` 保底判定将 `rejected_by` 错当发起方造成上游角色倒错、以及 `deliver`/`wait` 输出混淆诱导接收方越权闭环。落实 ADR-0016 实施全链路根治：
 > 1. **发起方身份权威自推导与建单防空闭环（SSOT Initiator Auto-Bind）**：
 >    - `cmdNewIntra` 引入权威推导链：`--from/--as > HANDOFF_LANE > getSessionLane() > default_initiator_lane (impl)`；
