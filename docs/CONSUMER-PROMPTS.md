@@ -16,6 +16,7 @@
 8. [场景七：消费方接入或升级 orphan v1.4.2 反假接线三层治理与 AGENTS/GEMINI 极简路由](#场景七消费方接入或升级-orphan-v142-反假接线三层治理与-agentsgemini-极简路由)
 9. [场景八：消费方基于 ReasonWeave v1.3.2 新架构全面排查、整改与优化（Vibe Security 穿透防线 + 依赖瘦身 + SDD/RePPIT 落地）](#场景八消费方基于-reasonweave-v132-新架构全面排查整改与优化vibe-security-穿透防线--依赖瘦身--sddreppit-落地)
 10. [场景九：极简触发自主多维双盲审计（Zero-Cognitive Double-Blind Audit · v2.40.0）](#场景九极简触发自主多维双盲审计zero-cognitive-double-blind-audit--v2400)
+11. [场景十：消费方接入 AEF 2.0 研发纪律、三态裁决与标准作业程序 (SOP)](#场景十消费方接入-aef-20-研发纪律三态裁决与标准作业程序-sop)
 
 ---
 
@@ -497,5 +498,51 @@ baton install && baton link --check && lab doctor && baton check
 4. **工单形态黄金法则**：
    - 默认（95% 场景）：开立 **1 份「自适应多维矩阵工单」**，作为后台任务运行 `baton forward <id> --blind --wait`（自动脱敏思考与自辩，挂起秒级监听）；
    - 回复末尾**仅输出唯一一张独立的标准交接提示词卡片**，严禁将多份工单或多个卡片堆叠在同一个代码块内！
+
+---
+
+### 场景十：消费方接入 AEF 2.0 研发纪律、三态裁决与标准作业程序 (SOP)
+
+> 📋 **适用场景**：消费方项目升级至 ReasonWeave v1.4.4 / AEF 2.0，接入三态裁决体系 (GO / NO-GO / BLOCKED)、免责受阻挂起呈报与工业级 SOP 执行流。彻底终结环境限制（如 socketpair E_ACCESSDENIED）下的越界 reject 拦截与认知死锁。  
+> 📋 **使用方式**：复制以下内容发送给消费方项目的 AI Agent 会话：
+
+```markdown
+请按 ReasonWeave AEF 2.0 工业级标准为本项目对齐研发纪律与标准作业程序 (SOP)。
+
+### 核心升级背景与纪律要点（不可违背）：
+1. **三态裁决体系 (GO / NO-GO / BLOCKED · ADR-0017 / 宪法 T8)**：
+   - 严禁二元思维：当遭遇宿主容器沙箱权限硬拦截（如 `socketpair E_ACCESSDENIED`）、外部依赖缺失或基础设施不可用等不可抗力（`E_ENV`）时：
+     - **普通实现方（`impl`/`worker`）专享交付权，严禁越界调用 `baton reject`**（会被 CLI 越界拦截）；
+     - **严禁伪造 PASS 交付，亦严禁静默挂起或失踪**；
+     - 必须在 15 分钟内提交客观受阻回执：`baton receipt <ID> -n "## 状态 / 结论\n- **结论**：BLOCKED\n- **阻断类型**：E_ENV\n- **根因分析**：..." --evidence-note "环境阻断日志"`，解除死锁并移交发起方协调。
+2. **标准作业程序流水线 (docs/sop/)**：
+   - 日常作业优先查阅并执行 SOP，严禁凭主观臆想操作：
+     - 全仓与业务仓接入：参考 `$(lab path playbook)/docs/sop/01-installation-and-onboarding-sop.md`
+     - 日常工程协同与三态流转：参考 `$(lab path playbook)/docs/sop/02-day-to-day-engineering-sop.md`
+     - 跨端流转与双盲审计：参考 `$(lab path playbook)/docs/sop/03-handoffs-and-audit-sop.md`
+     - 提交前反未接线与孤儿治理：参考 `$(lab path playbook)/docs/sop/04-anti-orphan-governance-sop.md`
+3. **单行裁决收尾铁律 (宪法 T4 / ADR-0016)**：
+   - 接收方/审计方在回复人类时，末尾仅输出单行纯文本（无需标题，无需代码块，严禁反向输出出站交接卡片）：
+     - 交付通过：`交付完成，回执已就绪`（或 `审计完成，裁决 GO`）
+     - 驳回退回：`审计完成，裁决 NO-GO（工单已退回<发起方角色>进入 Round <N>）`
+
+### 本次排查与就绪执行动作：
+1. **核验接入桩版本**：
+   ```bash
+   baton doctor
+   ```
+   确保输出 `桩版本 == 引擎版本`。
+2. **合规体检与历史漂移自愈**：
+   ```bash
+   baton check --fix
+   ```
+   对历史工单的 needs_change 漂移与状态流水进行原子对齐。
+3. **验证提交前增量接线门禁**：
+   ```bash
+   lab-orphan check-diff --staged
+   ```
+4. **输出确认报告**：汇报接入桩版本、体检自愈结果以及已遵照 AEF 2.0 三态裁决（GO/NO-GO/BLOCKED）就绪。
+```
+
 
 
