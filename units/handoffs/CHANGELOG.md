@@ -6,6 +6,16 @@
 
 ---
 
+> **v2.41.2 补丁（2026-11-26 · 双盲审计出站卡片独立沙箱角色锚定与防自证拒识死锁加固）**：动因——用户反馈在跨客户端（WorkBuddy → ChatGPT）派发双盲审计工单时，ChatGPT 新窗口因全局安装了以“双盲审计”为触发词的派发技能，误以为人类在要求发起 `/audit`，激活派单逻辑后触发内部“严禁当前窗口自行审计”守卫，将自身锁死在派发官角色并拒接审计。经排查，系提示词缺乏独立沙箱声明与技能触发词语义撞车导致。实施彻底根治：
+> 1. **出站提示词双盲审计角色锚定（Audit Role Anchor Invariant）**：
+>    - `cmdPrompt`（仓内及跨仓）在判定 `to_lane=audit` 时，自动在出站交接提示词卡片中注入显式角色锚定行：
+>      `[角色锚定] 本会话即为独立审计沙箱，请直接作为审计执行员进行独立测试与核验（切勿触发派单逻辑）`（英文对应注入 `[Role Anchor]`）；
+>    - 接收端 Agent（ChatGPT / Claude / Cursor 等）读取提示词瞬间强行覆写系统上下文，消除角色认知模糊，阻断模型误召回全局派单技能。
+> 2. **自主双盲审计分诊协议边界加固（Dispatcher vs Verifier Boundary）**：
+>    - 在 `AGENT-GUIDE.md` 明确划定 `自主双盲审计分诊协议` 仅限发起方（`from_lane`）交割时触发；
+>    - 明确禁止接收方（`to_lane=audit`）以“当前窗口不能自行审计”为借口推诿拒单（该窗口即为合法独立审计沙箱），强制进入入站实测工作流。
+> 3. **全套单测与事实源同步对齐**：更新用例 30 断言 `to_lane=audit` 时必须包含角色锚定行；全仓文档与门禁对齐。
+
 > **v2.41.1 补丁（2026-11-25 · 审计负向裁决/驳回对端自动唤醒根治与平息缓冲原子化加固）**：动因——用户反馈在收单方给出 NO-GO（`审计完成，裁决 NO-GO（工单已退回实现方进入 Round 2）`）或驳回时，发单方监听偶发不自动查收唤醒。深度排查确认为 6 处深层设计缺陷、契约不对称与并发竞态共同导致，实施彻底根治：
 > 1. **Audit Nonce 校验在 `receipt` 与 `wait` 的契约对称化**：`cmdReceipt` 对负向回执（NO-GO/REJECTED/BLOCKED/needs_change）免除 Nonce，但在 `cmdWait` 中负向落盘判定曾错误绑定 `auditNonceValid`，导致无 Nonce 负向回执无限挂起；现提取 `isReceiptNegativeSettled`，负向裁决落盘即刻判定就绪唤醒。
 > 2. **SSOT 单一事实源收敛**：抽提全局统一判定函数 `isTicketPeerRejected`，彻底消除 `isTicketReady`、`cmdWait` 与 `printWaitWakeupSummary` 间关于 `rejected_by`/`needs_change`/`reject_count` 的分歧。

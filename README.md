@@ -56,7 +56,7 @@ npm link
 | CLI | 作用 |
 |---|---|
 | 🌐 `reasonweave` / `lab` / `rw` | 能力库总管、`lab init` 全套一键初始化、环境体检、路径动态解析、ZSpec 脚手架、下游一键全量同步分发 (`sync-consumers`)，全量转发核心工具 |
-| 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、跨客户端角色锚定与状态机归属确定性 (ADR-0016)、根治建单 from_lane 为空与上游角色倒错、出站提示词双向锚定、自主双盲审计分诊协议、避免交接角色漂移、纯化入站单行裁决提示词、Rule 8 分级 SDD 验收与先红后绿负向测试证明、`--profile readonly` 生产源码写保护物理硬门禁、会话身份锁、密码学审计凭据防伪、防注入出站提示词、一单到底、严禁跨会话处理工单、静默管道与事件唤醒（Baton v2.41.1） |
+| 🔄 `baton` / `agent-baton` / `handoff` | 工作流交割中枢、跨客户端角色锚定与状态机归属确定性 (ADR-0016)、根治建单 from_lane 为空与上游角色倒错、出站提示词双向锚定、自主双盲审计分诊协议、避免交接角色漂移、纯化入站单行裁决提示词、Rule 8 分级 SDD 验收与先红后绿负向测试证明、`--profile readonly` 生产源码写保护物理硬门禁、会话身份锁、密码学审计凭据防伪、防注入出站提示词、一单到底、严禁跨会话处理工单、静默管道与事件唤醒（Baton v2.41.2） |
 | 🌳 `baton-worktree` | 基于 Git Worktree 的多 Agent 物理目录隔离调度引擎 |
 | 🛡️ `baton-audit-runner` | 双盲审计自动化运行器（无上下文独立重跑测试，Exit Code 真实裁决） |
 | 🧹 `lab-orphan` | 全局死代码与孤儿资产清道夫、反未接线与反假接线三层治理门禁（S1–S3 求解器、L1/L2/L3 正交解耦、新增 `check-deps [--strict]` 孤儿依赖求解器与 `scan-secrets [--strict]` 零调用假凭证探针，v1.4.2） |
@@ -112,7 +112,7 @@ lab zspec guide             # 查看面向 AI Agent 的 ZSpec 实施指南
 lab migrate [项目路径]      # 将老项目中硬编码的路径一键平滑升级
 ```
 
-### 2. `baton` / `handoff` — 任务交割与注意力节流引擎 (v2.41.1)
+### 2. `baton` / `handoff` — 任务交割与注意力节流引擎 (v2.41.2)
 > **跨仓/同仓 Agent 间任务交割像调 API 一样无损直达**  
 > 拒绝人肉传话与上下文衰减。一条命令穿透仓库边界，接口与协作契约严密对齐，独立窗口双盲审计，事件驱动无感闭环。
 
@@ -128,7 +128,7 @@ baton deliver <ID> --as <lane>      # 执行方终态交付并翻 delivered（�
 baton reject <ID> -n "<理由>" --as <lane>   # 实测未过 / 受阻：直接退回整改（轮次唯一自增点）
 baton accept <ID> -n "<结论>" --as <lane>   # 发起方独立实测后闭环（close 为同义别名）
 baton check [ID] [--fix]            # 闭环状态、回执证据与 needs_change 漂移核验
-baton install / baton doctor        # 刷新接入桩 / 校验桩版本 == 引擎版本 (v2.41.1)
+baton install / baton doctor        # 刷新接入桩 / 校验桩版本 == 引擎版本 (v2.41.2)
 ```
 
 ### 3. `baton-worktree` — 物理隔离调度引擎
@@ -160,7 +160,7 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 | **backlog** | [`units/backlog/`](units/backlog/) | 待办捕获：越界 / 待拍板 / 未来功能，一任务一文件，不打断当前工作流 |
 | **preflight** | [`units/preflight/`](units/preflight/) | 仓库不变量探针 + Git 提交门禁（v1.1.0），A1~A5 探针（含配置化单一事实源与派生状态防漂移对账），防止“做完才发现还有一件事” |
 | **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`)，v1.2.2 新增 `--no-suppress` 穿透扫描、Ruff Bandit 诚实降级结构化 JSON 标记与 macOS bash 3.2 兼容自愈、顶层同构 engine 元数据 |
-| **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton v2.41.1），统一会话ID、防跨会话硬门禁、会话身份锁、跨客户端角色锚定与状态机归属确定性、自主双盲审计分诊协议、避免角色漂移、纯化入站单行裁决提示词、Rule 8 分级 SDD 验收与负向测试先行证明、`--profile readonly` 生产源码写保护物理硬门禁、密码学审计凭据签章、出站防注入提示词、无条件下车、五态状态机与事件唤醒 |
+| **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton v2.41.2），统一会话ID、防跨会话硬门禁、会话身份锁、跨客户端角色锚定与状态机归属确定性、自主双盲审计分诊协议、避免角色漂移、纯化入站单行裁决提示词、Rule 8 分级 SDD 验收与负向测试先行证明、`--profile readonly` 生产源码写保护物理硬门禁、密码学审计凭据签章、出站防注入提示词、无条件下车、五态状态机与事件唤醒 |
 | **worktree** | [`units/worktree/`](units/worktree/) | 基于 Git Worktree 的物理目录隔离调度引擎，为多 Agent 并发分配独立沙盒并智能共享依赖缓存 |
 | **skills** | [`units/skills/`](units/skills/) | 微观工程原子技能库与分发引擎（v0.1.0，ADR-0015），官方沉淀 TDD、系统化调试、先验后报、需求澄清 4 大原子技能，带 Iron Law 与借口阻断表，提供 `task-brief` 与 `review-package` 零污染切片流水线 |
 | **specs** | [`specs/`](specs/) | Spec Kit 活文档模板全集（`specs/templates/` 01-research 到 05-evidence），赋能 RePPIT 5 步规约驱动开发闭环 (ADR-0012) |
@@ -245,8 +245,8 @@ ln -sf ~/dev-templates/hooks/pre-commit-miniprogram .git/hooks/pre-commit
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:a4d427fb -->
-### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.41.1 为准）
+<!-- stub:sha256:9a6076fc -->
+### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.41.2 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。

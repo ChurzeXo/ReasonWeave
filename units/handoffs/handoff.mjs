@@ -3952,16 +3952,19 @@ function cmdPrompt(args) {
     const promptId = convId || id;
     const initiatorLineZh = `[发起角色] [${fromRole}]（${fromLane}）\n`;
     const initiatorLineEn = `[Initiator] [${fromRole}] (${fromLane})\n`;
+    const isAuditLane = (toLane === 'audit');
+    const roleAnchorZh = isAuditLane ? `[角色锚定] 本会话即为独立审计沙箱，请直接作为审计执行员进行独立测试与核验（切勿触发派单逻辑）\n` : '';
+    const roleAnchorEn = isAuditLane ? `[Role Anchor] This session is an isolated audit sandbox. Act directly as the audit verifier to execute and verify tests (do not trigger dispatch/forwarding logic).\n` : '';
     const instructionLineZh = `\n[接单指令] baton lane ${toLane}（或操作时附带 --as ${toLane}）`;
     const instructionLineEn = `\n[Assignee Instruction] baton lane ${toLane} (or pass --as ${toLane})`;
 
     const promptCardTextZh = (ws === 'worktree')
-      ? `请 [${toRole}] 在隔离工作树接单：\n${initiatorLineZh}[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工作树路径] ${path.join('.worktrees', id)}\n[工单编号] [${promptId}]\n[工单路径] ${display}${instructionLineZh}`.trimEnd()
-      : `请 [${toRole}] 接单：\n${initiatorLineZh}[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}${instructionLineZh}`.trimEnd();
+      ? `请 [${toRole}] 在隔离工作树接单：\n${initiatorLineZh}${roleAnchorZh}[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工作树路径] ${path.join('.worktrees', id)}\n[工单编号] [${promptId}]\n[工单路径] ${display}${instructionLineZh}`.trimEnd()
+      : `请 [${toRole}] 接单：\n${initiatorLineZh}${roleAnchorZh}[任务主题] ${cleanTitle}\n${roundLineZh}${profileLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}${instructionLineZh}`.trimEnd();
 
     const promptCardTextEn = (ws === 'worktree')
-      ? `Please [${toRole}] take handoff in isolated worktree:\n${initiatorLineEn}[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Worktree] ${path.join('.worktrees', id)}\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}${instructionLineEn}`.trimEnd()
-      : `Please [${toRole}] take handoff:\n${initiatorLineEn}[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}${instructionLineEn}`.trimEnd();
+      ? `Please [${toRole}] take handoff in isolated worktree:\n${initiatorLineEn}${roleAnchorEn}[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Worktree] ${path.join('.worktrees', id)}\n[Ticket ID] [${promptId}]\n[Ticket Path] ${display}${instructionLineEn}`.trimEnd()
+      : `Please [${toRole}] take handoff:\n${initiatorLineEn}${roleAnchorEn}[Task Topic] ${cleanTitle}\n${roundLineEn}${profileLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}${instructionLineEn}`.trimEnd();
 
     const chosenPromptText = isZh ? promptCardTextZh : promptCardTextEn;
     writeLatestPrompt(chosenPromptText, cleanTitle, id);
@@ -4066,9 +4069,12 @@ function cmdPrompt(args) {
   const roundLineEn = round > 1 ? `[Task Round] Round ${round} (Review Round ${round})\n` : '';
   const convId = readFM(content)?.conversation_id || getSessionId();
   const promptId = convId || id;
+  const crossIsAudit = (String(readFM(content)?.to_lane || '').toLowerCase() === 'audit');
+  const crossRoleAnchorZh = crossIsAudit ? `[角色锚定] 本会话即为独立审计沙箱，请直接作为审计执行员进行独立测试与核验（切勿触发派单逻辑）\n` : '';
+  const crossRoleAnchorEn = crossIsAudit ? `[Role Anchor] This session is an isolated audit sandbox. Act directly as the audit verifier to execute and verify tests (do not trigger dispatch/forwarding logic).\n` : '';
 
-  const promptCardTextZh = `请 [${targetLabel}] 接单：\n[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd();
-  const promptCardTextEn = `Please [${targetLabel}] take handoff:\n[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd();
+  const promptCardTextZh = `请 [${targetLabel}] 接单：\n${crossRoleAnchorZh}[任务主题] ${cleanTitle}\n${roundLineZh}[工单编号] [${promptId}]\n[工单路径] ${display}`.trimEnd();
+  const promptCardTextEn = `Please [${targetLabel}] take handoff:\n${crossRoleAnchorEn}[Task Topic] ${cleanTitle}\n${roundLineEn}[Ticket ID] [${promptId}]\n[Ticket Path] ${display}`.trimEnd();
   const chosenPromptText = isZh ? promptCardTextZh : promptCardTextEn;
   writeLatestPrompt(chosenPromptText, cleanTitle, id);
   const clipOk = copyToClipboard(chosenPromptText);

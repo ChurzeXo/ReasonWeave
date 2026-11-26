@@ -1157,6 +1157,13 @@ status: draft
     assert.ok(promptRes.stdout.includes(`[工单编号] [${promptIdA}]`) || promptRes.stdout.includes(`[Ticket ID] [${promptIdA}]`), '提示词必须包含工单编号');
     assert.ok(promptRes.stdout.includes('[工单路径]') || promptRes.stdout.includes('[Ticket Path]'), '提示词必须包含工单路径');
     assert.ok(!promptRes.stdout.includes('【身份警示：你是接收方'), '提示词中已剥离身份警示口号');
+    assert.ok(promptRes.stdout.includes('[角色锚定] 本会话即为独立审计沙箱') || promptRes.stdout.includes('[Role Anchor] This session is an isolated audit sandbox'), 'to_lane=audit 时必须包含角色锚定防呆行');
+
+    // 1.0b 验证非 audit 工单（如 impl）不注入角色锚定行
+    const resNonAudit = runBaton(tmpDir, 'new impl task "测试非审计工单无锚定" --from arch', { HANDOFF_LANE: 'arch' });
+    const idNonAudit = resNonAudit.stdout.match(/([A-Za-z0-9_-]+-\d{8}-(?:(?:\d{2}-(?:task|bug|feature|question|continuation))|(?:\d{4,6}(?:-\d{2})?)))/)[1];
+    const promptNonAudit = runBaton(tmpDir, `prompt ${idNonAudit}`, { HANDOFF_LANE: 'arch' });
+    assert.ok(!promptNonAudit.stdout.includes('[角色锚定]'), '非 audit 工单严禁注入角色锚定');
 
     // 1.1 验证当 Round > 1 时，[任务轮次] 单独成行且有标题
     const hFile = path.join(tmpDir, '.handoffs', 'handoffs', `${idA}.md`);
