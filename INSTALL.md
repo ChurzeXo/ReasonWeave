@@ -2,6 +2,7 @@
 
 > 面向拿到源码压缩包 / Git 仓库的使用者与消费方 Agent：首次安装约 1 分钟（§2）；**已装过旧版本请先读 §4「升级」**，本次有一步必做且容易漏。
 > 能力库采用「单一事实源 + 动态指针」模型：规范只存本库，项目里只放 `$(lab path <unit>)` 指针，**不复制规则正文**。
+> 🚀 **工业级安装接入流水线请直接查阅：[SOP-01 全仓初始化与业务仓接入 SOP](docs/sop/01-installation-and-onboarding-sop.md)**。
 
 ---
 
@@ -19,7 +20,7 @@
 | **adr / backlog** | v1.0.1 / v1.2.0 | 架构决策记录 (ADR-0011 ~ ADR-0014 🔒Frozen)、待办捕获跟踪 (Backlog 12 ~ 15) |
 
 > 版本事实源 = `units/<unit>/VERSION.md` 与 `$(lab path handoffs)/README.md`。
-> `package.json` 当前为 `1.4.1`（随全局能力演进做 minor/patch 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
+> `package.json` 当前为 `1.4.4`（随全局能力演进做 minor/patch 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
 
 ---
 
@@ -68,7 +69,7 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| `reasonweave`（别名 `lab`, `rw`） | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检 (`lab doctor`)、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 (v1.4.3，支持 `--version`) |
+| `reasonweave`（别名 `lab`, `rw`） | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检 (`lab doctor`)、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 (v1.4.4，支持 `--version`) |
 | `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、统一会话ID、防跨会话硬门禁、会话锁、密码学防伪回执、事件驱动唤醒（v2.41.2） |
 | `baton-worktree` | 为工单分配 / 回收独立物理工作树（v0.1.0，支持 `--version`） |
 | `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执（v1.2.2，支持 `--version`） |

@@ -7,10 +7,11 @@
 
 ## 快速导航
 
+- 🚀 **标准作业程序 (SOP 全集)**：👉 [docs/sop/](docs/sop/README.md)（AEF 2.0 工业化执行标准：全仓初始化、日常协同、双盲审计、反未接线排查）
 - 📥 **安装与配置手册**：👉 [INSTALL.md](INSTALL.md)（1 分钟快速上手；§4 为老版本升级必读）
 - 📋 **消费方接入与改造提示词大全**：👉 [docs/CONSUMER-PROMPTS.md](docs/CONSUMER-PROMPTS.md)（新项目接入 / 老项目平滑改造 / **场景五：升级安装**，直接复制给 AI 即可使用）
 - 📖 **详细使用指南**：[使用说明.md](使用说明.md)（ZSpec 思想背景与各模块接入实操）
-- 📜 **工程宪法**：[constitution.md](constitution.md)（单一事实源、门禁原则、无感兼容）
+- 📜 **最高工程宪法**：[constitution.md](constitution.md)（AEF 2.0 宪法：单一事实源、三态裁决、反未接线、防伪凭据）
 - 🤖 **Agent 维护守则**：[AGENTS.md](AGENTS.md)
 - 📐 **架构与依赖图**：[group/architecture/dependency-graph.md](group/architecture/dependency-graph.md)
 - 📦 **NPM 打包契约**：[group/contracts/npm-packaging.md](group/contracts/npm-packaging.md)

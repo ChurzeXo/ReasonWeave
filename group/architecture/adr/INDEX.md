@@ -23,6 +23,7 @@
 | 0014 | 全局工程生态更名为 ReasonWeave、权威远端迁移与文档规约联动防漂移律 | 🔒 Frozen | 2026-11-22 | global / bin / tests / doc | `0014-reasonweave-rebranding-and-doc-code-synchronization-invariant.md` |
 | 0015 | 微观工程认知规训、渐进式原子技能库与双核门禁融合架构决策 | 🔒 Frozen | 2026-11-23 | units/skills / playbook / handoffs / global | `0015-micro-engineering-skills-and-dual-core-gate-invariant.md` |
 | 0016 | 跨客户端交接角色锚定、CLI 执行态分流与状态机归属确定性架构决策 | 🔒 Frozen | 2026-11-24 | handoffs / global | `0016-cross-client-role-pinning-and-state-machine-deterministic-attribution.md` |
+| 0017 | 三态裁决体系、宿主基座指纹与 AEF 2.0 研发纪律升维架构决策 | 🔒 Frozen | 2026-11-26 | global / constitution / handoffs / playbook | `0017-three-state-verdict-runtime-fingerprinting-and-aef-2-discipline.md` |
 
 ## 状态说明
 - **Proposed** — 已起草，等待评审。不入 Agent 上下文。
