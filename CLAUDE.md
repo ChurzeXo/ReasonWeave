@@ -23,7 +23,7 @@
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:9a6076fc -->
+<!-- stub:sha256:5090fcd4 -->
 ### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.41.2 为准）
 
 **核心守卫与身份（强制）**
@@ -39,7 +39,7 @@
 2. **读工单**：运行 `baton show <id>`，根据验收判据改动本 lane 范围代码并实测。
 3. **交付或退回（实测为唯一准绳）**：
    - **实测通过**：照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架 → 运行 `baton receipt <id> -n "<正文>" --deliver --as <本方 lane> --evidence-paths "<路径>"`（审计工单附 `--audit-nonce "<nonce>"` 或同工作区授权下使用 `--auto-nonce` 自动绑定最新令牌；红队用例严格遵循 NO_DISPATCH / NO_COMPLETE / COMPLETE 三态标准）。
-   - **实测未过（NO-GO/受阻）**：享有安全下车通道，直接运行 `baton reject <id> -n "<理由/缺失条件>" --as <本方 lane>` 退回整改。
+   - **实测未过（NO-GO/受阻）**：审计方享有安全下车通道，运行 `baton reject <id> -n "<理由/差异在哪>" --as audit` 退回整改；普通执行方若受阻/缺失条件，登记受阻回执 `baton receipt <id> -n "<缺失条件/受阻理由>" --evidence-note "<说明>" --as <本方 lane>` 由发起方核实并处理。
 4. **收尾自检**：运行 `baton check [id]`（若有数据漂移可加 `--fix` 自动修复）。
 5. **入站回复收尾（简洁单行裁决 · 严禁角色漂移）**：接收方必须严格保持本方执行/审计角色，严禁切换为发起方角色；**严禁反向输出 `## 交接提示词` 卡片或调用 `baton close` 越权闭环**；最终回复人类的最末尾仅输出单行纯文本（无需标题，无需代码块，严禁多行出站卡片）：
    - 审计驳回：`审计完成，裁决 NO-GO（工单已退回<发起方角色>进入 Round <N>）`

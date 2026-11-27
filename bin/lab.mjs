@@ -107,20 +107,22 @@ function doctor() {
   console.log(`\n🔍 正在检查环境依赖 (ReasonWeave v${LAB_VERSION}):\n`);
 
   const userHome = os.homedir();
+  const isWin = process.platform === 'win32';
+  const pathSep = path.delimiter;
+
   const extraPaths = [
     path.dirname(process.execPath),
     path.join(userHome, '.local', 'bin'),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
+    ...(!isWin ? ['/opt/homebrew/bin', '/usr/local/bin'] : []),
   ].filter(p => fs.existsSync(p));
 
   const envPath = process.env.PATH || '';
   const augmentedPath = [
     ...new Set([
-      ...envPath.split(':').filter(Boolean),
+      ...envPath.split(pathSep).filter(Boolean),
       ...extraPaths,
     ])
-  ].join(':');
+  ].join(pathSep);
 
   const runCmd = (cmd, env = {}) => {
     return execSync(cmd, {
@@ -128,6 +130,18 @@ function doctor() {
       env: { ...process.env, PATH: augmentedPath, ...env },
       timeout: 10000,
     }).toString().trim();
+  };
+
+  const findExecutable = (binName) => {
+    try {
+      const probeCmd = isWin ? `where ${binName}` : `which ${binName}`;
+      const out = runCmd(probeCmd);
+      if (out) {
+        const firstLine = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0];
+        if (firstLine && fs.existsSync(firstLine)) return firstLine;
+      }
+    } catch {}
+    return null;
   };
 
   // 1. Node.js (>=18)
@@ -155,19 +169,15 @@ function doctor() {
   try {
     let ogBin = process.env.OPENGREP_BIN;
     if (!ogBin || !fs.existsSync(ogBin)) {
-      try {
-        const whichOut = runCmd('which opengrep');
-        if (whichOut && fs.existsSync(whichOut)) ogBin = whichOut;
-      } catch {}
+      ogBin = findExecutable('opengrep');
     }
     const searchDirs = [
       path.join(userHome, '.local', 'bin'),
-      '/opt/homebrew/bin',
-      '/usr/local/bin',
+      ...(!isWin ? ['/opt/homebrew/bin', '/usr/local/bin'] : []),
     ];
     if (!ogBin) {
       for (const d of searchDirs) {
-        const cand = path.join(d, 'opengrep');
+        const cand = path.join(d, isWin ? 'opengrep.exe' : 'opengrep');
         if (fs.existsSync(cand)) {
           ogBin = cand;
           break;
@@ -177,16 +187,11 @@ function doctor() {
     // Fallback to semgrep
     let isSemgrepFallback = false;
     if (!ogBin) {
-      try {
-        const whichSemgrep = runCmd('which semgrep');
-        if (whichSemgrep && fs.existsSync(whichSemgrep)) {
-          ogBin = whichSemgrep;
-          isSemgrepFallback = true;
-        }
-      } catch {}
+      ogBin = findExecutable('semgrep');
+      if (ogBin) isSemgrepFallback = true;
       if (!ogBin) {
         for (const d of searchDirs) {
-          const cand = path.join(d, 'semgrep');
+          const cand = path.join(d, isWin ? 'semgrep.exe' : 'semgrep');
           if (fs.existsSync(cand)) {
             ogBin = cand;
             isSemgrepFallback = true;
@@ -198,19 +203,50 @@ function doctor() {
 
     if (ogBin && fs.existsSync(ogBin)) {
       let verOut = '';
+      let isSuccess = false;
+      let isTimeout = false;
+      let errMsg = '';
       try {
-        verOut = execSync(`"${ogBin}" --version --disable-version-check`, {
+        verOut = execFileSync(ogBin, ['--version'], {
           stdio: ['pipe', 'pipe', 'ignore'],
           env: { ...process.env, PATH: augmentedPath, OPENGREP_SEND_METRICS: 'off', SEMGREP_SEND_METRICS: 'off' },
-          timeout: 15000,
-        }).toString().trim();
-      } catch {
-        verOut = '已就绪 (探针超时)';
+          timeout: 10000,
+        }).toString().trim().split('\n')[0];
+        isSuccess = true;
+      } catch (err) {
+        if (err.code === 'ETIMEDOUT') {
+          isTimeout = true;
+        } else {
+          try {
+            verOut = execFileSync(ogBin, ['--version', '--disable-version-check'], {
+              stdio: ['pipe', 'pipe', 'ignore'],
+              env: { ...process.env, PATH: augmentedPath, OPENGREP_SEND_METRICS: 'off', SEMGREP_SEND_METRICS: 'off' },
+              timeout: 10000,
+            }).toString().trim().split('\n')[0];
+            isSuccess = true;
+          } catch (err2) {
+            if (err2.code === 'ETIMEDOUT') {
+              isTimeout = true;
+            } else {
+              errMsg = err2.message;
+            }
+          }
+        }
       }
-      const inOriginalPath = (process.env.PATH || '').split(':').some(p => ogBin.startsWith(p + '/'));
+      const inOriginalPath = (process.env.PATH || '').split(pathSep).some(p => {
+        const normP = path.normalize(p).toLowerCase();
+        const normBin = path.normalize(ogBin).toLowerCase();
+        return normBin.startsWith(normP);
+      });
       const note = inOriginalPath ? '' : ` (位于 ${ogBin}，非默认 PATH)`;
       const label = isSemgrepFallback ? 'Semgrep (review-gate 兼容)' : 'OpenGrep (review-gate L1)';
-      console.log(`  ✅ \x1b[32m${label.padEnd(28)}\x1b[0m: ${verOut}${note}`);
+      if (isSuccess && verOut) {
+        console.log(`  ✅ \x1b[32m${label.padEnd(28)}\x1b[0m: ${verOut}${note}`);
+      } else if (isTimeout) {
+        console.log(`  ⚠️  \x1b[33m${label.padEnd(28)}\x1b[0m: 可执行文件存在但探针超时${note}`);
+      } else {
+        console.log(`  ⚠️  \x1b[33m${label.padEnd(28)}\x1b[0m: 可执行文件存在但执行异常 (${errMsg || '未知错误'})${note}`);
+      }
     } else {
       console.log(`  ⚠️  \x1b[33m${'OpenGrep (review-gate L1)'.padEnd(28)}\x1b[0m: 未安装 (可选，仅 review-gate 扫描需要)`);
     }
@@ -220,10 +256,21 @@ function doctor() {
 
   // 4. Python 3 (review-gate L2 fallback & test tooling)
   try {
-    const pyOut = runCmd('python3 --version');
-    console.log(`  ✅ \x1b[32m${'Python 3 (L2 fallback)'.padEnd(28)}\x1b[0m: ${pyOut}`);
+    let pyOut = '';
+    try {
+      pyOut = runCmd('python3 --version');
+    } catch {
+      try {
+        pyOut = runCmd('python --version');
+      } catch {}
+    }
+    if (pyOut) {
+      console.log(`  ✅ \x1b[32m${'Python 3 (L2 fallback)'.padEnd(28)}\x1b[0m: ${pyOut}`);
+    } else {
+      console.log(`  ⚠️  \x1b[33m${'Python 3 (L2 fallback)'.padEnd(28)}\x1b[0m: 未检测到 python3/python (可选)`);
+    }
   } catch {
-    console.log(`  ⚠️  \x1b[33m${'Python 3 (L2 fallback)'.padEnd(28)}\x1b[0m: 未检测到 python3 (可选)`);
+    console.log(`  ⚠️  \x1b[33m${'Python 3 (L2 fallback)'.padEnd(28)}\x1b[0m: 未检测到 python3/python (可选)`);
   }
 
   // 5. 核心 Unit CLI 完备性检查

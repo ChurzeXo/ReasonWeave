@@ -43,6 +43,149 @@ describe('spec-guard v2.0: 实测数据自述凭据与机器信任根验签 (Tel
     assert.ok(metricStrings.includes('96.43%'));
   });
 
+  it('区分背景估算、环境描述与实测性能声明：避免误伤 ~100GB、30-70GB、~2MB 等非测量说明', () => {
+    const text = `
+    ## 3. Implementation Status
+    - 历史开发机 C 盘剩余空间 ~100GB，用于方案比较
+    - ComfyUI 模型权重下载规模估计 30–70GB
+    - 硬件体检工具二进制体积预估 ~2MB
+    `;
+    const metrics = extractTelemetryMetrics(text);
+    assert.equal(metrics.length, 0, '估算与环境描述严禁提取为实测声明');
+  });
+
+  it('同行混合设计阈值与实测指标时：忽略阈值不应误杀同行实测指标', () => {
+    const text = `
+    | 压测项 | 状态 | 实测基准数据 |
+    | 吞吐 | ✅ | 实测 Redmi 12C：均值 39.42ms，超时阈值 100ms |
+    `;
+    const metrics = extractTelemetryMetrics(text, { ignorePatterns: ['100ms'] });
+    const metricStrings = metrics.map((m) => m.metric);
+    assert.ok(metricStrings.includes('39.42ms'), '实测均值 39.42ms 必须正常提取');
+    assert.ok(!metricStrings.includes('100ms'), '被忽略的 100ms 不应提取');
+  });
+
+  it('ADR-0004 回归用例：方案比较中历史开发机环境描述（剩余约 100GB）严禁识别为实测指标', () => {
+    const text = `
+    # ADR-0004: 宿主工作区存储拓扑决策
+    
+    ## 2. 方案比较
+    - 方案对比：原有单仓方案在历史开发机 C 盘剩余约 100GB 环境下运行，容易引发磁盘告警。
+    - 备选方案考量：历史开发机 C 盘剩余约 100GB，不足以承载重复模型克隆。
+    `;
+    const metrics = extractTelemetryMetrics(text);
+    assert.equal(metrics.length, 0, '历史开发机 C 盘剩余约 100GB 严禁作为实测指标提取');
+  });
+
+  it('ADR-0008 回归用例：方案优点中可执行文件体积约数描述（大小约 2MB / ~2MB）严禁识别为实测指标', () => {
+    const text = `
+    # ADR-0008: 硬件体检工具分发规范
+
+    ## 3. 方案优点
+    - 独立二进制分发：方案优点在于硬件体检 CLI 可执行文件大小约 2MB，启动迅捷无需额外 Python 运行时。
+    - 体积轻量：单文件体积约 2MB，且 ~2MB 的预编译产物极大降低了消费方拉取成本。
+    `;
+    const metrics = extractTelemetryMetrics(text);
+    assert.equal(metrics.length, 0, '大小约 2MB 与 ~2MB 严禁作为实测指标提取');
+  });
+
+  it('ADR-0009 回归用例：设计约束与模型下载规模估算（30–60s 软取消、禁止 10s 强杀、模型估计 70GB）严禁误报', () => {
+    const text = `
+    # ADR-0009: 调度超时与大模型加载纪律
+
+    ## 2. 设计约束与规则
+    - 超时取消原则：遵循 30–60s 软取消宽限要求，禁止 10s 强杀，给未完成任务安全保存现场的机会。
+    - 资源预估：ComfyUI 模型下载规模估计约 70GB，初始磁盘预留须满足该规模。
+    - 阈值规范：禁止 10s 强杀进程，同时设置 30–60 秒软取消宽限要求。
+    `;
+    const metrics = extractTelemetryMetrics(text);
+    assert.equal(metrics.length, 0, '约束阈值与下载规模估算严禁识别为实测指标');
+  });
+
+  it('同行混合约束与真实实测声明：约束自动豁免，但真实实测指标缺少凭据时坚决熔断阻断 (Fail-Closed)', () => {
+    const adrContent = `
+# ADR-097: 调度器实测与纪律规约
+
+- **状态（Status）**：Accepted
+
+## 3. Implementation Status
+| 调度项 | 状态 | 落地指标与设计约束 |
+|---|---|---|
+| 核心调度 | ✅ 已完成 | 实测 Redmi 12C 调度均值 18.2ms；遵循 30–60s 软取消宽限要求，禁止 10s 强杀，模型下载规模估计 70GB |
+    `;
+
+    const metrics = extractTelemetryMetrics(adrContent);
+    const metricStrings = metrics.map((m) => m.metric);
+    assert.ok(metricStrings.includes('18.2ms'), '实测 Redmi 12C 调度均值 18.2ms 必须正常提取');
+    assert.ok(!metricStrings.includes('60s'), '30–60s 宽限要求不可被提取');
+    assert.ok(!metricStrings.includes('10s'), '禁止 10s 强杀不可被提取');
+    assert.ok(!metricStrings.includes('70GB'), '模型下载规模估计不可被提取');
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-mixed-fail-'));
+    try {
+      const res = verifyAdrTelemetry(
+        {
+          adrId: 'ADR-097',
+          filePath: path.join(tmpDir, 'ADR-097.md'),
+          content: adrContent,
+        },
+        tmpDir
+      );
+
+      // 必须 Fail-Closed 熔断阻断：因为 18.2ms 是真实实测声明，且缺少 evidence 凭据
+      assert.equal(res.status, 'FAIL');
+      assert.equal(res.isCompliant, false);
+      assert.ok(res.reason.includes('ADR-097: 实测数据自述漂移（违反 ADR-064 机器信任根）'));
+      assert.ok(res.details[0].includes('18.2ms'));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('同行混合约束与真实实测声明：凭据完整且哈希数值吻合时，精准判定 PASS', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-mixed-pass-'));
+    try {
+      const evidenceDir = path.join(tmpDir, 'evidence');
+      fs.mkdirSync(evidenceDir, { recursive: true });
+
+      const evidenceFile = path.join(evidenceDir, 'scheduler-bench.json');
+      const benchData = { dispatch_latency_ms: 18.2 };
+      fs.writeFileSync(evidenceFile, JSON.stringify(benchData, null, 2), 'utf8');
+
+      const fileBuf = fs.readFileSync(evidenceFile);
+      const digest = crypto.createHash('sha256').update(fileBuf).digest('hex');
+
+      const adrContent = `
+# ADR-096: 调度器验证规约
+
+- **状态（Status）**：Accepted
+- **关联证据**：
+  - \`evidence/scheduler-bench.json\`
+- **机器摘要**：digest: sha256:${digest}
+
+## 3. Implementation Status
+| 调度项 | 状态 | 落地指标与设计约束 |
+|---|---|---|
+| 核心调度 | ✅ 已完成 | 实测 Redmi 12C 调度均值 18.2ms；遵循 30–60s 软取消宽限要求，禁止 10s 强杀，模型下载规模估计 70GB |
+      `;
+
+      const res = verifyAdrTelemetry(
+        {
+          adrId: 'ADR-096',
+          filePath: path.join(tmpDir, 'ADR-096.md'),
+          content: adrContent,
+        },
+        tmpDir
+      );
+
+      assert.equal(res.status, 'PASS');
+      assert.equal(res.isCompliant, true);
+      assert.ok(res.reason.includes('机器信任根验签通过'));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   // [必红守护 1]: 格式伪造拦截 (手写性能数字却无 evidence 引用)
   it('格式伪造拦截：ADR 声称性能指标却缺少机器信任根凭据，必须判定自述漂移并违规熔断', () => {
     const fakeAdrContent = `

@@ -22,12 +22,111 @@ export const QUANTITATIVE_METRICS_REGEX = /(?:\b\d+(?:\.\d+)?\s*(?:ms|MB|GB|FPS|
 /**
  * 实测基准上下文线索关键字（避免将背景设备参数如 4GB RAM 或章节序号误判为实测基准声明）
  */
-const MEASUREMENT_CONTEXT_REGEX = /(?:实测|基准|均值|P95|P99|INT8|冷启|推理|拟合斜率|准确率|Top-?1|ECE|Latency|Throughput|Tokens?\/s|FPS|耗时|执行时间|软拷贝|基线|Benchmark|Spike|采样|常驻|阈值)/i;
+const MEASUREMENT_CONTEXT_REGEX = /(?:实测|基准|均值|P95|P99|INT8|冷启|推理|拟合斜率|准确率|Top-?1|ECE|Latency|Throughput|Tokens?\/s|FPS|软拷贝|基线|Benchmark|Spike|采样|常驻)/i;
+
+/**
+ * 非实测声明关键字（背景规模估计、环境剩余空间、约数预估、设计约束等）
+ */
+const NON_MEASUREMENT_REGEX = /(?:预估|估算|估计|空间|剩余|磁盘|背景|约在|大约|approx|\bestimate\b|历史开发机|开发环境|方案比较|方案对比|备选方案|方案优点|可执行文件大小|下载规模|模型规模|权重规模|宽限|强杀|软取消|硬取消)/i;
+
+/**
+ * 非实测章节标题正则（方案比较、备选方案、方案考量、方案优缺点、设计约束等，默认不作为实测基准声明章节）
+ */
+const NON_MEASUREMENT_SECTION_REGEX = /(?:方案比较|方案对比|备选方案|Alternatives|方案优点|方案缺点|Pros|Cons|Advantages|Trade-offs|背景|Context|约束|Constraints|设计原则|Principles)/i;
+
+/**
+ * 强实测断言关键字（若行内明确标明实测/Benchmark，即使含阈值也不整行丢弃）
+ */
+const STRONG_MEASUREMENT_REGEX = /(?:实测|基准数据|Benchmark|压测结果|测试数据|真实测量)/i;
 
 /**
  * 实测基准章节标题正则
  */
 const MEASUREMENT_SECTION_REGEX = /(?:Implementation\s+Status|落地情况|Benchmark|基准|实测|Evaluation|性能|Spike|测试数据|压测|^\s*验证\s*$)/i;
+
+/**
+ * 提取某字符位置所在的自然子句或表格单元格
+ */
+function getSurroundingClause(line, matchIndex, matchLength) {
+  let start = matchIndex;
+  while (start > 0) {
+    const ch = line[start - 1];
+    if (ch === '，' || ch === '；' || ch === '。' || ch === ';' || ch === '|' || ch === '(' || ch === '（' || ch === '\t') {
+      break;
+    }
+    start--;
+  }
+
+  let end = matchIndex + matchLength;
+  while (end < line.length) {
+    const ch = line[end];
+    if (ch === '，' || ch === '；' || ch === '。' || ch === ';' || ch === '|' || ch === ')' || ch === '）' || ch === '\t') {
+      break;
+    }
+    end++;
+  }
+
+  return line.slice(start, end).trim();
+}
+
+/**
+ * 判定某个具体的量化数值是否属于非测量语境（设计约束、约数预估、环境描述等）
+ * 严格遵从 ADR-0013 / ADR-064：
+ * 1. 若数值具备强实测断言且无约束/约数修饰，绝不误杀；
+ * 2. 精确区分约数 (约 100GB, ~2MB)、范围约束 (30–60s 软取消宽限要求)、惩罚阈值 (禁止 10s 强杀)、阈值指标 (超时阈值 100ms)；
+ * 3. 同行混合实测与约束时，逐指标精细过滤，坚决不以整行整段宽泛忽略掩盖断链。
+ */
+function isNonMeasurementMetricContext(line, match, matchedText, currentSection) {
+  const matchIndex = match.index;
+  const matchLength = matchedText.length;
+  const clause = getSurroundingClause(line, matchIndex, matchLength);
+
+  const prefix = line.slice(Math.max(0, matchIndex - 35), matchIndex);
+  const suffix = line.slice(matchIndex + matchLength, Math.min(line.length, matchIndex + matchLength + 35));
+
+  // 1. 约数修饰检查：数值前带有 约、大约、大致、约为、预估、估计、估算、~、≈
+  // 注意：排除 410~460ms 中的 460ms（410~ 为基准实测区间下限，由数字结尾，不是约数前缀）
+  const hasApproxPrefix =
+    /(?:约|大约|大致|约为|预估|估计|估算)\s*$/i.test(prefix) ||
+    (/(?:~|≈)\s*$/i.test(prefix) && !/\d\s*[~≈]\s*$/.test(prefix));
+  const hasApproxSuffix = /^\s*(?:左右|上下)/i.test(suffix);
+
+  if (hasApproxPrefix || hasApproxSuffix) {
+    if (!STRONG_MEASUREMENT_REGEX.test(clause)) {
+      return true;
+    }
+  }
+
+  // 2. 纪律约束修饰检查：禁止、强杀、宽限、软取消、硬取消
+  const hasConstraintPrefix = /(?:禁止|强杀|宽限|软取消|硬取消)\s*$/i.test(prefix);
+  const hasConstraintSuffix = /^\s*(?:软取消|硬取消|宽限|强杀)/i.test(suffix);
+  const hasConstraintInClause = /(?:宽限|强杀|禁止\s*\d+\s*s|软取消|硬取消)/i.test(clause);
+
+  if (hasConstraintPrefix || hasConstraintSuffix || (hasConstraintInClause && !STRONG_MEASUREMENT_REGEX.test(clause))) {
+    return true;
+  }
+
+  // 3. 范围约束：例如 30–60s 软取消宽限要求（30– 引导且后缀包含约束/要求）
+  const isRangeWithConstraint =
+    /\d+\s*[-–—~至到]\s*$/i.test(prefix) &&
+    /(?:宽限|强杀|禁止|软取消|硬取消)/i.test(suffix);
+  if (isRangeWithConstraint && !STRONG_MEASUREMENT_REGEX.test(clause)) {
+    return true;
+  }
+
+  // 4. 环境硬件与体积估计子句：历史开发机、C 盘剩余、模型下载规模、可执行文件大小
+  const hasEnvOrScaleInClause = /(?:历史开发机|开发环境|历史机型|历史环境|C\s*盘|D\s*盘|剩余空间|剩余|下载规模|模型规模|权重规模|可执行文件大小|二进制体积)/i.test(clause);
+  if (hasEnvOrScaleInClause && !STRONG_MEASUREMENT_REGEX.test(clause)) {
+    return true;
+  }
+
+  // 5. 非测量章节（方案比较、方案优点、备选方案、设计约束等）且子句未显式带有强实测声明
+  if (NON_MEASUREMENT_SECTION_REGEX.test(currentSection) && !STRONG_MEASUREMENT_REGEX.test(clause)) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * 提取文本中出现的量化性能指标（具备上下文感知能力与豁免规则）
@@ -99,21 +198,28 @@ export function extractTelemetryMetrics(content, options = {}) {
       continue;
     }
 
-    // 上下文判断：必须处于测量节内，或该行明确包含实测/性能/基准关键词
-    const inMeasurementSection = MEASUREMENT_SECTION_REGEX.test(currentSection);
+    // 上下文判断：必须处于测量节内（且排除非测量节），或该行明确包含实测/性能/基准关键词
+    const inMeasurementSection = MEASUREMENT_SECTION_REGEX.test(currentSection) && !NON_MEASUREMENT_SECTION_REGEX.test(currentSection);
     const hasMeasurementKeyword = MEASUREMENT_CONTEXT_REGEX.test(line);
 
     if (!inMeasurementSection && !hasMeasurementKeyword) {
       continue;
     }
 
-    // 2. 检查整行是否匹配 ignore_patterns（约定阈值等）
+    // 若该行明确属于非测量章节、设计约束、背景说明或估计预估，且未附带强实测声明，则不作为实测性能指标提取
+    if ((NON_MEASUREMENT_REGEX.test(line) || NON_MEASUREMENT_SECTION_REGEX.test(currentSection)) && !STRONG_MEASUREMENT_REGEX.test(line)) {
+      continue;
+    }
+
+    // 2. 检查整行是否被行级正则模式显式忽略（如 ^...$）
     if (compiledIgnorePatterns.length > 0) {
-      const lineIgnored = compiledIgnorePatterns.some((p) => {
-        if (p instanceof RegExp) return p.test(line);
-        return line.includes(p);
+      const wholeLineIgnored = compiledIgnorePatterns.some((p) => {
+        if (p instanceof RegExp && p.source.startsWith('^')) {
+          return p.test(line);
+        }
+        return p === line.trim();
       });
-      if (lineIgnored) {
+      if (wholeLineIgnored) {
         continue;
       }
     }
@@ -123,11 +229,25 @@ export function extractTelemetryMetrics(content, options = {}) {
     while ((match = QUANTITATIVE_METRICS_REGEX.exec(line)) !== null) {
       const matchedText = match[0].trim();
 
-      // 3. 检查具体提取出的 metric 是否命中 ignore_patterns
+      // 逐指标细粒度上下文判定：设计约束、阈值、约数、环境硬件描述在非强实测子句中不作为实测性能主张
+      if (isNonMeasurementMetricContext(line, match, matchedText, currentSection)) {
+        continue;
+      }
+
+      // 3. 检查具体提取出的 metric 是否命中 ignore_patterns（单指标精细化过滤，不误杀同行动态指标）
       if (compiledIgnorePatterns.length > 0) {
         const metricIgnored = compiledIgnorePatterns.some((p) => {
-          if (p instanceof RegExp) return p.test(matchedText);
-          return matchedText === p;
+          if (p instanceof RegExp) {
+            return p.test(matchedText);
+          }
+          const strPat = String(p).trim();
+          if (matchedText === strPat) return true;
+          if (line.includes(strPat)) {
+            if (strPat.includes(matchedText) || matchedText.includes(strPat)) {
+              return true;
+            }
+          }
+          return false;
         });
         if (metricIgnored) {
           continue;

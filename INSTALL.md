@@ -11,16 +11,16 @@
 | 组件 | 版本 | 备注 |
 |---|---|---|
 | **Agent Baton / handoffs** | **v2.41.2** | 接入桩统一 (sha: `9a6076fc`)；审计负向裁决/驳回对端自动唤醒根治修复、平息缓冲原子化加固、跨客户端交接角色锚定与状态机归属确定性 (ADR-0016)、根治建单 from_lane 为空与上游角色倒错、出站提示词显式双向角色锚定、自主双盲审计分诊协议、支持 Rule 8 分级 SDD 验收与负向测试先行证明 (ADR-0012)、`--profile readonly` 生产源码写保护物理硬门禁、密码学审计凭据防伪 |
-| **spec-guard / drift-gate** | **v2.2.1** | 架构规约与物理接线守卫（ADR-064 机器信任根验签、三维热力表、约定阈值解耦、增量感知门禁、支持 `--version` / `-v` 动态对齐） |
+| **spec-guard / drift-gate** | **v2.2.2** | 架构规约与物理接线守卫（ADR-064 机器信任根验签、三维热力表、约定阈值解耦、增量感知门禁、支持 `--version` / `-v` 动态对齐） |
 | **preflight** | **v1.1.0** | 仓库不变量探针（A1~A5 配置化对账防漂移、工程落地指引） |
 | **orphan** | **v1.4.2** | 全局死代码与孤儿资产清道夫（ADR-0009 / ADR-0011 / ADR-0013）：S1–S3 求解器、L1/L2/L3 正交解耦、新增 `check-deps [--strict]` 孤儿依赖求解器与 `scan-secrets [--strict]` 零调用假凭证探针、支持 `--version` / `-v` 动态对齐 |
-| **worktree** | v0.1.0 | 多 Agent 物理工作树隔离调度（动态对齐 `VERSION.md`，支持 `--version`） |
-| **review-gate** | **v1.2.2** | SAST + 双盲审计独立重跑器（ADR-0011 / ADR-0012 / ADR-0013）：`scan.sh --no-suppress` 穿透扫描、OpenGrep 原生模式对称注入 `engine: "opengrep"` 结构化元数据、Ruff Bandit 诚实降级、macOS bash 3.2 兼容自愈 |
+| **worktree** | v0.1.1 | 多 Agent 物理工作树隔离调度（动态对齐 `VERSION.md`，支持 `--version`） |
+| **review-gate** | **v1.2.3** | SAST + 双盲审计独立重跑器（ADR-0011 / ADR-0012 / ADR-0013）：`scan.sh --no-suppress` 穿透扫描、OpenGrep 原生模式对称注入 `engine: "opengrep"` 结构化元数据、Ruff Bandit 诚实降级、macOS bash 3.2 兼容自愈 |
 | **specs / playbook** | — | Spec Kit 活文档模板全集 (`specs/templates/` 01-research 到 05-evidence) 与 RePPIT 五步工程闭环手册 |
 | **adr / backlog** | v1.0.1 / v1.2.0 | 架构决策记录 (ADR-0011 ~ ADR-0014 🔒Frozen)、待办捕获跟踪 (Backlog 12 ~ 15) |
 
 > 版本事实源 = `units/<unit>/VERSION.md` 与 `$(lab path handoffs)/README.md`。
-> `package.json` 当前为 `1.4.4`（随全局能力演进做 minor/patch 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
+> `package.json` 当前为 `1.4.8`（随全局能力演进做 minor/patch 递增，便于下游对齐基线）；本机仍是**单一 lab 仓 + 软链 / 动态指针**模型，没有 submodule 或 commit 钉值，lab 仓更新后软链自动指向最新。
 
 ---
 
@@ -69,12 +69,12 @@ npm link
 
 | CLI | 作用 |
 |---|---|
-| `reasonweave`（别名 `lab`, `rw`） | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检 (`lab doctor`)、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 (v1.4.4，支持 `--version`) |
+| `reasonweave`（别名 `lab`, `rw`） | 能力库总管、`lab init` 全套一键初始化、路径动态解析、环境体检 (`lab doctor`)、ZSpec 脚手架、下游一键批量同步分发 (`sync-consumers`)、全量转发核心工具 (v1.4.8，支持 `--version`) |
 | `baton`（别名 `agent-baton` / `handoff`） | 跨仓 / 仓内任务交割中枢、统一会话ID、防跨会话硬门禁、会话锁、密码学防伪回执、事件驱动唤醒（v2.41.2） |
-| `baton-worktree` | 为工单分配 / 回收独立物理工作树（v0.1.0，支持 `--version`） |
-| `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执（v1.2.2，支持 `--version`） |
+| `baton-worktree` | 为工单分配 / 回收独立物理工作树（v0.1.1，支持 `--version`） |
+| `baton-audit-runner` | 无上下文独立进程重跑验收测试，真实 Exit 0 方可签发回执（v1.2.3，支持 `--version`） |
 | `lab-orphan` | 死代码与孤儿资产清道夫（v1.4.2，支持 `--version`，也可 `lab orphan <cmd>`） |
-| `spec-guard`（别名 `drift-gate`） | 架构规约与物理接线守卫、ADR 机器信任根验签、三维热力表（v2.2.1，支持 `--version`） |
+| `spec-guard`（别名 `drift-gate`） | 架构规约与物理接线守卫、ADR 机器信任根验签、三维热力表（v2.2.2，支持 `--version`） |
 | `lab-skills`（别名 `skills`） | 微观工程原子技能库与上下文零污染切片引擎（v0.1.0，支持 `--version`，也可 `lab skills <cmd>`） |
 | `adr-init` | 架构决策记录 (ADR) 三档脚手架 |
 

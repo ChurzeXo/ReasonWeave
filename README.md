@@ -160,7 +160,7 @@ adr-init <目标目录> <档位: light|standard|frozen> "<项目名>"
 | **orphan** | [`units/orphan/`](units/orphan/) | 死代码与孤儿资产清道夫、反假接线三层正交治理（v1.4.2，ADR-0009 / ADR-0011），只读 Git HEAD + S1–S3 求解器 + L1/L2/L3 规范、`check-deps [--strict]` 孤儿依赖分析、`scan-secrets [--strict]` 假凭证探针 |
 | **backlog** | [`units/backlog/`](units/backlog/) | 待办捕获：越界 / 待拍板 / 未来功能，一任务一文件，不打断当前工作流 |
 | **preflight** | [`units/preflight/`](units/preflight/) | 仓库不变量探针 + Git 提交门禁（v1.1.0），A1~A5 探针（含配置化单一事实源与派生状态防漂移对账），防止“做完才发现还有一件事” |
-| **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`)，v1.2.2 新增 `--no-suppress` 穿透扫描、Ruff Bandit 诚实降级结构化 JSON 标记与 macOS bash 3.2 兼容自愈、顶层同构 engine 元数据 |
+| **review-gate** | [`units/review-gate/`](units/review-gate/) | 本地 SAST 扫描 (OpenGrep) + review 门禁 + 双盲审计自动化重跑器 (`baton-audit-runner`)，v1.2.3 新增 `--no-suppress` 穿透扫描、Ruff Bandit 诚实降级结构化 JSON 标记与 macOS bash 3.2 兼容自愈、顶层同构 engine 元数据 |
 | **handoffs** | [`units/handoffs/`](units/handoffs/) | 跨仓 / 同仓任务交割中枢（Agent Baton v2.41.2），统一会话ID、防跨会话硬门禁、会话身份锁、跨客户端角色锚定与状态机归属确定性、自主双盲审计分诊协议、避免角色漂移、纯化入站单行裁决提示词、Rule 8 分级 SDD 验收与负向测试先行证明、`--profile readonly` 生产源码写保护物理硬门禁、密码学审计凭据签章、出站防注入提示词、无条件下车、五态状态机与事件唤醒 |
 | **worktree** | [`units/worktree/`](units/worktree/) | 基于 Git Worktree 的物理目录隔离调度引擎，为多 Agent 并发分配独立沙盒并智能共享依赖缓存 |
 | **skills** | [`units/skills/`](units/skills/) | 微观工程原子技能库与分发引擎（v0.1.0，ADR-0015），官方沉淀 TDD、系统化调试、先验后报、需求澄清 4 大原子技能，带 Iron Law 与借口阻断表，提供 `task-brief` 与 `review-package` 零污染切片流水线 |
@@ -246,7 +246,7 @@ ln -sf ~/dev-templates/hooks/pre-commit-miniprogram .git/hooks/pre-commit
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:9a6076fc -->
+<!-- stub:sha256:5090fcd4 -->
 ### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.41.2 为准）
 
 **核心守卫与身份（强制）**
@@ -262,7 +262,7 @@ ln -sf ~/dev-templates/hooks/pre-commit-miniprogram .git/hooks/pre-commit
 2. **读工单**：运行 `baton show <id>`，根据验收判据改动本 lane 范围代码并实测。
 3. **交付或退回（实测为唯一准绳）**：
    - **实测通过**：照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架 → 运行 `baton receipt <id> -n "<正文>" --deliver --as <本方 lane> --evidence-paths "<路径>"`（审计工单附 `--audit-nonce "<nonce>"` 或同工作区授权下使用 `--auto-nonce` 自动绑定最新令牌；红队用例严格遵循 NO_DISPATCH / NO_COMPLETE / COMPLETE 三态标准）。
-   - **实测未过（NO-GO/受阻）**：享有安全下车通道，直接运行 `baton reject <id> -n "<理由/缺失条件>" --as <本方 lane>` 退回整改。
+   - **实测未过（NO-GO/受阻）**：审计方享有安全下车通道，运行 `baton reject <id> -n "<理由/差异在哪>" --as audit` 退回整改；普通执行方若受阻/缺失条件，登记受阻回执 `baton receipt <id> -n "<缺失条件/受阻理由>" --evidence-note "<说明>" --as <本方 lane>` 由发起方核实并处理。
 4. **收尾自检**：运行 `baton check [id]`（若有数据漂移可加 `--fix` 自动修复）。
 5. **入站回复收尾（简洁单行裁决 · 严禁角色漂移）**：接收方必须严格保持本方执行/审计角色，严禁切换为发起方角色；**严禁反向输出 `## 交接提示词` 卡片或调用 `baton close` 越权闭环**；最终回复人类的最末尾仅输出单行纯文本（无需标题，无需代码块，严禁多行出站卡片）：
    - 审计驳回：`审计完成，裁决 NO-GO（工单已退回<发起方角色>进入 Round <N>）`

@@ -176,6 +176,6 @@ function run(args = process.argv.slice(2)) {
   process.exit(1);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename)) {
   run();
 }

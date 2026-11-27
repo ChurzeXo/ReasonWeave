@@ -136,8 +136,22 @@ else
       python3 -c '
 import sys, json
 findings = []
-try: findings = json.loads(sys.argv[1]) if sys.argv[1] else []
-except: pass
+try:
+  raw = json.loads(sys.argv[1]) if sys.argv[1] else []
+  if isinstance(raw, list):
+    for f in raw:
+      if isinstance(f, dict):
+        loc = f.get("location") or {}
+        end_loc = f.get("end_location") or {}
+        findings.append({
+          "check_id": f.get("code"),
+          "path": f.get("filename"),
+          "start": { "line": loc.get("row"), "col": loc.get("column") },
+          "end": { "line": end_loc.get("row"), "col": end_loc.get("column") },
+          "extra": { "message": f.get("message", ""), "severity": "WARNING" }
+        })
+except Exception as e:
+  sys.stderr.write(f"Ruff JSON parse warning: {e}\n")
 payload = {
   "engine": "fallback-ruff-bandit",
   "fallback": True,

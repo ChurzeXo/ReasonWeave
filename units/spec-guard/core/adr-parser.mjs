@@ -393,8 +393,11 @@ export function parseAdrContent(content, filePath = '', options = {}) {
     }
     // 匹配状态行，如: - **状态（Status）**：Proposed / 🔒 Frozen
     if (!frontmatter || !frontmatter.status) {
-      if (/^\s*[-*]?\s*\**状态.*?\**\s*[:：]/i.test(line) || /^\s*[-*]?\s*\**Status\**\s*[:：]/i.test(line)) {
-        status = line.replace(/^.*?[:：]\s*/, '').trim();
+      if (/^\s*[-*]?\s*\**\s*(?:状态|Status).*?[:：]/i.test(line)) {
+        status = line
+          .replace(/^\s*[-*]?\s*\**\s*(?:状态|Status).*?[:：]\s*/i, '')
+          .replace(/[\*_]/g, '')
+          .trim();
         if (frozenStates.length > 0) {
           isFrozen = frozenStates.some((fs) => fs.toLowerCase() === status.toLowerCase() || (fs === '🔒' && status.includes('🔒')));
         } else {

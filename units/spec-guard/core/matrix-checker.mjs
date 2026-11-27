@@ -213,11 +213,10 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
   }
 
   const isZeroCoverage = parsedAdrs.length === 0;
-  const coveragePercent = isZeroCoverage
+  const hasNoInvariants = totalInvariantsCount === 0;
+  const coveragePercent = isZeroCoverage || hasNoInvariants
     ? 0
-    : (totalInvariantsCount > 0
-        ? Math.round(((verifiedCount + sandboxedCount) / totalInvariantsCount) * 100)
-        : 100);
+    : Math.round(((verifiedCount + sandboxedCount) / totalInvariantsCount) * 100);
 
   return {
     repoRoot,
@@ -233,7 +232,8 @@ export function buildAndCheckMatrix(repoRoot, options = {}) {
     orphanAssertions,
     unwiredInvariants,
     zeroCoverage: isZeroCoverage,
-    isHealthy: !isZeroCoverage && driftCount === 0 && orphanAssertions.length === 0 && (!options.checkCallers || unwiredInvariants.length === 0),
+    hasNoInvariants,
+    isHealthy: !isZeroCoverage && !hasNoInvariants && driftCount === 0 && orphanAssertions.length === 0 && (!options.checkCallers || unwiredInvariants.length === 0),
   };
 }
 
@@ -246,10 +246,15 @@ export function formatConsoleReport(matrixResult) {
   lines.push('═'.repeat(65));
   lines.push(`📁 扫描代码文件: ${matrixResult.scannedFilesCount} 个 | ADR 规约: ${matrixResult.adrsCount} 份`);
   lines.push(`📊 总不变量: ${matrixResult.totalInvariantsCount} | 已验证: \x1b[32m${matrixResult.verifiedCount}\x1b[0m | 沙箱隔离: \x1b[36m${matrixResult.sandboxedCount}\x1b[0m | 进行中: \x1b[33m${matrixResult.inProgressCount}\x1b[0m | 漂移: \x1b[31m${matrixResult.driftCount}\x1b[0m`);
-  lines.push(`📈 规约断言有效覆盖率: \x1b[1m${matrixResult.coveragePercent}%\x1b[0m\n`);
+  const coverageDisplay = matrixResult.hasNoInvariants
+    ? 'N/A (未声明架构不变量: 0/0)'
+    : `${matrixResult.coveragePercent}%`;
+  lines.push(`📈 规约断言有效覆盖率: \x1b[1m${coverageDisplay}\x1b[0m\n`);
 
   if (matrixResult.zeroCoverage || matrixResult.adrsCount === 0) {
     lines.push(`\x1b[31m⚠️ ZERO_COVERAGE: 未扫描到任何有效 ADR 规约文件！零覆盖不可伪装为通过。\x1b[0m\n`);
+  } else if (matrixResult.hasNoInvariants) {
+    lines.push(`\x1b[33m⚠️ NO_INVARIANTS: 扫描到 ${matrixResult.adrsCount} 份 ADR 但未提取到任何有效架构不变量，覆盖率不计为 100%。\x1b[0m\n`);
   }
 
   for (const rep of matrixResult.adrReports) {
@@ -512,6 +517,7 @@ export function buildFullTriadMatrix(repoRoot, options = {}) {
   });
 
   const isZeroCoverage = totalAdrs === 0;
+  const hasNoInvariants = assertionMatrix.totalInvariantsCount === 0;
   const isHealthy = !isZeroCoverage && assertionDriftCount === 0 && telemetryDriftCount === 0 && orphanDecisionCount === 0;
 
   return {
@@ -525,8 +531,9 @@ export function buildFullTriadMatrix(repoRoot, options = {}) {
     assertionDriftCount,
     telemetryDriftCount,
     orphanDecisionCount,
-    coveragePercent: isZeroCoverage ? 0 : assertionMatrix.coveragePercent,
+    coveragePercent: (isZeroCoverage || hasNoInvariants) ? 0 : assertionMatrix.coveragePercent,
     zeroCoverage: isZeroCoverage,
+    hasNoInvariants,
     isHealthy,
   };
 }
@@ -555,7 +562,10 @@ export function formatTriadHeatmap(triadResult) {
   lines.push('─'.repeat(96));
 
   for (const row of triadResult.triadRows) {
-    const frozenTag = row.isFrozen ? '[🔒Frozen]' : '[Draft]';
+    const displayStatus = row.status || (row.isFrozen ? 'Frozen' : 'Draft');
+    const frozenTag = row.isFrozen
+      ? (displayStatus.includes('🔒') ? `[${displayStatus}]` : `[🔒${displayStatus}]`)
+      : `[${displayStatus}]`;
     const statusCol = frozenTag.padEnd(10);
     const adrCol = row.adrId.padEnd(10);
     const assCol = row.assertionSummary.padEnd(18);
@@ -577,6 +587,8 @@ export function formatTriadHeatmap(triadResult) {
   lines.push('═'.repeat(96));
   if (triadResult.totalAdrs === 0 || triadResult.zeroCoverage) {
     lines.push('\x1b[31m❌ [ZERO_COVERAGE] 门禁阻断：未发现任何有效 ADR 规约！零覆盖不可伪装为健康。\x1b[0m\n');
+  } else if (triadResult.hasNoInvariants) {
+    lines.push('\x1b[33m⚠️  [NO_INVARIANTS] 提示：ADR 规约未声明架构不变量（断言覆盖率 N/A）。\x1b[0m\n');
   } else if (triadResult.isHealthy) {
     lines.push('\x1b[32m✅ 全景三元对账检查通过！无断言漂移、无实测数据伪造、无孤儿冻结决策。\x1b[0m\n');
   } else {

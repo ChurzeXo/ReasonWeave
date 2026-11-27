@@ -17,9 +17,15 @@ set -uo pipefail
 
 # 非交互 hook 可能没把 ~/.local/bin 放进 PATH
 export PATH="$HOME/.local/bin:$PATH"
-OG="${OPENGREP_BIN:-$HOME/.local/bin/opengrep}"
-if ! [ -x "$OG" ] && ! command -v "$OG" >/dev/null 2>&1; then
-  OG=$(command -v opengrep || true)
+OG="${OPENGREP_BIN:-__AUTO__}"
+if [ "$OG" = "__AUTO__" ]; then
+  if [ -x "$HOME/.local/bin/opengrep" ]; then
+    OG="$HOME/.local/bin/opengrep"
+  else
+    OG=$(command -v opengrep || true)
+  fi
+elif [ -n "$OG" ] && { [ ! -x "$OG" ] && ! command -v "$OG" >/dev/null 2>&1; }; then
+  OG=""
 fi
 
 USE_RUFF_FALLBACK=0
@@ -48,21 +54,32 @@ SCAN_EXTS="${SCAN_EXTS:-py kt kts java rs ts tsx go xml gradle toml}"
 EXT_RE="\.(${SCAN_EXTS// /|})$"
 
 # 只扫本次提交真正要落库的暂存代码文件
-FILES=()
+STAGED_FILES=()
 while IFS= read -r f; do
-  [ -n "$f" ] && FILES+=("$f")
+  [ -n "$f" ] && STAGED_FILES+=("$f")
 done < <(git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=ACM | grep -E "$EXT_RE" || true)
 
-EXISTING=()
-for f in "${FILES[@]:-}"; do
-  [ -f "$REPO_ROOT/$f" ] && EXISTING+=("$REPO_ROOT/$f")
-done
-if [ ${#EXISTING[@]} -eq 0 ]; then
+if [ ${#STAGED_FILES[@]} -eq 0 ]; then
   exit 0
 fi
 
+# 从 Git Index 中将暂存内容安全还原至独立临时目录进行扫描，确保真实扫描暂存快照
+STAGED_DIR=$(mktemp -d /tmp/og-staged-XXXXXX)
 TMP=$(mktemp /tmp/og-precommit-XXXXXX.json)
-trap 'rm -f "$TMP"' EXIT
+trap 'rm -rf "$STAGED_DIR" "$TMP"' EXIT
+
+EXISTING=()
+for f in "${STAGED_FILES[@]}"; do
+  dest="$STAGED_DIR/$f"
+  mkdir -p "$(dirname "$dest")"
+  if git -C "$REPO_ROOT" show ":$f" > "$dest" 2>/dev/null; then
+    EXISTING+=("$dest")
+  fi
+done
+
+if [ ${#EXISTING[@]} -eq 0 ]; then
+  exit 0
+fi
 
 cd "$REPO_ROOT"
 
@@ -79,13 +96,14 @@ EXCLUDE_RULES=(
 )
 EXCLUDES=$(printf -- '--exclude-rule %s ' ${EXCLUDE_RULES[@]+"${EXCLUDE_RULES[@]}"})
 
+SCAN_EXIT=0
 if [ "$USE_RUFF_FALLBACK" = "1" ]; then
   echo "🔍 Ruff Bandit fallback gate: scanning ${#EXISTING[@]} staged file(s)..."
-  "$RUFF" check --select S --output-format json "${EXISTING[@]}" > "$TMP" 2>/dev/null || true
+  "$RUFF" check --select S --output-format json "${EXISTING[@]}" > "$TMP" 2>/dev/null || SCAN_EXIT=$?
 else
   echo "🔍 OpenGrep gate: scanning ${#EXISTING[@]} staged file(s)..."
   "$OG" scan ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"} --disable-version-check --timeout 60 ${EXCLUDES} \
-    --json --output "$TMP" "${EXISTING[@]}" >/dev/null 2>&1 || true
+    --json --output "$TMP" "${EXISTING[@]}" >/dev/null 2>&1 || SCAN_EXIT=$?
 fi
 
 PY=$(command -v python3 || command -v python || true)
@@ -94,37 +112,69 @@ if [ -z "$PY" ]; then
   exit 0
 fi
 
-"$PY" - "$TMP" "$BASELINE" "$REPO_ROOT" <<'PYEOF'
-import json, sys
+"$PY" - "$TMP" "$BASELINE" "$STAGED_DIR" "$USE_RUFF_FALLBACK" "$SCAN_EXIT" <<'PYEOF'
+import json, sys, os
 
-def load(p):
+tmp_path = sys.argv[1]
+base_path = sys.argv[2]
+staged_dir = os.path.realpath(sys.argv[3]).rstrip("/") + "/"
+is_ruff = sys.argv[4] == "1"
+scan_exit = int(sys.argv[5])
+
+def load(p, is_ruff_output=False):
     try:
-        return json.load(open(p)).get("results", [])
-    except Exception:
-        return []
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"❌ 门禁评估失败: 无法解析扫描报告 {p}: {e}", file=sys.stderr)
+        sys.exit(2)
 
-# opengrep 对绝对路径入参会回写绝对 path，而基线多为相对根路径 → 归一化为相对仓库根再比对
-REPO = sys.argv[3].rstrip("/") + "/"
+    if isinstance(data, list):
+        if is_ruff_output:
+            return [
+                {
+                    "check_id": item.get("code") or item.get("check_id"),
+                    "path": item.get("filename") or item.get("path"),
+                    "start": {"line": (item.get("location") or {}).get("row")},
+                    "extra": {"severity": "WARNING", "message": item.get("message", "")}
+                }
+                for item in data
+                if isinstance(item, dict)
+            ]
+        return data
+    elif isinstance(data, dict):
+        return data.get("results", [])
+    return []
+
+cur = load(tmp_path, is_ruff_output=is_ruff)
+base = load(base_path, is_ruff_output=False)
+
 def norm(p):
-    p = str(p)
-    if p.startswith(REPO):
-        p = p[len(REPO):]
-    return p
+    if not p:
+        return ""
+    p_real = os.path.realpath(str(p))
+    if p_real.startswith(staged_dir):
+        return p_real[len(staged_dir):]
+    p_str = str(p)
+    if p_str.startswith(sys.argv[3].rstrip("/") + "/"):
+        return p_str[len(sys.argv[3].rstrip("/") + "/"):]
+    return p_str
 
-cur = load(sys.argv[1])
-base = load(sys.argv[2])
-base_keys = {(r["check_id"], norm(r["path"])) for r in base if "check_id" in r and "path" in r}
-new = [r for r in cur if ("check_id" in r and "path" in r)
-       and (r["check_id"], norm(r["path"])) not in base_keys]
+base_keys = {(r.get("check_id"), norm(r.get("path"))) for r in base if "check_id" in r and "path" in r}
+new = [
+    r for r in cur
+    if ("check_id" in r and "path" in r) and (r.get("check_id"), norm(r.get("path"))) not in base_keys
+]
 
 if new:
-    print("❌ OpenGrep gate: %d new finding(s) beyond accepted baseline:" % len(new))
+    gate_name = "Ruff Bandit" if is_ruff else "OpenGrep"
+    print(f"❌ {gate_name} gate: {len(new)} new finding(s) beyond accepted baseline:")
     for r in new:
         e = r.get("extra", {})
         line = r.get("start", {}).get("line", "?")
-        print("   - [%s] %s:%s  (%s)" % (r["check_id"], norm(r["path"]), line, e.get("severity", "?")))
-    print("\n   Fix the issue, or re-baseline: RULESETS=... bash scan.sh %s" % sys.argv[2])
+        print(f"   - [{r.get('check_id')}] {norm(r.get('path'))}:{line}  ({e.get('severity', '?')})")
+    print(f"\n   Fix the issue, or re-baseline: RULESETS=... bash scan.sh {sys.argv[2]}")
     sys.exit(1)
 
-print("✅ OpenGrep gate passed (no new findings vs %d accepted baseline)." % len(base))
+print(f"✅ Static-analysis gate passed (no new findings vs {len(base)} accepted baseline).")
 PYEOF

@@ -1,5 +1,11 @@
 # Changelog — units/worktree
 
+## [v0.1.1] - 2026-11-27
+
+### Fixed
+- **诚实分支回收状态报告**：修复 `prune` 子命令在临时分支包含未合并修改且未加 `--force` 时静默吞掉 `git branch -d` 报错并虚报成功的问题；现在明确输出警告并返回 `worktree_removed_branch_retained` 状态与详细错误。
+- **单元测试补齐**：新增 `units/worktree/tests/worktree.test.mjs`，常驻校验回收状态诚实性。
+
 ## [v0.1.0] - 2026-11-09
 
 ### Added

@@ -187,22 +187,38 @@ function prune(ticketId, options = {}) {
   }
 
   // 2. 清理分支
+  let branchPruned = true;
+  let branchPruneError = null;
   const branchExists = runCmd(`git rev-parse --verify refs/heads/${branchName}`, { ignoreError: true });
   if (branchExists) {
     const delFlag = options.force ? '-D' : '-d';
     try {
       runCmd(`git branch ${delFlag} "${branchName}"`);
-    } catch {
-      // 若无法安全删除分支且未加 force，提示用户
+    } catch (err) {
+      branchPruned = false;
+      branchPruneError = err.message;
+      if (!options.json) {
+        console.warn(`⚠️ 临时分支 [${branchName}] 未能自动删除（可能包含未合并改动）: ${err.message}`);
+        console.warn(`   若确认丢弃该分支，可运行: git branch -D "${branchName}"`);
+      }
     }
   }
 
   runCmd('git worktree prune', { ignoreError: true });
 
   if (options.json) {
-    console.log(JSON.stringify({ status: 'pruned', ticketId: cleanId }));
+    console.log(JSON.stringify({
+      status: branchPruned ? 'pruned' : 'worktree_removed_branch_retained',
+      ticketId: cleanId,
+      branchPruned,
+      branchPruneError
+    }));
   } else {
-    console.log(`\n🧹 已成功回收工单 [${cleanId}] 的隔离工作区与临时分支。`);
+    if (branchPruned) {
+      console.log(`\n🧹 已成功回收工单 [${cleanId}] 的隔离工作区与临时分支。`);
+    } else {
+      console.log(`\n🧹 已成功回收工单 [${cleanId}] 的隔离工作区，但临时分支保留。`);
+    }
   }
 }
 

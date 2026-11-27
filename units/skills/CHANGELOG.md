@@ -2,6 +2,11 @@
 
 ## [0.1.0] - 2026-11-23
 
+### 修复 (Fixed)
+- **Windows 平台 CLI 入口静默退出 0 缺陷**：
+  - 修复 `skills.mjs`、`task-brief.mjs` 与 `review-package.mjs` 中使用 `new URL(import.meta.url).pathname` 与 `process.argv[1]` 比对时，因 Windows 盘符带有前导斜杠 `/C:/...` 导致路径比对恒为 `false` 的问题；
+  - 统一替换为标准跨平台 API `fileURLToPath(import.meta.url)`，彻底解决 Windows 环境下 `lab skills list` / `lab skills check` 无输出静默退出的阻断性问题。
+
 ### 新增 (Added)
 - **初始版本建立**：基于 ADR-0015 架构决策，正式立项 `units/skills` 微观工程原子技能库与分发引擎；
 - **官方原子技能目录 (`catalog/`)**：

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function printUsage() {
   console.error('用法: task-brief <plan_file> <task_id> [outfile]');
@@ -97,6 +98,6 @@ export function run(args = process.argv.slice(2)) {
   console.log(outPath);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   run();
 }

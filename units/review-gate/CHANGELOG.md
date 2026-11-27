@@ -1,5 +1,10 @@
 # Changelog — review-gate
 
+## v1.2.3 (2026-11-27)
+- **Ruff 降级结果解析与门禁拦截漏洞彻底根治**：重构 `pre-commit` 门禁与 `scan.sh`，支持准确解析 Ruff 输出的 JSON 数组结构并归一化转换为基线比对模型，杜绝因 `dict.get` 在列表上抛错被捕获而静默放行 Python 安全漏洞的问题。
+- **真实暂存区（Git Index Blob）快照扫描**：门禁扫描不再直接读取可能已被修改的工作区物理文件，改为通过 `git show :<staged_path>` 将待提交快照还原至独立沙箱目录进行扫描，彻底解决部分暂存误报或工作区未重新暂存导致的漏洞漏检。
+- **双盲审计运行器（Clean Runner）多行判据块保持**：修复验收判据代码块按换行逐行切割导致 `cd` 上下文丢失、多行语句断裂的问题，完整保持脚本块原子执行。
+
 ## v1.2.2 (2026-11-22)
 - **文档与审查防线增强（Layer-2 code-review-graph 集成指引）**：在 `README.md` §6 Layer-2 本地审查中明确补充与 `code-review-graph` 的协同工作模式，推荐在 Review 前运行 `code-review-graph impact` 提取爆炸半径精准切片。
 - **OpenGrep 原生扫描产物补齐结构化引擎元数据**：修复 `scan.sh` 在 OpenGrep 原生扫描路径下输出 JSON 缺少顶层 `engine: "opengrep"` 与 `fallback: false` 字段的问题，实现与降级扫描模式对齐的对称契约。

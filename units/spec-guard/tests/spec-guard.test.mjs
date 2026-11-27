@@ -29,6 +29,7 @@ import {
 import {
   buildAndCheckMatrix,
   buildFullTriadMatrix,
+  formatTriadHeatmap,
   generateAdrAuditReport,
 } from '../core/matrix-checker.mjs';
 
@@ -478,6 +479,25 @@ assert.equal(ep, "/api/v1/device/interlock");
     }
   });
 
+  it('runMutationTest 边界防御：严禁变异 repoRoot 外部的文件', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-sec-'));
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-out-'));
+    try {
+      const outsideFile = path.join(outsideDir, 'outside.mjs');
+      fs.writeFileSync(outsideFile, 'export const x = 1;');
+      assert.throws(() => {
+        runMutationTest({
+          repoRoot: tmpDir,
+          targetFile: outsideFile,
+          testCmd: 'node -e "process.exit(0)"',
+        });
+      }, /must be located inside repoRoot/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   it('orphan 单元联动测试：符号引用分类与倒排生产调用者检索', () => {
     assert.equal(Classifier.isTestPath('src/test/java/Test.kt'), true);
     assert.equal(Classifier.isTestPath('src/main/java/Main.kt'), false);
@@ -560,6 +580,49 @@ scope:
     assert.equal(parsed.status, 'active');
     assert.equal(parsed.isFrozen, false, 'active 状态不得误判为 Frozen');
     assert.equal(parsed.hasImplementationStatus, true, '## 验证 应被识别为 implementation 节');
+  });
+
+  it('支持 **Status:** Accepted、**Status**: Accepted 及各种中英文状态行格式，剥离 Markdown 符号', () => {
+    const rawContent1 = `# ADR-008: 安装预检\n\n**Status:** Accepted\n\n## 2. Decision\n决策内容`;
+    const parsed1 = parseAdrContent(rawContent1, 'ADR-008.md');
+    assert.equal(parsed1.status, 'Accepted', '加粗内含冒号 **Status:** Accepted 应准确解析为 Accepted');
+
+    const rawContent2 = `# ADR-009: 调度约束\n\n- **Status**: Proposed\n\n## 2. Decision\n决策内容`;
+    const parsed2 = parseAdrContent(rawContent2, 'ADR-009.md');
+    assert.equal(parsed2.status, 'Proposed');
+
+    const rawContent3 = `# ADR-010: 历史决策\n\nStatus: Rejected\n\n## 2. Decision\n决策内容`;
+    const parsed3 = parseAdrContent(rawContent3, 'ADR-010.md');
+    assert.equal(parsed3.status, 'Rejected');
+  });
+
+  it('有 ADR 但总不变量为 0 时，覆盖率严禁误报为 100%', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-guard-no-inv-'));
+    try {
+      const adrDir = path.join(tmp, 'group', 'architecture', 'adr');
+      fs.mkdirSync(adrDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(adrDir, 'ADR-001.md'),
+        '# ADR-001: 基础规约\n\n**Status:** Accepted\n\n## 2. Decision\n内容\n'
+      );
+      const matrix = buildAndCheckMatrix(tmp);
+      assert.equal(matrix.adrsCount, 1);
+      assert.equal(matrix.totalInvariantsCount, 0);
+      assert.equal(matrix.coveragePercent, 0, '总不变量为 0 时覆盖率必须为 0%，严禁返回 100%');
+      assert.equal(matrix.hasNoInvariants, true);
+
+      const triad = buildFullTriadMatrix(tmp);
+      assert.equal(triad.totalAdrs, 1);
+      assert.equal(triad.coveragePercent, 0);
+      assert.equal(triad.hasNoInvariants, true);
+      assert.equal(triad.triadRows[0].status, 'Accepted');
+
+      const heatmap = formatTriadHeatmap(triad);
+      assert.ok(heatmap.includes('[Accepted]'), '热力表应当真实展现 [Accepted] 而非 [Draft]');
+      assert.ok(heatmap.includes('[NO_INVARIANTS]'));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('totalAdrs === 0 时必须报告 ZERO_COVERAGE，覆盖率严禁为 100%，strict 模式下 exit 1 阻断', () => {

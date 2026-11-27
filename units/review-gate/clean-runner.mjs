@@ -16,12 +16,12 @@ const REVIEW_GATE_VERSION = (() => {
   try {
     const vPath = path.join(SCRIPT_ROOT, 'VERSION.md');
     if (fs.existsSync(vPath)) {
-      const line = fs.readFileSync(vPath, 'utf8').trim().split('\n')[0];
-      const m = line.match(/v?(\d+\.\d+\.\d+)/);
+      const content = fs.readFileSync(vPath, 'utf8');
+      const m = content.match(/v?(\d+\.\d+\.\d+)/);
       if (m) return m[1];
     }
   } catch {}
-  return '1.2.2';
+  return '1.2.3';
 })();
 
 const args = process.argv.slice(2);
@@ -91,11 +91,11 @@ function extractCommandsFromTicket(content) {
     const codeBlockRegex = /```(?:bash|sh|zsh)?\n([\s\S]*?)```/g;
     let match;
     while ((match = codeBlockRegex.exec(sectionBody)) !== null) {
-      const lines = match[1]
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith('#'));
-      commands.push(...lines);
+      const block = match[1].trim();
+      if (block) {
+        // 保持代码块作为一个完整的 Shell 脚本块执行，避免逐行拆分导致 cd、变量与上下文断裂
+        commands.push(block);
+      }
     }
   }
   return commands;
@@ -199,29 +199,33 @@ function runAudit(ticketId, options = {}) {
     process.exit(1);
   }
 
-  console.log(`\n🛡️ [Clean Audit Runner] 启动无上下文双盲审计执行:`);
-  console.log(`  • 工单 ID: \x1b[36m${cleanId}\x1b[0m`);
-  console.log(`  • 执行物理目录: \x1b[32m${targetDir}\x1b[0m ${isWorktree ? '(隔离工作树)' : '(主代码库)'}`);
-  console.log(`  • 待执行校验项 (${commands.length} 项):`);
-  commands.forEach((c, idx) => console.log(`    ${idx + 1}. \x1b[33m${c}\x1b[0m`));
-  console.log('─'.repeat(70));
+  if (!options.json) {
+    console.log(`\n🛡️ [Clean Audit Runner] 启动无上下文双盲审计执行:`);
+    console.log(`  • 工单 ID: \x1b[36m${cleanId}\x1b[0m`);
+    console.log(`  • 执行物理目录: \x1b[32m${targetDir}\x1b[0m ${isWorktree ? '(隔离工作树)' : '(主代码库)'}`);
+    console.log(`  • 待执行校验项 (${commands.length} 项):`);
+    commands.forEach((c, idx) => console.log(`    ${idx + 1}. \x1b[33m${c}\x1b[0m`));
+    console.log('─'.repeat(70));
+  }
 
   const results = [];
   let allPassed = true;
 
   for (const cmd of commands) {
-    process.stdout.write(`⏳ 正在执行: ${cmd} ... `);
+    if (!options.json) process.stdout.write(`⏳ 正在执行: ${cmd} ... `);
     const execRes = executeClean(cmd, targetDir);
     results.push(execRes);
 
     if (execRes.exitCode === 0) {
-      console.log(`\x1b[32mPASS\x1b[0m (${(execRes.durationMs / 1000).toFixed(2)}s)`);
+      if (!options.json) console.log(`\x1b[32mPASS\x1b[0m (${(execRes.durationMs / 1000).toFixed(2)}s)`);
     } else {
-      console.log(`\x1b[31mFAIL (Exit ${execRes.exitCode})\x1b[0m (${(execRes.durationMs / 1000).toFixed(2)}s)`);
+      if (!options.json) {
+        console.log(`\x1b[31mFAIL (Exit ${execRes.exitCode})\x1b[0m (${(execRes.durationMs / 1000).toFixed(2)}s)`);
+        console.error('\n' + '─'.repeat(40) + ' [错误输出摘要] ' + '─'.repeat(40));
+        console.error(execRes.stderr.trim() || execRes.stdout.trim() || '(无标准输出)');
+        console.error('─'.repeat(96) + '\n');
+      }
       allPassed = false;
-      console.error('\n' + '─'.repeat(40) + ' [错误输出摘要] ' + '─'.repeat(40));
-      console.error(execRes.stderr.trim() || execRes.stdout.trim() || '(无标准输出)');
-      console.error('─'.repeat(96) + '\n');
       break;
     }
   }

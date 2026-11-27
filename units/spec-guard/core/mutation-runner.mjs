@@ -176,6 +176,14 @@ export function runMutationTest(options = {}) {
     throw new Error(`Mutation runner target file not found: ${targetFile}`);
   }
 
+  // 严格安全边界检查：确保 targetFile 位于 repoRoot 内部
+  const realRepoRoot = fs.existsSync(repoRoot) ? fs.realpathSync(repoRoot) : path.resolve(repoRoot);
+  const realTargetFile = fs.existsSync(targetFile) ? fs.realpathSync(targetFile) : path.resolve(targetFile);
+  const relativeTarget = path.relative(realRepoRoot, realTargetFile);
+  if (relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget)) {
+    throw new Error(`Mutation runner target file must be located inside repoRoot: ${targetFile}`);
+  }
+
   const cleanEnv = { ...process.env };
   delete cleanEnv.NODE_TEST_CONTEXT;
 
@@ -207,42 +215,62 @@ export function runMutationTest(options = {}) {
   }
 
   // 3. 逐个注入变异并验证测试套件敏感度
+  // 安全防护：在进程退出或意外中断时注册保护兜底
   let killedCount = 0;
   const survivedMutants = [];
 
-  for (const mutant of mutants) {
-    const mutatedContent =
-      originalContent.slice(0, mutant.index) +
-      mutant.replacement +
-      originalContent.slice(mutant.index + mutant.original.length);
-
+  const cleanupHandler = () => {
     try {
-      fs.writeFileSync(targetFile, mutatedContent, 'utf8');
+      if (fs.existsSync(targetFile)) {
+        fs.writeFileSync(targetFile, originalContent, 'utf8');
+      }
+    } catch {}
+  };
 
-      let testPassedWithMutant = false;
+  process.once('SIGINT', cleanupHandler);
+  process.once('SIGTERM', cleanupHandler);
+  process.once('exit', cleanupHandler);
+
+  try {
+    for (const mutant of mutants) {
+      const mutatedContent =
+        originalContent.slice(0, mutant.index) +
+        mutant.replacement +
+        originalContent.slice(mutant.index + mutant.original.length);
+
       try {
-        execSync(testCmd, { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8', env: cleanEnv });
-        testPassedWithMutant = true;
-      } catch {
-        // 测试报错 = 变异被消灭 (Killed)
-        testPassedWithMutant = false;
+        fs.writeFileSync(targetFile, mutatedContent, 'utf8');
+
+        let testPassedWithMutant = false;
+        try {
+          execSync(testCmd, { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8', env: cleanEnv });
+          testPassedWithMutant = true;
+        } catch {
+          // 测试报错 = 变异被消灭 (Killed)
+          testPassedWithMutant = false;
+        }
+
+        if (testPassedWithMutant) {
+          // 变异体存活 = 假测试！
+          survivedMutants.push(mutant);
+        } else {
+          killedCount++;
+        }
+      } finally {
+        // 必须立刻恢复原文件，保证工作区绝对干净零污染！
+        fs.writeFileSync(targetFile, originalContent, 'utf8');
       }
 
-      if (testPassedWithMutant) {
-        // 变异体存活 = 假测试！
-        survivedMutants.push(mutant);
-      } else {
-        killedCount++;
+      // 发现任何一个存活变异体，立即熔断报告
+      if (survivedMutants.length > 0) {
+        break;
       }
-    } finally {
-      // 必须立刻恢复原文件，保证工作区绝对干净零污染！
-      fs.writeFileSync(targetFile, originalContent, 'utf8');
     }
-
-    // 发现任何一个存活变异体，立即熔断报告
-    if (survivedMutants.length > 0) {
-      break;
-    }
+  } finally {
+    process.removeListener('SIGINT', cleanupHandler);
+    process.removeListener('SIGTERM', cleanupHandler);
+    process.removeListener('exit', cleanupHandler);
+    cleanupHandler();
   }
 
   if (survivedMutants.length > 0) {

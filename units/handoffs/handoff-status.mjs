@@ -157,6 +157,7 @@ function getSessionId() {
     process.env.CURSOR_CONVERSATION_ID ||
     process.env.CLAUDE_CONVERSATION_ID ||
     process.env.CLAUDE_SESSION_ID ||
+    process.env.CODEX_SESSION_ID ||
     process.env.WORKBUDDY_CONVERSATION_ID ||
     process.env.WORKBUDDY_SESSION_ID ||
     process.env.CODEBUDDY_CONVERSATION_ID ||

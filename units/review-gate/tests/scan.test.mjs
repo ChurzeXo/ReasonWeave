@@ -139,4 +139,136 @@ exit 0
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  test('pre-commit ruff fallback parses JSON array correctly and blocks new findings', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'precommit-ruff-'));
+    try {
+      execSync('git init', { cwd: tmpDir, stdio: 'pipe' });
+      execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'pipe' });
+      execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'pipe' });
+
+      // 准备基线文件
+      fs.mkdirSync(path.join(tmpDir, 'review-gate/baseline'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'review-gate/baseline/baseline.json'), JSON.stringify({ results: [] }));
+
+      // 创建一个 mock ruff 返回 S102 漏洞
+      const mockBinDir = path.join(tmpDir, 'bin');
+      fs.mkdirSync(mockBinDir, { recursive: true });
+      const mockRuff = path.join(mockBinDir, 'ruff');
+      fs.writeFileSync(
+        mockRuff,
+        `#!/bin/sh
+echo '[{"code":"S102","filename":"'"$tmpDir"'/test.py","message":"Use of exec","location":{"row":1,"column":1},"end_location":{"row":1,"column":10}}]'
+exit 1
+`,
+        { mode: 0o755 }
+      );
+
+      // 创建并暂存 test.py
+      fs.writeFileSync(path.join(tmpDir, 'test.py'), 'exec("bad")\n');
+      execSync('git add test.py', { cwd: tmpDir, stdio: 'pipe' });
+
+      // 运行 pre-commit，验证它捕获到了 Ruff 的新发现并阻断 (Exit 1)
+      let failed = false;
+      try {
+        execSync(
+          `OPENGREP_BIN=/tmp/nonexistent PATH="${mockBinDir}:$PATH" bash "${preCommit}"`,
+          { cwd: tmpDir, stdio: 'pipe', encoding: 'utf8' }
+        );
+      } catch (err) {
+        failed = true;
+        const out = (err.stdout || '') + (err.stderr || '');
+        assert.match(out, /Ruff Bandit gate: 1 new finding\(s\) beyond accepted baseline/);
+      }
+      assert.ok(failed, 'pre-commit under ruff fallback must block when new finding exists');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('pre-commit scans staged blob in git index, ignoring post-stage modifications in working tree', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'precommit-staged-'));
+    try {
+      execSync('git init', { cwd: tmpDir, stdio: 'pipe' });
+      execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'pipe' });
+      execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'pipe' });
+
+      fs.mkdirSync(path.join(tmpDir, 'review-gate/baseline'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'review-gate/baseline/baseline.json'), JSON.stringify({ results: [] }));
+
+      const mockBinDir = path.join(tmpDir, 'bin');
+      fs.mkdirSync(mockBinDir, { recursive: true });
+      const mockRuff = path.join(mockBinDir, 'ruff');
+      fs.writeFileSync(
+        mockRuff,
+        `#!/bin/sh
+cat <<EOF
+[{"code":"S102","filename":"$1","message":"Use of exec","location":{"row":1,"column":1},"end_location":{"row":1,"column":10}}]
+EOF
+exit 1
+`,
+        { mode: 0o755 }
+      );
+
+      // 1. 危险内容暂存到 index
+      fs.writeFileSync(path.join(tmpDir, 'vuln.py'), 'exec("staged_vulnerability")\n');
+      execSync('git add vuln.py', { cwd: tmpDir, stdio: 'pipe' });
+
+      // 2. 工作区立刻修改为干净代码（但未 git add）
+      fs.writeFileSync(path.join(tmpDir, 'vuln.py'), '# safe code in working tree\n');
+
+      // 3. 运行 pre-commit：必须依然能够检测到暂存区中的漏洞并拦截！
+      let failed = false;
+      try {
+        execSync(
+          `OPENGREP_BIN=/tmp/nonexistent PATH="${mockBinDir}:$PATH" bash "${preCommit}"`,
+          { cwd: tmpDir, stdio: 'pipe', encoding: 'utf8' }
+        );
+      } catch (err) {
+        failed = true;
+        const out = (err.stdout || '') + (err.stderr || '');
+        assert.match(out, /Ruff Bandit gate: 1 new finding\(s\) beyond accepted baseline/);
+      }
+      assert.ok(failed, 'pre-commit must scan git index blob and block even if working tree is clean');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('clean-runner preserves multiline script blocks without breaking on newlines', () => {
+    const cleanRunnerPath = path.resolve('units/review-gate/clean-runner.mjs');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clean-runner-test-'));
+    try {
+      execSync('git init', { cwd: tmpDir, stdio: 'pipe' });
+      execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'pipe' });
+      execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'pipe' });
+
+      // 创建一个工单文件包含多行验收判据代码块（有 cd 和多行命令）
+      const handoffsDir = path.join(tmpDir, '.handoffs/handoffs');
+      fs.mkdirSync(handoffsDir, { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, 'subdir'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'subdir/file.txt'), 'hello');
+
+      const ticketContent = `---
+id: TICKET-TEST-001
+---
+## 验收判据
+\`\`\`bash
+cd subdir
+test -f file.txt
+\`\`\`
+`;
+      fs.writeFileSync(path.join(handoffsDir, 'TICKET-TEST-001.md'), ticketContent);
+
+      const out = execSync(
+        `node "${cleanRunnerPath}" run TICKET-TEST-001 --json`,
+        { cwd: tmpDir, encoding: 'utf8', stdio: 'pipe' }
+      );
+      const parsed = JSON.parse(out);
+      assert.equal(parsed.allPassed, true, 'Multiline cd + test -f file.txt block must execute in single shell and pass');
+      assert.equal(parsed.results.length, 1, 'Should execute as 1 consolidated script block rather than splitting lines');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
