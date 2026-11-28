@@ -67,6 +67,10 @@ CLI 已有 60 分钟新鲜度门禁（receipt/deliver/accept 时拦）和 check 
    - **单工单原子闭环（99% 场景）**：直接以宿主后台任务方式（如 `WaitMsBeforeAsync: 500`）运行 `baton forward <ID> --wait`（原子一步到位：秒级打印提示词 + 自动挂起后台监听 + 回执到达 Exit 0 秒级唤醒；单工单严禁使用 `--async` 拆分两步！）；
    - **多单并发派发**：运行 `baton forward <id1> <id2> ... --async`，派发后必须立即作为后台任务运行 `baton wait <id1> <id2> ... --all` 聚合监听平账；
    - 无论同工作区还是跨工作区、内部还是外部客户端，必须启动监听探针（严禁以等不到为由跳过；Baton 为本地文件系统事件总线 fs.watch，任何终端 deliver 均可毫秒级感知唤醒）；回执到达后 Exit 0 自动唤醒本会话进行独立验收闭环。
+   - **宿主任务与降级监听纪律（强制 · v2.42.0）**：
+     - **严禁将普通 shell `session_id` 当作自动唤醒保证**：`exec_command` 返回的 `session_id` 仅代表普通终端会话，宿主无反应式自主唤醒机制；仅在确认宿主具备真正的任务完成事件驱动唤醒能力（如 Antigravity `run_command` 的 `WaitMsBeforeAsync`）时，才可宣称监听已自动接管；
+     - **非反应式宿主降级协议**：在不支持后台任务完成自主唤醒的宿主（CodeBuddy/Claude/Cursor 等）中，必须在提示词前向人类明示「降级监听：只监听、不自动续办」，说明执行方交付后人类只需发送任意消息/按回车唤起本会话；
+     - **会话恢复自动续办纪律**：任何会话恢复交互时，必须先运行 `baton status --current`，识别到 `delivered` 状态后自动进入 `show → 独立实测复核 → close/reject`，严禁要求用户重述已交付事实或粘贴回执！
 3. **输出交接提示词（末块规范 · v2.41.2 结构化卡片 · 显式双向角色锚定）**：出站由发起方统一计算与推进 Round 轮次；本地 AI 根据用户本地语言自适应输出，标题、描述与独立代码块分离（若为审计工单 `to_lane=audit`，出站卡片会自动注入 `[角色锚定]` 阻断接收方误触发派单技能；其后无任何正文）：
    ## 交接提示词
    > 直接复制下方提示词，发送给接收方 Agent 接单：
@@ -80,6 +84,31 @@ CLI 已有 60 分钟新鲜度门禁（receipt/deliver/accept 时拦）和 check 
    [工单路径] <交接路径>
    [接单指令] baton lane <to_lane>
    ```
+
+## 宿主后台任务与监听续办协议（Host Task & Autonomous Resumption Protocol · v2.42.0 强制）
+
+### 1. 动因与现场事故复盘（现场工单 01a21f4f）
+在真实工程交互中（如工单 `01a21f4f-3960-7bb3-ade7-4f02cedbf4ac`，Round 2），发起方运行 `baton forward <id> --wait` 后，命令由普通 shell 工具返回一个可轮询的 `session_id`。发起方 Agent 误将普通终端 `session_id` 当作宿主具有反应式自动唤醒的保证，向人类宣称“会自动唤醒”后进入休眠。
+随后实现方交付回执，Baton 正确推进为 `delivered`，监听进程检测到交付后正常退出。但由于普通 shell 宿主缺乏底层任务完成唤醒事件，发起方 Agent 永远无法自动恢复，最终必须由人类手动发送提醒。
+**核心定性**：Baton 状态机流转正常，断点在于**宿主后台任务/监听事件到 Agent 后续轮次的衔接**，以及 **Agent 把普通 shell 会话误当成宿主后台任务**。
+
+### 2. 宿主能力分级矩阵（Host Capability Matrix）
+| 宿主类别 | 典型客户端 | 工具形式 | 任务完成唤醒机制 | 宣称与行为准则 |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tier-1: 反应式自主唤醒宿主** | Google Antigravity | `run_command` (配合 `WaitMsBeforeAsync: 500`) | ✅ 宿主内核事件驱动。子进程 Exit 0 时自动向 Agent 注入完成事件唤起下一轮决策 | 可宣称“后台监听已接管，交付后自动唤醒闭环”。Agent 无需轮询，空闲等待唤醒 |
+| **Tier-2: 普通 Shell / 轮询宿主** | CodeBuddy, WorkBuddy, Claude Code, Cursor, Windsurf, OpenHands, 终端 | `exec_command`, `bash`, `terminal_run` 返回 `session_id` / pid | ❌ 无自主唤醒。进程退出后宿主不触发 Agent 轮次 | **严禁虚假承诺自动唤醒**！必须执行降级协议，向人类声明需人工单次唤醒 |
+
+### 3. 反假保证与降级协议规范（"只监听、不自动续办"）
+1. **反假保证铁律**：严禁把普通 `exec_command` 返回的 `session_id` 当作自动唤醒保证。只有宿主明确注册为支持任务结束通知的后台任务时，才能宣称已自动接管。
+2. **明确降级告知**：若处于 Tier-2 宿主环境，发起方 Agent 在回复人类时必须明确包含降级说明：
+   > `⚠️ [宿主降级提示] 当前宿主（如 exec_command session_id 模式）仅提供普通后台进程，不支持任务退出时自动唤醒 Agent。后台监听进程已在 shell 会话中挂起保底；执行方交付后，人类只需任意唤醒本会话（如按回车或发送任意消息），会话恢复时将自动通过 baton status --current 读取已交付状态并独立实测复核，无需人类重述交付事实。`
+3. **禁止用 `--daemon` 绕过**：Agent 环境下严禁使用 `--daemon` 盲目脱钩进程，必须保留在宿主会话树中。
+
+### 4. 会话恢复自动续办纪律（Session Resume Discipline · 强制）
+无论在 Tier-1 宿主中被反应式唤醒，还是在 Tier-2 宿主中由人类任意输入唤醒：
+1. **首步必查状态**：Agent 的第一动作必须是运行 `baton status --current`（或 `baton status --as <本方 lane> --current`）；
+2. **自动衔接验收流**：若状态显示为 `delivered`，Agent 必须立即自动执行 `baton show <id>`，读取验收判据并执行独立实测；实测通过则 `baton close <id>`，未通过则 `baton reject <id>`；
+3. **严禁向人类索要已交付事实**：严禁在恢复时询问人类“对方交付了什么”、“请把回执发给我”，所有交付信息必须且只能从 Baton 状态机与回执文件读取。
 
 ## 审计动作契约（v2.13 · to_lane=audit 强制）
 > 审计方（接收方 `to_lane=audit`）**严禁仅静态读码**——必须在终端**独立执行**交接文档「验收判据」中的**所有测试与校验命令**，以实测输出为唯一准绳，**严禁采信自报**（执行方回执里的「已通过」一律视为待验证声明，不采信）。

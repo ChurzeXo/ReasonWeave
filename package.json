@@ -1,6 +1,6 @@
 {
   "name": "reasonweave",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "description": "Agent Engineering Framework (AEF) & Disciplines Toolkit for multi-agent software engineering",
   "type": "module",
   "main": "bin/lab.mjs",

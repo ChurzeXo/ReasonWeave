@@ -627,9 +627,10 @@ function nextStep(r) {
         : `lane=${lane} · Receipt drafted (awaiting executor baton deliver)`;
     }
     if (r.status === 'delivered') {
+      const fromLane = r.from_lane || 'impl';
       return isZh
-        ? `lane=${lane} · 已交付（等发起 lane 实测后 close）`
-        : `lane=${lane} · Delivered (awaiting initiator verification to close)`;
+        ? `已交付（等发起方【${fromLane}】实测验收：baton show ${r.id} 验证后 close 或 reject）`
+        : `Delivered (awaiting initiator [${fromLane}] verification: baton show ${r.id} then close/reject)`;
     }
     if (r.status === 'closed') {
       return isZh ? `lane=${lane} · 已闭环` : `lane=${lane} · Closed`;
@@ -694,9 +695,15 @@ function nextStepFor(r) {
         : 'Receipt drafted, run baton deliver when wrapping up';
     }
     if (r.status === 'delivered') {
+      const isInitiator = (r.from_lane || 'impl') === FOR;
+      if (isInitiator) {
+        return isZh
+          ? `已终态交付：请运行 baton show ${r.id} 独立实测验收 → 验收通过后 baton close ${r.id} -n "..." 或 驳回整改 baton reject ${r.id}`
+          : `Delivered: run baton show ${r.id} to verify independently → then baton close ${r.id} -n "..." or baton reject ${r.id}`;
+      }
       return isZh
-        ? '已终态交付，等发起 lane 独立实测后 close'
-        : 'Delivered, awaiting initiator verification to close';
+        ? `已终态交付给 lane=${r.from_lane || 'impl'}，等待其独立实测后 close`
+        : `Delivered to lane=${r.from_lane || 'impl'}, awaiting verification to close`;
     }
     const eff = getEffectiveRejection(r);
     if (eff.is_rejected && (r.status === 'forwarded' || r.status === 'draft')) {
@@ -735,11 +742,18 @@ if (FOR) {
       const eff = getEffectiveRejection(r);
       if (r.to_lane === FOR) {
         // 我已驳回退回给对方的项在等待对方整改，不计入我方待办
-        return eff.is_rejected ? eff.rejected_by !== FOR : true;
+        if (eff.is_rejected && eff.rejected_by === FOR) return false;
+        // 我已终态交付给对方的项在等待对方实测闭环，不计入我方待办（进入 delivByMe）
+        if (r.status === 'delivered') return false;
+        return true;
       }
       // 对方驳回给我的项（我是发起方），落入我方整改待办
       const targetFrom = r.from_lane || 'impl';
       if (targetFrom === FOR && eff.is_rejected && eff.rejected_by !== FOR) {
+        return true;
+      }
+      // 对方已终态交付给我的项（我是发起方），落入我方实测验收待办！
+      if (targetFrom === FOR && r.status === 'delivered') {
         return true;
       }
       return false;
@@ -750,7 +764,7 @@ if (FOR) {
   const mine = ACTIVE_ONLY ? mineAll.filter(isTicketActive) : mineAll;
   if (JSON_MODE) {
     if (JSON_V2) {
-      const pending = mine.filter(r => isPendingFor(FOR, r.status) && (!getEffectiveRejection(r).is_rejected || getEffectiveRejection(r).rejected_by !== FOR)).map(r => ({
+      const pending = mine.filter(r => (isPendingFor(FOR, r.status) || (r.status === 'delivered' && (r.from_lane || 'impl') === FOR)) && (!getEffectiveRejection(r).is_rejected || getEffectiveRejection(r).rejected_by !== FOR)).map(r => ({
         handoff_id: r.id,
         status: r.status,
         path: r.file,
@@ -773,7 +787,12 @@ if (FOR) {
   const isRecvBlocked = (r) => (r.needs === true) || (receipts[r.id] && receipts[r.id].needs === true) || isVerdictRejected(getReceiptConclusion(r.id)) || isVerdictBlocked(getReceiptConclusion(r.id));
   const recvBlocked = recv.filter(isRecvBlocked);
   const recvReady = recv.filter(r => !isRecvBlocked(r));
-  const deliv = mine.filter(r => r.status === 'delivered');
+  const delivToMe = (MODE === 'intra-repo')
+    ? mine.filter(r => r.status === 'delivered' && (r.from_lane || 'impl') === FOR)
+    : mine.filter(r => r.status === 'delivered');
+  const delivByMe = (MODE === 'intra-repo')
+    ? rows.filter(r => r.status === 'delivered' && r.to_lane === FOR && (r.from_lane || 'impl') !== FOR)
+    : [];
 
   const rejectedByMe = (MODE === 'intra-repo')
     ? rows.filter(r => {
@@ -793,7 +812,7 @@ if (FOR) {
   const lines = [];
   if (isZh) {
     lines.push(`[交接追踪 · ${ROOT}${sessionTagZh}] ${FOR} 未闭环 ${mine.length} 项（${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR}）`);
-    if (mine.length === 0 && rejectedByMe.length === 0 && rejectedToMe.length === 0) {
+    if (mine.length === 0 && rejectedByMe.length === 0 && rejectedToMe.length === 0 && delivByMe.length === 0) {
       lines.push(ONLY_CURRENT ? `✅ 当前会话没有待 ${FOR} 处理的交接。` : `✅ 没有待 ${FOR} 处理的交接。`);
     } else {
       if (todo.length) {
@@ -834,14 +853,21 @@ if (FOR) {
           if (step) lines.push(`      → 下一步：${step}`);
         }
       }
-      if (deliv.length) {
+      if (delivToMe.length) {
         lines.push(MODE === 'intra-repo'
-          ? `- 已交付待发起 lane 实测（${deliv.length}）:`
-          : `- 已交付待发起方实测（${deliv.length}）:`);
-        for (const r of deliv) {
+          ? `- 已交付待我方实测验收（${delivToMe.length}）:`
+          : `- 已交付待发起方实测（${delivToMe.length}）:`);
+        for (const r of delivToMe) {
           lines.push(formatRowLine(r, true));
           const step = nextStepFor(r);
           if (step) lines.push(`      → 下一步：${step}`);
+        }
+      }
+      if (delivByMe.length) {
+        lines.push(`- 我方已终态交付（等待发起方实测验收 · ${delivByMe.length}）:`);
+        for (const r of delivByMe) {
+          lines.push(formatRowLine(r, true));
+          lines.push(`      → 状态：已终态交付给发起方 lane=${r.from_lane || 'impl'}，等待其独立实测后 close`);
         }
       }
     }
@@ -851,7 +877,7 @@ if (FOR) {
     }
   } else {
     lines.push(`[Baton Status · ${ROOT}${sessionTagEn}] ${FOR}: ${mine.length} open item(s) (${MODE === 'intra-repo' ? 'lane' : 'target'}=${FOR})`);
-    if (mine.length === 0 && rejectedByMe.length === 0 && rejectedToMe.length === 0) {
+    if (mine.length === 0 && rejectedByMe.length === 0 && rejectedToMe.length === 0 && delivByMe.length === 0) {
       lines.push(ONLY_CURRENT ? `✅ No pending handoffs for ${FOR} in current session.` : `✅ No pending handoffs for ${FOR}.`);
     } else {
       if (todo.length) {
@@ -892,14 +918,21 @@ if (FOR) {
           if (step) lines.push(`      → Next step: ${step}`);
         }
       }
-      if (deliv.length) {
+      if (delivToMe.length) {
         lines.push(MODE === 'intra-repo'
-          ? `- Delivered, awaiting initiator verification (${deliv.length}):`
-          : `- Delivered, awaiting verification (${deliv.length}):`);
-        for (const r of deliv) {
+          ? `- Delivered, awaiting my verification (${delivToMe.length}):`
+          : `- Delivered, awaiting verification (${delivToMe.length}):`);
+        for (const r of delivToMe) {
           lines.push(formatRowLine(r, false));
           const step = nextStepFor(r);
           if (step) lines.push(`      → Next step: ${step}`);
+        }
+      }
+      if (delivByMe.length) {
+        lines.push(`- Delivered by me (awaiting initiator verification · ${delivByMe.length}):`);
+        for (const r of delivByMe) {
+          lines.push(formatRowLine(r, false));
+          lines.push(`      → Status: Delivered to initiator lane=${r.from_lane || 'impl'}, awaiting verification to close`);
         }
       }
     }

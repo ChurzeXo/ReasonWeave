@@ -67,8 +67,8 @@ docs/                辅助文档与待办 (docs/backlogs/)
 
 <!-- handoff-stub:v2.1 begin -->
 <!-- generated — do not edit -->
-<!-- stub:sha256:5090fcd4 -->
-### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.41.2 为准）
+<!-- stub:sha256:c062bc6a -->
+### Agent Baton (Handoff) 接入桩（轻量韧性版 · 细则以 $(lab path handoffs)/README.md 契约 v2.42.0 为准）
 
 **核心守卫与身份（强制）**
 - **物理工作区边界**：会话严格绑定当前宿主工作区，严禁跨仓 cd 操作外部代码；跨仓请输出交接提示词引导人类在目标仓 Agent 会话中派发。
@@ -79,7 +79,7 @@ docs/                辅助文档与待办 (docs/backlogs/)
 - **确定性自愈**：校验细节（Nonce、证据路径、数据一致性）由 CLI 运行时精准拦截；若命令报错，末尾 100% 打印可直接复制的一键自愈命令。
 
 **入站工作流（接单 · 交付 · 退回）**
-1. **查待办**：运行 `baton status --as <本方 lane|target>`（直取本方未闭环待办工单，或全量 `baton status`）。
+1. **查待办**：运行 `baton status --as <本方 lane|target> --current`（或全局 `baton status --current`）。
 2. **读工单**：运行 `baton show <id>`，根据验收判据改动本 lane 范围代码并实测。
 3. **交付或退回（实测为唯一准绳）**：
    - **实测通过**：照抄 `$(lab path handoffs)/RESPONSE-TEMPLATE.md` 骨架 → 运行 `baton receipt <id> -n "<正文>" --deliver --as <本方 lane> --evidence-paths "<路径>"`（审计工单附 `--audit-nonce "<nonce>"` 或同工作区授权下使用 `--auto-nonce` 自动绑定最新令牌；红队用例严格遵循 NO_DISPATCH / NO_COMPLETE / COMPLETE 三态标准）。
@@ -94,7 +94,11 @@ docs/                辅助文档与待办 (docs/backlogs/)
 **出站工作流（派发 · 监听 · 严禁漏开监听）**
 1. **建单与转递（单工单原子闭环 · 99%场景）**：`baton new <target|lane> <type> "<标题>"`，填写正文后直接作为宿主后台任务（如 `WaitMsBeforeAsync: 500`）运行 `baton forward <id> --wait`（双盲审计附加 `--blind` 脱敏思考自辩；单工单严禁使用 `--async` 拆分两步！）。
 2. **多单并发派发（仅限一次性派发多单）**：`baton forward <id1> <id2> ... --async`，派发后必须立即作为后台任务运行 `baton wait <id1> <id2> ... --all` 聚合监听平账（严禁将多单提示词混杂在同一个代码块内）。
-3. **出站回复收尾（交接提示词规范）**：出站由发起方统一计算与推进 Round 轮次；回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
+3. **宿主任务与降级监听纪律（强制 · v2.42.0）**：
+   - **严禁将普通 shell `session_id` 当作自动唤醒保证**：`exec_command` 返回的 `session_id` 仅为普通终端会话，宿主无反应式自主唤醒机制；仅在确认宿主具备真正的任务完成事件驱动唤醒能力（如 Antigravity `run_command` 的 `WaitMsBeforeAsync`）时，才可宣称监听已自动接管。
+   - **非反应式宿主降级协议**：在不支持后台任务完成自主唤醒的宿主中，必须在提示词前向人类明示「降级监听：只监听、不自动续办」，说明执行方交付后人类只需发送任意消息/按回车唤起本会话；
+   - **会话恢复自动续办纪律**：任何会话恢复交互时，必须先运行 `baton status --current`，识别到 `delivered` 状态后自动进入 `show → 独立实测复核 → close/reject`，严禁要求用户重述已交付事实或粘贴回执！
+4. **出站回复收尾（交接提示词规范）**：出站由发起方统一计算与推进 Round 轮次；回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
    ## 交接提示词
    ```text
    请 [<目标角色>] 接单：

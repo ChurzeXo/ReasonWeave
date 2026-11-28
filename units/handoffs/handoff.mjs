@@ -316,6 +316,43 @@ function isAgentEnvironment() {
   );
 }
 
+/** 探测宿主能力分级与反应式唤醒特征（v2.42.0 宿主能力矩阵）
+ * Tier-1: 反应式事件驱动自主唤醒（Reactive Autonomous Wakeup · 如 Antigravity 宿主任务）
+ * Tier-2: 普通 Shell 会话（无反应式自主唤醒 · 如 CodeBuddy/Claude/Cursor 等 exec_command session_id 模式，须走降级协议）
+ */
+function getHostCapability() {
+  if (process.env.BATON_HOST_CAPABILITY === 'reactive' || process.env.BATON_REACTIVE_HOST === '1' || process.env.ANTIGRAVITY_AGENT) {
+    return {
+      tier: 'tier1_reactive',
+      name: process.env.ANTIGRAVITY_AGENT ? 'Google Antigravity' : (process.env.BATON_AGENT_HOST || 'Reactive Host'),
+      reactiveWakeup: true,
+      description: '支持宿主后台任务事件驱动自主唤醒 (Reactive Autonomous Resume)'
+    };
+  }
+  if (isAgentEnvironment()) {
+    let name = 'Generic Agent Shell';
+    if (process.env.CODEBUDDY_SESSION_ID || process.env.CODEBUDDY_CONVERSATION_ID || process.env.CODEBUDDY_SANDBOX_BROKER_SESSION_ID) name = 'CodeBuddy';
+    else if (process.env.WORKBUDDY_AGENT || process.env.WORKBUDDY_SESSION_ID || process.env.WORKBUDDY_SANDBOX_BROKER_SESSION_ID) name = 'WorkBuddy';
+    else if (process.env.CLAUDE_CODE || process.env.CLAUDE_SESSION_ID) name = 'Claude Code';
+    else if (process.env.CURSOR_AGENT) name = 'Cursor';
+    else if (process.env.WINDSURF_AGENT) name = 'Windsurf';
+    else if (process.env.CODEX_SESSION_ID) name = 'Codex';
+
+    return {
+      tier: 'tier2_shell_session',
+      name,
+      reactiveWakeup: false,
+      description: '普通 Shell 会话 (无反应式自主唤醒，须走降级协议: 只监听、不自动续办)'
+    };
+  }
+  return {
+    tier: 'terminal',
+    name: 'Interactive Terminal',
+    reactiveWakeup: false,
+    description: '人类交互终端'
+  };
+}
+
 /** 当地日期（不是 UTC）。
  *
  * 为什么必须按当地日期：原实现用 `new Date().toISOString()`（UTC），
@@ -3211,7 +3248,7 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 - **确定性自愈**：校验细节（Nonce、证据路径、数据一致性）由 CLI 运行时精准拦截；若命令报错，末尾 100% 打印可直接复制的一键自愈命令。
 
 **入站工作流（接单 · 交付 · 退回）**
-1. **查待办**：运行 \`baton status --as <本方 lane|target>\`（直取本方未闭环待办工单，或全量 \`baton status\`）。
+1. **查待办**：运行 \`baton status --as <本方 lane|target> --current\`（或全局 \`baton status --current\`）。
 2. **读工单**：运行 \`baton show <id>\`，根据验收判据改动本 lane 范围代码并实测。
 3. **交付或退回（实测为唯一准绳）**：
    - **实测通过**：照抄 \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` 骨架 → 运行 \`baton receipt <id> -n "<正文>" --deliver --as <本方 lane> --evidence-paths "<路径>"\`（审计工单附 \`--audit-nonce "<nonce>"\` 或同工作区授权下使用 \`--auto-nonce\` 自动绑定最新令牌；红队用例严格遵循 NO_DISPATCH / NO_COMPLETE / COMPLETE 三态标准）。
@@ -3226,7 +3263,11 @@ const STUB_BODY_ZH = `### Agent Baton (Handoff) 接入桩（轻量韧性版 · �
 **出站工作流（派发 · 监听 · 严禁漏开监听）**
 1. **建单与转递（单工单原子闭环 · 99%场景）**：\`baton new <target|lane> <type> "<标题>"\`，填写正文后直接作为宿主后台任务（如 \`WaitMsBeforeAsync: 500\`）运行 \`baton forward <id> --wait\`（双盲审计附加 \`--blind\` 脱敏思考自辩；单工单严禁使用 \`--async\` 拆分两步！）。
 2. **多单并发派发（仅限一次性派发多单）**：\`baton forward <id1> <id2> ... --async\`，派发后必须立即作为后台任务运行 \`baton wait <id1> <id2> ... --all\` 聚合监听平账（严禁将多单提示词混杂在同一个代码块内）。
-3. **出站回复收尾（交接提示词规范）**：出站由发起方统一计算与推进 Round 轮次；回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
+3. **宿主任务与降级监听纪律（强制 · v2.42.0）**：
+   - **严禁将普通 shell \`session_id\` 当作自动唤醒保证**：\`exec_command\` 返回的 \`session_id\` 仅为普通终端会话，宿主无反应式自主唤醒机制；仅在确认宿主具备真正的任务完成事件驱动唤醒能力（如 Antigravity \`run_command\` 的 \`WaitMsBeforeAsync\`）时，才可宣称监听已自动接管。
+   - **非反应式宿主降级协议**：在不支持后台任务完成自主唤醒的宿主中，必须在提示词前向人类明示「降级监听：只监听、不自动续办」，说明执行方交付后人类只需发送任意消息/按回车唤起本会话；
+   - **会话恢复自动续办纪律**：任何会话恢复交互时，必须先运行 \`baton status --current\`，识别到 \`delivered\` 状态后自动进入 \`show → 独立实测复核 → close/reject\`，严禁要求用户重述已交付事实或粘贴回执！
+4. **出站回复收尾（交接提示词规范）**：出站由发起方统一计算与推进 Round 轮次；回复最末块必须固定为独立代码块，方便人类一键复制给接收方 Agent（其后无任何正文）：
    ## 交接提示词
    \`\`\`text
    请 [<目标角色>] 接单：
@@ -3253,7 +3294,7 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
 - **Self-Healing Diagnostics**: Gate details (Nonce, Evidence, consistency) are evaluated by CLI runtime. Every CLI error output ends with a one-click copyable remediation command.
 
 **Inbound Workflow (Receive · Deliver · Reject)**
-1. **Check Pending**: Run \`baton status --as <my lane|target>\` (or global \`baton status\`).
+1. **Check Pending**: Run \`baton status --as <my lane|target> --current\` (or global \`baton status --current\`).
 2. **Inspect Ticket**: Run \`baton show <id>\`, implement scoped changes, and independently run tests.
 3. **Deliver or Reject (Empirical Tests are the Sole Authority)**:
    - **All Tests Pass**: Follow \`$(lab path handoffs)/RESPONSE-TEMPLATE.md\` → run \`baton receipt <id> -n "<Body>" --deliver --as <my lane> --evidence-paths "<files>"\` (audit tickets require \`--audit-nonce "<nonce>"\` or \`--auto-nonce\`; red-team probes must follow three-state standard: NO_DISPATCH / NO_COMPLETE / COMPLETE).
@@ -3268,7 +3309,11 @@ const STUB_BODY_EN = `### Agent Baton (Handoff) Guard Stub (Resilient & Slim · 
 **Outbound Workflow (Dispatch · Listen · Mandatory Listener)**
 1. **Create & Forward (Single Ticket Atomic · 99% cases)**: \`baton new <target|lane> <type> "<Title>"\`, fill body, then run \`baton forward <id> --wait\` as a host background task (add \`--blind\` for double-blind audit; single-ticket \`--async\` split is strictly prohibited!).
 2. **Concurrent Batch Dispatch (Multiple tickets only)**: \`baton forward <id1> <id2> ... --async\`, then immediately run \`baton wait <id1> <id2> ... --all\` as a host background task to clear debt (never bundle multiple tickets into one prompt card).
-3. **Outbound Reply Closing (Baton Pass Prompt)**: Initiator calculates and advances Round count; end outbound replies with an isolated code block for one-click human copying (no text after):
+3. **Host Task & Downgrade Protocol (Mandatory · v2.42.0)**:
+   - **Prohibit treating shell \`session_id\` as auto-wakeup guarantee**: Shell \`session_id\` from \`exec_command\` represents an interactive shell session without reactive wakeup; only claim auto-managed listener when the host confirms an event-driven task completion hook (e.g. Antigravity \`run_command\` \`WaitMsBeforeAsync\`).
+   - **Non-reactive host downgrade**: In hosts without autonomous completion resume, explicitly declare "Downgrade: listen-only, no auto-resume" to the user, noting that a simple ping/Enter will resume the session.
+   - **Session Resume Discipline**: When resuming in any session, first run \`baton status --current\`; upon detecting \`delivered\`, directly transition to \`show → independent verification → close/reject\`. Never prompt user to restate delivered facts.
+4. **Outbound Reply Closing (Baton Pass Prompt)**: Initiator calculates and advances Round count; end outbound replies with an isolated code block for one-click human copying (no text after):
    ## Baton Pass Prompt
    \`\`\`text
    Please [<Target Role>] take handoff:
@@ -5013,6 +5058,10 @@ function printWaitWakeupSummary(id, hFile, rFile, hFm) {
   }
 
   // 触发 Yellow 级别交付待验收中断
+  const hostCap = getHostCapability();
+  if (!hostCap.reactiveWakeup && isAgentEnvironment()) {
+    console.log(`ℹ️ [宿主续办提示] 当前宿主 (${hostCap.name}) 属于普通 Shell 会话，若 Agent 未自动唤起，用户任意输入或唤醒后，Agent 须优先执行 baton status --current 自动续办，严禁向用户索要回执！\n`);
+  }
   notifyInterrupt('yellow', 'Baton 工单交付待验收', `工单 ${id} 回执已到达并通过平息缓冲，请进行独立实测验收！`);
 }
 
@@ -5225,6 +5274,15 @@ async function cmdWait(args) {
   const currentSessionId = getSessionId();
   if (currentSessionId) {
     console.log(`   - 会话亲和 ID: ${currentSessionId}`);
+  }
+  const hostCap = getHostCapability();
+  if (isAgentEnvironment()) {
+    if (hostCap.reactiveWakeup) {
+      console.log(`   - 宿主能力感知: [${hostCap.name}] ${hostCap.description}`);
+    } else {
+      console.log(`   - 宿主能力感知: ⚠️ [${hostCap.name}] ${hostCap.description}`);
+      console.log(`     (严禁将 exec_command session_id 误当成自动唤醒保证；下次会话恢复时请优先运行 baton status --current 自动续办)`);
+    }
   }
   console.log(`   (提示: 此命令设计为在后台运行 run_in_background，回执到达时将 Exit 0 唤醒主会话)\n`);
 

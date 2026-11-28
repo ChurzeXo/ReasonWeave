@@ -6,6 +6,24 @@
 
 ---
 
+> **v2.42.0 里程碑（2026-11-28 · 宿主后台任务契约与自主续办协议 · 严禁将普通 shell `session_id` 当作自动唤醒保证 · 明确降级协议与会话恢复自动续办纪律 · 修复发起方 delivered 看板不可见缺陷 · 动 STUB_BODY ⇒ 各载体须重跑 baton install）**：动因——工单 `01a21f4f-3960-7bb3-ade7-4f02cedbf4ac`（Round 2）现场事故复盘。发起方运行 `baton forward <id> --wait` 后，普通 shell 工具（`exec_command`）返回可轮询的 `session_id`；Agent 误将普通终端 `session_id` 当成宿主会自动唤起 LLM 的保证，向人类作出虚假承诺后进入休眠；实现方交付后监听进程正常 Exit 0 退出，但普通 shell 宿主无底层任务完成事件通知，发起方未能自动续办，最终需要人类手动提醒。全链路实施彻底根治：
+> 1. **宿主能力分级矩阵与动态感知（Tier-1 反应式自主唤醒 vs Tier-2 普通 Shell 会话）**：
+>    - 核心引擎引入 `getHostCapability()`，自动感知运行时特征：明确区分 Google Antigravity（Tier-1 反应式事件驱动，底层任务退出时由宿主事件循环自动注入系统通知恢复会话）与 CodeBuddy / WorkBuddy / Claude Code / Cursor / Windsurf / Codex / 裸终端（Tier-2 普通 Shell 会话，无任务退出自动触发 Agent 决策轮次能力）；
+>    - `cmdWait` 启动时直接打印宿主能力感知 Banner，并在进程退出时对 Tier-2 宿主输出续办指引。
+> 2. **反假保证硬约束（Anti-False-Wakeup Guard）**：
+>    - 在 Agent 接入规范、接入桩及 `AGENT-GUIDE.md` 明确立项铁律：**严禁将普通 `exec_command` 返回的 `session_id` 当作自动唤醒保证**；
+>    - 只有在确认宿主具备真正的后台任务完成事件唤起能力（如 Antigravity `run_command` 的 `WaitMsBeforeAsync: 500`）时，才可宣称监听已自动接管。
+> 3. **非反应式宿主降级协议（"只监听、不自动续办"）**：
+>    - 若处于 Tier-2 宿主环境，发起方 Agent 在转递挂起后台监听后，回复人类时必须明确包含降级说明，说明后台进程正常监听保底，但因宿主无唤醒机制，交付后人类只需发送任意消息/按回车唤起本会话即可触发自动续办。
+> 4. **会话恢复自动续办纪律（Session Resume Discipline · 强制）**：
+>    - 无论会话是被 Tier-1 反应式事件唤醒还是被 Tier-2 人工输入唤醒，**首要动作必须是运行 `baton status --current`（或 `baton status --as <本方 lane> --current`）**；
+>    - 识别到工单处于 `delivered` 状态后，**严禁向人类询问“对方交付了什么”或索要回执**；必须直接自动进入 `baton show <id>` $\to$ **独立实测验收判据** $\to$ `baton close <id>` / `baton reject <id>`。
+> 5. **修复 `handoff-status.mjs` 中 `laneMatch` 漏判发起方 `delivered` 待办缺陷**：
+>    - 修复此前 `laneMatch` 仅匹配 `to_lane === FOR`，导致发起方 (`from_lane === FOR`) 在工单处于 `delivered` 时被看板误判为“没有待处理交接”的重大盲区；
+>    - 结构化拆分 `delivToMe`（待我方实测验收，属于发起方行动项）与 `delivByMe`（我方已交付等对方验收，属于执行方信息项）；
+>    - `nextStepFor` 与 `nextStep` 为 `delivered` 工单输出直达、可执行的验收命令；`JSON_V2` 准确纳入 pending。
+> 6. **全套单测与事实源同步对齐**：新增用例 43 覆盖宿主能力分级、降级协议与 delivered 会话自动续办端到端仿真；全载体接入桩同步升级至 v2.42.0。
+
 > **v2.41.2 补丁（2026-11-26 · 双盲审计出站卡片独立沙箱角色锚定与防自证拒识死锁加固 & 接入桩受阻话术契约对齐）**：动因——用户反馈在跨客户端（WorkBuddy → ChatGPT）派发双盲审计工单时，ChatGPT 新窗口因全局安装了以“双盲审计”为触发词的派发技能，误以为人类在要求发起 `/audit`，激活派单逻辑后触发内部“严禁当前窗口自行审计”守卫，将自身锁死在派发官角色并拒接审计；同时消费方反馈接入桩在执行方受阻时误导普通 `impl` 运行 `baton reject` 导致被系统越界拦截。经排查，实施彻底根治：
 > 1. **出站提示词双盲审计角色锚定（Audit Role Anchor Invariant）**：
 >    - `cmdPrompt`（仓内及跨仓）在判定 `to_lane=audit` 时，自动在出站交接提示词卡片中注入显式角色锚定行：
